@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.DataTablesNet</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.DataTablesNet</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.DataTablesNet</PackageId>
+    <Description>Vista adapter for jQuery DataTables and QueryBuilder.</Description>
+    <PackageTags>vista;a2n;adapter;datatables;querybuilder</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

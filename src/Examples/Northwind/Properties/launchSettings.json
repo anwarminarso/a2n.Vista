@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "a2n.Vista.Examples.Northwind": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:52898;http://localhost:52899"
+    }
+  }
+}

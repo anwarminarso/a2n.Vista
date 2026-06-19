@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!--
+      The example pins a single target framework to stay simple, overriding the repo-wide
+      <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks> from Directory.Build.props.
+      Both properties are set so the SDK runs a single (inner) build instead of cross-targeting.
+    -->
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+
+    <RootNamespace>a2n.Vista.Examples.Northwind</RootNamespace>
+    <AssemblyName>a2n.Vista.Examples.Northwind</AssemblyName>
+
+    <!-- Example app, never packaged. -->
+    <IsPackable>false</IsPackable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- SQLite provider (read-only Northwind sample). EF Core itself flows transitively
+         through the a2n.Vista.EntityFrameworkCore project reference. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+  </ItemGroup>
+
+</Project>

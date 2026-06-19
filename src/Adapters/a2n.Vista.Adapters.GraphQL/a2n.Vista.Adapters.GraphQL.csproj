@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.GraphQL</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.GraphQL</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.GraphQL</PackageId>
+    <Description>Vista adapter for GraphQL query translation.</Description>
+    <PackageTags>vista;a2n;adapter;graphql</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

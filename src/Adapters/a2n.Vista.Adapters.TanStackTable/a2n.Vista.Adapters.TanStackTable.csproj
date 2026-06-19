@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.TanStackTable</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.TanStackTable</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.TanStackTable</PackageId>
+    <Description>Vista adapter for TanStack Table (React, Vue, Solid).</Description>
+    <PackageTags>vista;a2n;adapter;tanstack;react;vue;solid</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

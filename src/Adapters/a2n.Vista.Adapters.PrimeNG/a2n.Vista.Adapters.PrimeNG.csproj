@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.PrimeNG</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.PrimeNG</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.PrimeNG</PackageId>
+    <Description>Vista adapter for PrimeNG, PrimeReact, and PrimeVue grids.</Description>
+    <PackageTags>vista;a2n;adapter;primeng;primereact;primevue</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

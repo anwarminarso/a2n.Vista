@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.AgGrid</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.AgGrid</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.AgGrid</PackageId>
+    <Description>Vista adapter for AG Grid.</Description>
+    <PackageTags>vista;a2n;adapter;ag-grid</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

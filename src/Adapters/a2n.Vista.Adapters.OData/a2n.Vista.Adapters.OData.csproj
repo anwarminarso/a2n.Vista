@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.OData</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.OData</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.OData</PackageId>
+    <Description>Vista adapter for OData query translation.</Description>
+    <PackageTags>vista;a2n;adapter;odata</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

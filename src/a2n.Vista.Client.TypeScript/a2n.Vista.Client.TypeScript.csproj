@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>a2n.Vista.Client.TypeScript</RootNamespace>
+    <AssemblyName>a2n.Vista.Client.TypeScript</AssemblyName>
+    <PackageId>a2n.Vista.Client.TypeScript</PackageId>
+    <Description>TypeScript client generator from Vista view metadata.</Description>
+    <PackageTags>vista;a2n;typescript;codegen;client</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.Syncfusion</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.Syncfusion</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.Syncfusion</PackageId>
+    <Description>Vista adapter for Syncfusion Grid.</Description>
+    <PackageTags>vista;a2n;adapter;syncfusion</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

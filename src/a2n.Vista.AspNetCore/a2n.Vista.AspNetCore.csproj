@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.AspNetCore</RootNamespace>
+    <AssemblyName>a2n.Vista.AspNetCore</AssemblyName>
+    <PackageId>a2n.Vista.AspNetCore</PackageId>
+    <Description>Vista ASP.NET Core endpoint mapping (MVC + Minimal API).</Description>
+    <PackageTags>vista;a2n;aspnetcore;minimal-api;mvc</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

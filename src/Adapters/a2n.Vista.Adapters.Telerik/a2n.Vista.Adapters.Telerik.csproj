@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.Telerik</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.Telerik</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.Telerik</PackageId>
+    <Description>Vista adapter for Telerik UI and Kendo Grid.</Description>
+    <PackageTags>vista;a2n;adapter;telerik;kendo</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

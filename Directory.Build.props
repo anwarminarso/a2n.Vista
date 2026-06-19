@@ -1,0 +1,14 @@
+<Project>
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <Authors>Anwar Minarso</Authors>
+    <Copyright>Anwar Minarso @ 2026</Copyright>
+    <RepositoryUrl>https://github.com/anwarminarso/a2n.Vista</RepositoryUrl>
+    <PackageProjectUrl>https://github.com/anwarminarso/a2n.Vista</PackageProjectUrl>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <Version>0.0.1</Version>
+  </PropertyGroup>
+</Project>

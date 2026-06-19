@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Adapters.MudBlazor</RootNamespace>
+    <AssemblyName>a2n.Vista.Adapters.MudBlazor</AssemblyName>
+    <PackageId>a2n.Vista.Adapters.MudBlazor</PackageId>
+    <Description>Vista adapter for MudBlazor MudDataGrid server-side.</Description>
+    <PackageTags>vista;a2n;adapter;mudblazor;blazor</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

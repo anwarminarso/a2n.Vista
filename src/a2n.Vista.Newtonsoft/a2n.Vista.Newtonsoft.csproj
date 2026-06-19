@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Newtonsoft</RootNamespace>
+    <AssemblyName>a2n.Vista.Newtonsoft</AssemblyName>
+    <PackageId>a2n.Vista.Newtonsoft</PackageId>
+    <Description>Optional Newtonsoft.Json serialization support for Vista.</Description>
+    <PackageTags>vista;a2n;newtonsoft;json;legacy</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

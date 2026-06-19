@@ -1,0 +1,20 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista</RootNamespace>
+    <AssemblyName>a2n.Vista.Core</AssemblyName>
+    <PackageId>a2n.Vista.Core</PackageId>
+    <Description>Vista core engine: views, query, expression, metadata.</Description>
+    <PackageTags>vista;a2n;linq;projection;view;metadata</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!--
+      The EF DI wiring (Task 9.4: AddVista / Register<TView>) builds a Gaya B view's ViewMetadata
+      through the internal IViewMetadataSource seam. Only metadata building is exposed; the Gaya B
+      captured execution state (projection/source) remains internal and is not surfaced here.
+    -->
+    <InternalsVisibleTo Include="a2n.Vista.EntityFrameworkCore" />
+  </ItemGroup>
+
+</Project>

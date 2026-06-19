@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Test project for a2n.Vista (Decision Log D7: TUnit on Microsoft.Testing.Platform).
+    TUnit is not VSTest-based; it compiles the test project to an executable and runs
+    via Microsoft.Testing.Platform. `dotnet test` (with the .NET 10 SDK) and `dotnet run`
+    both work; `dotnet test` is preferred because it exercises every targeted TFM.
+    The `dotnet test` MTP runner is opted into via global.json (test.runner).
+
+    TargetFrameworks (net8.0;net9.0;net10.0), Nullable, ImplicitUsings, and LangVersion
+    are inherited from Directory.Build.props to stay aligned with the rest of the solution.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Tests</RootNamespace>
+    <AssemblyName>a2n.Vista.Tests</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
+    <PackageReference Include="TUnit" />
+    <!--
+      SQLite EF Core provider for the paging tests (task 12.5): exercises the real EfViewExecutor
+      List path against a relational provider that translates LIKE / supports async cancellation.
+      Version is pinned per-TFM in Directory.Packages.props (central package management).
+    -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- ASP.NET Core shared framework, needed for the AspNetCore reference at runtime (tasks 12.6+). -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+  </ItemGroup>
+
+</Project>

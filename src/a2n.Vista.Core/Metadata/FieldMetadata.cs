@@ -1,0 +1,101 @@
+using a2n.Vista.Contracts;
+
+namespace a2n.Vista.Metadata;
+
+/// <summary>
+/// Declarative snapshot of a single projected view field, produced by the authoring builders
+/// and consumed by the executor, adapters, and code generators.
+/// Authoritative shape: docs/spec/01-view.md §5.4.
+/// </summary>
+/// <param name="Name">The projected field name (typically the projection property name).</param>
+/// <param name="Label">
+/// Human-friendly display label. Auto-derived from <paramref name="Name"/> via
+/// <see cref="LabelHelper.ToTitleCase"/> (for example <c>"ProductName"</c> → <c>"Product Name"</c>)
+/// unless overridden during authoring with <c>.Field(..., f =&gt; f.Label(...))</c>.
+/// </param>
+/// <param name="ClrType">The CLR type of the projected value.</param>
+/// <param name="IsFilterable">
+/// Whether clients may filter on this field. Defaults to <see langword="true"/> for every
+/// projected field (default-allow, Decision Log D42); opt out with <c>.Filterable(false)</c>.
+/// </param>
+/// <param name="IsSortable">
+/// Whether clients may sort by this field. Defaults to <see langword="true"/>;
+/// opt out with <c>.Sortable(false)</c>.
+/// </param>
+/// <param name="IsSearchable">
+/// Whether this field participates in global search. Defaults to <see langword="true"/> for
+/// string fields only; numeric/date fields are excluded from global search (§5.1).
+/// </param>
+/// <param name="IsScopable">
+/// Whether clients may use this field as a contextual/lookup scope key. Defaults to
+/// <see langword="false"/> (opt-in, Decision Log D47).
+/// </param>
+/// <param name="IsHidden">
+/// Whether the field is hidden from transport/display (for example a technical primary key).
+/// Defaults to <see langword="false"/>.
+/// </param>
+/// <param name="IsWritable">
+/// Whether the field can be written by clients. Write is default-deny; only fields opted in via
+/// <c>MapWritable(...)</c> on a typed CRUD facet are writable (Decision Log D25, §7).
+/// </param>
+/// <param name="IsMaskable">Whether the field value is masked in read responses.</param>
+/// <param name="AllowedOperators">
+/// The set of <see cref="FilterOperator"/> values a client may request against this field.
+/// </param>
+public sealed record FieldMetadata(
+    string Name,
+    string Label,
+    Type ClrType,
+    bool IsFilterable,
+    bool IsSortable,
+    bool IsSearchable,
+    bool IsScopable,
+    bool IsHidden,
+    bool IsWritable,
+    bool IsMaskable,
+    FilterOperator AllowedOperators)
+{
+    /// <summary>
+    /// Creates a <see cref="FieldMetadata"/>, auto-deriving the display label from
+    /// <paramref name="name"/> when <paramref name="label"/> is not supplied.
+    /// </summary>
+    /// <param name="name">The projected field name.</param>
+    /// <param name="clrType">The CLR type of the projected value.</param>
+    /// <param name="label">
+    /// Explicit display label. When <see langword="null"/>, the label is derived from
+    /// <paramref name="name"/> via <see cref="LabelHelper.ToTitleCase"/>.
+    /// </param>
+    /// <param name="isFilterable">Whether clients may filter on this field.</param>
+    /// <param name="isSortable">Whether clients may sort by this field.</param>
+    /// <param name="isSearchable">Whether this field participates in global search.</param>
+    /// <param name="isScopable">Whether this field may be used as a contextual scope key.</param>
+    /// <param name="isHidden">Whether the field is hidden from transport/display.</param>
+    /// <param name="isWritable">Whether the field can be written by clients.</param>
+    /// <param name="isMaskable">Whether the field value is masked in read responses.</param>
+    /// <param name="allowedOperators">The filter operators allowed on this field.</param>
+    /// <returns>A new <see cref="FieldMetadata"/> instance.</returns>
+    public static FieldMetadata Create(
+        string name,
+        Type clrType,
+        string? label = null,
+        bool isFilterable = true,
+        bool isSortable = true,
+        bool isSearchable = true,
+        bool isScopable = false,
+        bool isHidden = false,
+        bool isWritable = false,
+        bool isMaskable = false,
+        FilterOperator allowedOperators = FilterOperator.None) =>
+        new(
+            name,
+            label ?? LabelHelper.ToTitleCase(name),
+            clrType,
+            isFilterable,
+            isSortable,
+            isSearchable,
+            isScopable,
+            isHidden,
+            isWritable,
+            isMaskable,
+            allowedOperators);
+}

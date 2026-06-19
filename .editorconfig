@@ -1,0 +1,31 @@
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{yml,yaml,json,csproj,props,targets,slnx}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[*.cs]
+# File header / language
+csharp_using_directive_placement = outside_namespace:warning
+csharp_style_namespace_declarations = file_scoped:warning
+csharp_prefer_braces = true:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+csharp_style_var_elsewhere = false:suggestion
+
+# Vista-specific: AOT-friendly defaults
+# - prefer explicit types over dynamic
+# - flag reflection-heavy patterns in code review (not enforced here)
+dotnet_diagnostic.IL2026.severity = warning
+dotnet_diagnostic.IL2070.severity = warning
+dotnet_diagnostic.IL2075.severity = warning
+dotnet_diagnostic.IL3050.severity = warning
