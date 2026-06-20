@@ -18,31 +18,19 @@ internal sealed class VistaBuilder : IVistaBuilder
     private readonly IViewRegistry _registry;
     private readonly IViewExecutionPlanRegistry _planRegistry;
     private readonly VistaDbContextAccessor _contextAccessor;
-    private string _routeRoot;
 
     internal VistaBuilder(
         IViewRegistry registry,
         IViewExecutionPlanRegistry planRegistry,
-        VistaDbContextAccessor contextAccessor,
-        string routeRoot)
+        VistaDbContextAccessor contextAccessor)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(planRegistry);
         ArgumentNullException.ThrowIfNull(contextAccessor);
-        ArgumentException.ThrowIfNullOrWhiteSpace(routeRoot);
 
         _registry = registry;
         _planRegistry = planRegistry;
         _contextAccessor = contextAccessor;
-        _routeRoot = routeRoot;
-    }
-
-    /// <inheritdoc />
-    public IVistaBuilder RouteRoot(string routeRoot)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(routeRoot);
-        _routeRoot = routeRoot;
-        return this;
     }
 
     /// <inheritdoc />
@@ -55,7 +43,7 @@ internal sealed class VistaBuilder : IVistaBuilder
         _contextAccessor.Capture(typeof(TDbContext));
 
         var template = new TTemplate();
-        var definitions = template.BuildViews(_routeRoot);
+        var definitions = template.BuildViews();
 
         foreach (var definition in definitions)
         {
@@ -109,9 +97,9 @@ internal sealed class VistaBuilder : IVistaBuilder
 
     /// <summary>
     /// Builds a Gaya B view's <see cref="ViewMetadata"/> through the internal
-    /// <see cref="IViewMetadataSource"/> seam (visible to this assembly via <c>InternalsVisibleTo</c>),
-    /// applying the configured route root. Only metadata is built here; the captured execution state is
-    /// not touched.
+    /// <see cref="IViewMetadataSource"/> seam (visible to this assembly via <c>InternalsVisibleTo</c>).
+    /// The route is the relative segment (view name); the global route root is owned by the AspNetCore
+    /// layer (D101). Only metadata is built here; the captured execution state is not touched.
     /// </summary>
     [RequiresUnreferencedCode("Gaya B registration introspects the view type at runtime to build its metadata; use the source generator path for AOT.")]
     private ViewMetadata BuildViewMetadata<TView>()
@@ -127,6 +115,6 @@ internal sealed class VistaBuilder : IVistaBuilder
                 nameof(TView));
         }
 
-        return source.BuildMetadata(_routeRoot);
+        return source.BuildMetadata();
     }
 }

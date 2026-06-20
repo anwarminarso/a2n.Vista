@@ -76,12 +76,10 @@ public static class VistaServiceCollectionExtensions
         // replaces/fills this from IViewAuthorizer.ShapeQuery).
         services.TryAddScoped<IViewScope, ViewScope>();
 
-        configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor, ViewRouteRoot));
+        configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor));
 
         return services;
     }
-
-    private const string ViewRouteRoot = a2n.Vista.Authoring.ViewTemplate<object>.DefaultRouteRoot;
 
     /// <summary>
     /// Returns the already-registered singleton instance of <typeparamref name="TService"/> (matched by

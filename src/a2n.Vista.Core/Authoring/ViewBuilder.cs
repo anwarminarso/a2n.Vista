@@ -172,10 +172,10 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     /// Materializes the accumulated authoring state into an immutable <see cref="ViewMetadata"/>,
     /// running all build-time validation (Requirements R2.2, R2.3, R3.2, R4.3, R4.4).
     /// </summary>
-    /// <param name="routeRoot">Optional global route root; when set the route is <c>{root}/{viewName}</c>.</param>
-    /// <returns>The built metadata.</returns>
+    /// <returns>The built metadata. <see cref="ViewMetadata.Route"/> is the relative route segment
+    /// (the view name); the global route root is owned solely by the AspNetCore layer (D101).</returns>
     /// <exception cref="InvalidOperationException">Authoring is incomplete or inconsistent.</exception>
-    internal ViewMetadata Build(string? routeRoot)
+    internal ViewMetadata Build()
     {
         if (string.IsNullOrWhiteSpace(_viewName))
         {
@@ -236,7 +236,7 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
 
         return new ViewMetadata(
             Name: _viewName,
-            Route: ComposeRoute(routeRoot, _viewName),
+            Route: _viewName,
             QueryType: typeof(TQuery),
             CrudType: GetCrudType(),
             CrudEntityType: GetCrudEntityType(),
@@ -381,11 +381,6 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
 
         return expression;
     }
-
-    private static string ComposeRoute(string? routeRoot, string viewName) =>
-        string.IsNullOrWhiteSpace(routeRoot)
-            ? viewName
-            : $"{routeRoot.TrimEnd('/')}/{viewName}";
 
     private static bool IsStringType(Type type) =>
         (Nullable.GetUnderlyingType(type) ?? type) == typeof(string);

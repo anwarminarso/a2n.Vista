@@ -29,21 +29,6 @@ namespace a2n.Vista.EntityFrameworkCore;
 public interface IVistaBuilder
 {
     /// <summary>
-    /// Sets the global route root prefixed to each registered view's route (<c>{root}/{viewName}</c>,
-    /// §5.6). Defaults to <see cref="ViewTemplate{TDbContext}.DefaultRouteRoot"/> (<c>/api/views</c>).
-    /// Applies only to views registered <em>after</em> this call.
-    /// </summary>
-    /// <param name="routeRoot">The route root, for example <c>/api/views</c>.</param>
-    /// <returns>This builder, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="routeRoot"/> is <see langword="null"/> or whitespace.</exception>
-    /// <remarks>
-    /// This configures the route root captured into <see cref="a2n.Vista.Metadata.ViewMetadata.Route"/>.
-    /// The HTTP routing layer (<c>a2n.Vista.AspNetCore</c>, Task 10) owns the live endpoint root via its
-    /// own <c>RouteRoot(...)</c>; keep the two in sync when both are configured.
-    /// </remarks>
-    IVistaBuilder RouteRoot(string routeRoot);
-
-    /// <summary>
     /// Registers all views authored by a Gaya A (central-template) <see cref="ViewTemplate{TDbContext}"/>:
     /// instantiates <typeparamref name="TTemplate"/>, runs its <c>Configure</c>, and for each produced
     /// view adds the metadata to the <see cref="IViewRegistry"/> and a matching execution plan to the

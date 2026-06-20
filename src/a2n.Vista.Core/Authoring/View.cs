@@ -12,12 +12,9 @@ internal interface IViewMetadataSource
     /// <summary>
     /// Runs the view's <c>Configure</c> against an internal builder and produces its metadata snapshot.
     /// </summary>
-    /// <param name="routeRoot">
-    /// The global route root to prefix the view route with, or <see langword="null"/> to emit the view
-    /// name as the route segment (the AspNetCore layer applies the configured root).
-    /// </param>
-    /// <returns>The built <see cref="ViewMetadata"/>.</returns>
-    ViewMetadata BuildMetadata(string? routeRoot);
+    /// <returns>The built <see cref="ViewMetadata"/>. <see cref="ViewMetadata.Route"/> is the relative
+    /// route segment (the view name); the global route root is owned by the AspNetCore layer (D101).</returns>
+    ViewMetadata BuildMetadata();
 }
 
 /// <summary>
@@ -76,28 +73,27 @@ public abstract class View<TQuery> : IConfiguredView, IViewMetadataSource
             $"The builder must implement IViewBuilder<{typeof(TQuery).Name}>.", nameof(builder));
     }
 
-    ViewMetadata IViewMetadataSource.BuildMetadata(string? routeRoot) => BuildMetadataCore(routeRoot);
+    ViewMetadata IViewMetadataSource.BuildMetadata() => BuildMetadataCore();
 
     /// <summary>
     /// Builds the <see cref="ViewMetadata"/> for this view by running <see cref="Configure"/> against an
     /// internal builder. Intended for the registry and DI wiring.
     /// </summary>
-    /// <param name="routeRoot">Optional global route root; see <see cref="IViewMetadataSource.BuildMetadata"/>.</param>
     /// <returns>The built metadata.</returns>
-    internal ViewMetadata BuildMetadata(string? routeRoot = null) => BuildMetadataCore(routeRoot);
+    internal ViewMetadata BuildMetadata() => BuildMetadataCore();
 
     /// <summary>
     /// Creates the builder, runs <see cref="Configure"/>, and emits metadata. Overridden by
     /// <see cref="View{TQuery, TCrud}"/> to use the write-capable builder.
     /// </summary>
-    private protected virtual ViewMetadata BuildMetadataCore(string? routeRoot)
+    private protected virtual ViewMetadata BuildMetadataCore()
     {
         var builder = new ViewBuilder<TQuery>();
         Configure(builder);
-        return builder.Build(routeRoot);
+        return builder.Build();
     }
 
-    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore(routeRoot: null);
+    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore();
 }
 
 /// <summary>
@@ -150,22 +146,21 @@ public abstract class View<TQuery, TCrud> : IConfiguredView, IViewMetadataSource
             nameof(builder));
     }
 
-    ViewMetadata IViewMetadataSource.BuildMetadata(string? routeRoot) => BuildMetadataCore(routeRoot);
+    ViewMetadata IViewMetadataSource.BuildMetadata() => BuildMetadataCore();
 
     /// <summary>
     /// Builds the <see cref="ViewMetadata"/> for this view by running <see cref="Configure"/> against an
     /// internal builder. Intended for the registry and DI wiring.
     /// </summary>
-    /// <param name="routeRoot">Optional global route root; see <see cref="IViewMetadataSource.BuildMetadata"/>.</param>
     /// <returns>The built metadata.</returns>
-    internal ViewMetadata BuildMetadata(string? routeRoot = null) => BuildMetadataCore(routeRoot);
+    internal ViewMetadata BuildMetadata() => BuildMetadataCore();
 
-    private ViewMetadata BuildMetadataCore(string? routeRoot)
+    private ViewMetadata BuildMetadataCore()
     {
         var builder = new ViewBuilder<TQuery, TCrud>();
         Configure(builder);
-        return builder.Build(routeRoot);
+        return builder.Build();
     }
 
-    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore(routeRoot: null);
+    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore();
 }

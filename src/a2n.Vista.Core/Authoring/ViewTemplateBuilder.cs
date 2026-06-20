@@ -13,11 +13,8 @@ namespace a2n.Vista.Authoring;
 internal sealed class ViewTemplateBuilder<TDbContext> : IViewTemplateBuilder<TDbContext>
     where TDbContext : class
 {
-    private readonly string _routeRoot;
     private readonly List<ITemplateViewSource<TDbContext>> _views = [];
     private readonly HashSet<string> _names = new(StringComparer.Ordinal);
-
-    internal ViewTemplateBuilder(string routeRoot) => _routeRoot = routeRoot;
 
     /// <inheritdoc />
     public IReadViewBuilder<TRow> AddView<TRow>(
@@ -36,7 +33,7 @@ internal sealed class ViewTemplateBuilder<TDbContext> : IViewTemplateBuilder<TDb
                 $"A view named '{name}' is already registered in this template. View names must be unique.");
         }
 
-        var builder = new ReadViewBuilder<TDbContext, TRow>(name, _routeRoot, query);
+        var builder = new ReadViewBuilder<TDbContext, TRow>(name, query);
         _views.Add(builder);
         return builder;
     }

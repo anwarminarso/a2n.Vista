@@ -14,9 +14,10 @@ namespace a2n.Vista.AspNetCore.Configuration;
 /// <para>
 /// This type is deliberately independent of the Entity Framework layer's <c>IVistaBuilder</c>: the
 /// AspNetCore package must not reference <c>a2n.Vista.EntityFrameworkCore</c> (Requirement R11.3). The
-/// two share only <c>a2n.Vista.Core</c>. Both expose a <c>RouteRoot(...)</c>; keep them in sync when an
-/// application configures both — the EF-side root is captured into
-/// <see cref="a2n.Vista.Metadata.ViewMetadata.Route"/> while this one drives the live endpoints.
+/// two share only <c>a2n.Vista.Core</c>. This is the <b>single source</b> of the global route root
+/// (Decision Log D101): the EF layer no longer owns a route root, so
+/// <see cref="a2n.Vista.Metadata.ViewMetadata.Route"/> is just the view-name segment and the live route
+/// is <c>{RouteRoot}/{segment}</c>.
 /// </para>
 /// <para>
 /// <b>Fail-open seam (Task 10.4).</b> <see cref="HasAuthorizer"/> / <see cref="AuthorizerType"/> let the

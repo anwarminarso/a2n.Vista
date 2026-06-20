@@ -40,7 +40,6 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     where TRow : class
 {
     private readonly string _name;
-    private readonly string _routeRoot;
     private readonly Func<TDbContext, IServiceProvider, IQueryable<TRow>> _query;
 
     // Per-field overrides keyed by projected member name (ordinal). Stored as the non-generic
@@ -53,10 +52,9 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     private int? _maxExportRows;
     private ICrudFacetDefinitionSource? _crud;
 
-    internal ReadViewBuilder(string name, string routeRoot, Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
+    internal ReadViewBuilder(string name, Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
     {
         _name = name;
-        _routeRoot = routeRoot;
         _query = query;
     }
 
@@ -130,7 +128,7 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
 
         var metadata = new ViewMetadata(
             Name: _name,
-            Route: CombineRoute(_routeRoot, _name),
+            Route: _name,
             QueryType: typeof(TRow),
             CrudType: crudDefinition?.CrudType,
             CrudEntityType: crudDefinition?.EntityType,
@@ -187,7 +185,4 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
         var buildMethod = builderType.GetMethod(nameof(FieldBuilder<object>.Build), [typeof(string)])!;
         return (FieldMetadata)buildMethod.Invoke(builder, [property.Name])!;
     }
-
-    private static string CombineRoute(string routeRoot, string name) =>
-        $"{routeRoot.TrimEnd('/')}/{name}";
 }

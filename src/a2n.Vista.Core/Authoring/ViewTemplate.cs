@@ -32,9 +32,6 @@ namespace a2n.Vista.Authoring;
 public abstract class ViewTemplate<TDbContext>
     where TDbContext : class
 {
-    /// <summary>The default global route root applied when a caller does not supply one (§5.6).</summary>
-    public const string DefaultRouteRoot = "/api/views";
-
     /// <summary>
     /// Registers this template's views against the supplied builder. Implementations call
     /// <see cref="IViewTemplateBuilder{TDbContext}.AddView{TRow}"/> once per view.
@@ -47,22 +44,17 @@ public abstract class ViewTemplate<TDbContext>
     /// (metadata plus the captured projection/row-filter/CRUD state the EF layer consumes). This is the
     /// entry point the DI registration path (<c>RegisterTemplate&lt;T&gt;</c>, Task 9.4) invokes.
     /// </summary>
-    /// <param name="routeRoot">
-    /// The global route root to prefix view names with (<c>{root}/{viewName}</c>, §5.6). Defaults to
-    /// <see cref="DefaultRouteRoot"/>.
-    /// </param>
-    /// <returns>The view definitions produced by this template, in registration order.</returns>
-    /// <exception cref="ArgumentException"><paramref name="routeRoot"/> is <see langword="null"/> or whitespace.</exception>
+    /// <returns>The view definitions produced by this template, in registration order.
+    /// Each <see cref="ViewMetadata.Route"/> is the relative route segment (the view name); the global
+    /// route root is owned solely by the AspNetCore layer (D101).</returns>
     /// <exception cref="InvalidOperationException">
     /// Two views are registered under the same name, or a view declares a CRUD facet without any
     /// <c>MapWritable</c> mapping (Decision Log D38/D1).
     /// </exception>
     [RequiresUnreferencedCode("Gaya A authoring enumerates the (possibly anonymous) projection row type via reflection to derive field metadata; use the source generator path for AOT.")]
-    public IReadOnlyList<TemplateViewDefinition<TDbContext>> BuildViews(string routeRoot = DefaultRouteRoot)
+    public IReadOnlyList<TemplateViewDefinition<TDbContext>> BuildViews()
     {
-        ArgumentException.ThrowIfNullOrWhiteSpace(routeRoot);
-
-        var builder = new ViewTemplateBuilder<TDbContext>(routeRoot);
+        var builder = new ViewTemplateBuilder<TDbContext>();
         Configure(builder);
         return builder.BuildDefinitions();
     }
