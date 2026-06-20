@@ -9,9 +9,9 @@ namespace a2n.Vista.Examples.Northwind.Entities;
 /// </summary>
 public partial class ProductSalesFor1997
 {
-    public string CategoryName { get; set; } = string.Empty;
+    public string? CategoryName { get; set; }
 
-    public string ProductName { get; set; } = string.Empty;
+    public string? ProductName { get; set; }
 
     public byte[]? ProductSales { get; set; }
 }

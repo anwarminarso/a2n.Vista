@@ -199,7 +199,7 @@ public class NorthwindDbContext : DbContext
             entity.Property(e => e.CustomerId).HasColumnName("CustomerID");
             entity.Property(e => e.EmployeeId).HasColumnName("EmployeeID");
             entity.Property(e => e.Freight)
-                .HasDefaultValue(0)
+                .HasDefaultValue(0.0)
                 .HasColumnType("NUMERIC");
             entity.Property(e => e.OrderDate).HasColumnType("DATETIME");
             entity.Property(e => e.RequiredDate).HasColumnType("DATETIME");

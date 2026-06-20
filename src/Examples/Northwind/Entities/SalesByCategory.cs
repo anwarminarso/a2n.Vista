@@ -11,9 +11,9 @@ public partial class SalesByCategory
 {
     public int? CategoryId { get; set; }
 
-    public string CategoryName { get; set; } = string.Empty;
+    public string? CategoryName { get; set; }
 
-    public string ProductName { get; set; } = string.Empty;
+    public string? ProductName { get; set; }
 
     public byte[]? ProductSales { get; set; }
 }

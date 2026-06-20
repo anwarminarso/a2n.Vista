@@ -12,7 +12,7 @@ public partial class Shipper
 
     public string CompanyName { get; set; } = string.Empty;
 
-    public string Phone { get; set; } = string.Empty;
+    public string? Phone { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]

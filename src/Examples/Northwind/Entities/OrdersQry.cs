@@ -11,7 +11,7 @@ public partial class OrdersQry
 {
     public int? OrderId { get; set; }
 
-    public string CustomerId { get; set; } = string.Empty;
+    public string? CustomerId { get; set; }
 
     public int? EmployeeId { get; set; }
 
@@ -23,29 +23,29 @@ public partial class OrdersQry
 
     public int? ShipVia { get; set; }
 
-    public int? Freight { get; set; }
+    public double? Freight { get; set; }
 
-    public string ShipName { get; set; } = string.Empty;
+    public string? ShipName { get; set; }
 
-    public string ShipAddress { get; set; } = string.Empty;
+    public string? ShipAddress { get; set; }
 
-    public string ShipCity { get; set; } = string.Empty;
+    public string? ShipCity { get; set; }
 
-    public string ShipRegion { get; set; } = string.Empty;
+    public string? ShipRegion { get; set; }
 
-    public string ShipPostalCode { get; set; } = string.Empty;
+    public string? ShipPostalCode { get; set; }
 
-    public string ShipCountry { get; set; } = string.Empty;
+    public string? ShipCountry { get; set; }
 
-    public string CompanyName { get; set; } = string.Empty;
+    public string? CompanyName { get; set; }
 
-    public string Address { get; set; } = string.Empty;
+    public string? Address { get; set; }
 
-    public string City { get; set; } = string.Empty;
+    public string? City { get; set; }
 
-    public string Region { get; set; } = string.Empty;
+    public string? Region { get; set; }
 
-    public string PostalCode { get; set; } = string.Empty;
+    public string? PostalCode { get; set; }
 
-    public string Country { get; set; } = string.Empty;
+    public string? Country { get; set; }
 }

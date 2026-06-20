@@ -10,7 +10,7 @@ public partial class Order
 {
     public int OrderId { get; set; }
 
-    public string CustomerId { get; set; } = string.Empty;
+    public string? CustomerId { get; set; }
 
     public int? EmployeeId { get; set; }
 
@@ -22,27 +22,27 @@ public partial class Order
 
     public int? ShipVia { get; set; }
 
-    public int? Freight { get; set; }
+    public double? Freight { get; set; }
 
-    public string ShipName { get; set; } = string.Empty;
+    public string? ShipName { get; set; }
 
-    public string ShipAddress { get; set; } = string.Empty;
+    public string? ShipAddress { get; set; }
 
-    public string ShipCity { get; set; } = string.Empty;
+    public string? ShipCity { get; set; }
 
-    public string ShipRegion { get; set; } = string.Empty;
+    public string? ShipRegion { get; set; }
 
-    public string ShipPostalCode { get; set; } = string.Empty;
+    public string? ShipPostalCode { get; set; }
 
-    public string ShipCountry { get; set; } = string.Empty;
-
-    // [Newtonsoft.Json.JsonIgnore]
-    // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual Customer Customer { get; set; } = null!;
+    public string? ShipCountry { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual Employee Employee { get; set; } = null!;
+    public virtual Customer? Customer { get; set; }
+
+    // [Newtonsoft.Json.JsonIgnore]
+    // [System.Text.Json.Serialization.JsonIgnore]
+    public virtual Employee? Employee { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
@@ -50,5 +50,5 @@ public partial class Order
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual Shipper ShipViaNavigation { get; set; } = null!;
+    public virtual Shipper? ShipViaNavigation { get; set; }
 }

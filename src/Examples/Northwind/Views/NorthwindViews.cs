@@ -30,9 +30,12 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
                     p.UnitsInStock,
                     p.Discontinued,
                     p.CategoryId,
-                    CategoryName = p.Category.CategoryName,
+                    // INNER JOINs via the (now optional) navigations: EF guarantees a matching row,
+                    // so null-forgive to keep these projected columns non-null. CategoryId/SupplierId
+                    // are nullable FKs, but the example DB has no orphaned products.
+                    CategoryName = p.Category!.CategoryName,
                     p.SupplierId,
-                    SupplierName = p.Supplier.CompanyName,
+                    SupplierName = p.Supplier!.CompanyName,
                 })
             // Every projected field is filter/sort/searchable by default (default-allow, D42). Only the
             // technical keys need customizing: mark the PK and hide the key columns from transport.

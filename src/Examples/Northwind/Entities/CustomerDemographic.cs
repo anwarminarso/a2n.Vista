@@ -10,7 +10,7 @@ public partial class CustomerDemographic
 {
     public string CustomerTypeId { get; set; } = string.Empty;
 
-    public string CustomerDesc { get; set; } = string.Empty;
+    public string? CustomerDesc { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]

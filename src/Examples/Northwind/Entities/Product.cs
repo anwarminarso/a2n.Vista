@@ -18,7 +18,7 @@ public partial class Product
 
     public int? CategoryId { get; set; }
 
-    public string QuantityPerUnit { get; set; } = string.Empty;
+    public string? QuantityPerUnit { get; set; }
 
     public double? UnitPrice { get; set; }
 
@@ -32,7 +32,7 @@ public partial class Product
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual Category Category { get; set; } = null!;
+    public virtual Category? Category { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
@@ -40,5 +40,5 @@ public partial class Product
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual Supplier Supplier { get; set; } = null!;
+    public virtual Supplier? Supplier { get; set; }
 }

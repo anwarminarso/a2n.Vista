@@ -13,7 +13,7 @@ public partial class SalesTotalsByAmount
 
     public int? OrderId { get; set; }
 
-    public string CompanyName { get; set; } = string.Empty;
+    public string? CompanyName { get; set; }
 
     public DateTime? ShippedDate { get; set; }
 }

@@ -10,25 +10,25 @@ public partial class Customer
 {
     public string CustomerId { get; set; } = string.Empty;
 
-    public string CompanyName { get; set; } = string.Empty;
+    public string? CompanyName { get; set; }
 
-    public string ContactName { get; set; } = string.Empty;
+    public string? ContactName { get; set; }
 
-    public string ContactTitle { get; set; } = string.Empty;
+    public string? ContactTitle { get; set; }
 
-    public string Address { get; set; } = string.Empty;
+    public string? Address { get; set; }
 
-    public string City { get; set; } = string.Empty;
+    public string? City { get; set; }
 
-    public string Region { get; set; } = string.Empty;
+    public string? Region { get; set; }
 
-    public string PostalCode { get; set; } = string.Empty;
+    public string? PostalCode { get; set; }
 
-    public string Country { get; set; } = string.Empty;
+    public string? Country { get; set; }
 
-    public string Phone { get; set; } = string.Empty;
+    public string? Phone { get; set; }
 
-    public string Fax { get; set; } = string.Empty;
+    public string? Fax { get; set; }
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]

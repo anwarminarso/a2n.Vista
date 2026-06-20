@@ -9,11 +9,11 @@ namespace a2n.Vista.Examples.Northwind.Entities;
 /// </summary>
 public partial class CustomerAndSuppliersByCity
 {
-    public string City { get; set; } = string.Empty;
+    public string? City { get; set; }
 
-    public string CompanyName { get; set; } = string.Empty;
+    public string? CompanyName { get; set; }
 
-    public string ContactName { get; set; } = string.Empty;
+    public string? ContactName { get; set; }
 
-    public string Relationship { get; set; } = string.Empty;
+    public string? Relationship { get; set; }
 }

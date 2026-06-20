@@ -9,7 +9,7 @@ namespace a2n.Vista.Examples.Northwind.Entities;
 /// </summary>
 public partial class ProductsAboveAveragePrice
 {
-    public string ProductName { get; set; } = string.Empty;
+    public string? ProductName { get; set; }
 
     public double? UnitPrice { get; set; }
 }

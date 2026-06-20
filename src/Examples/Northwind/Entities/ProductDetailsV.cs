@@ -11,13 +11,13 @@ public partial class ProductDetailsV
 {
     public int? ProductId { get; set; }
 
-    public string ProductName { get; set; } = string.Empty;
+    public string? ProductName { get; set; }
 
     public int? SupplierId { get; set; }
 
     public int? CategoryId { get; set; }
 
-    public string QuantityPerUnit { get; set; } = string.Empty;
+    public string? QuantityPerUnit { get; set; }
 
     public double? UnitPrice { get; set; }
 
@@ -27,13 +27,13 @@ public partial class ProductDetailsV
 
     public int? ReorderLevel { get; set; }
 
-    public string Discontinued { get; set; } = string.Empty;
+    public string? Discontinued { get; set; }
 
-    public string CategoryName { get; set; } = string.Empty;
+    public string? CategoryName { get; set; }
 
-    public string CategoryDescription { get; set; } = string.Empty;
+    public string? CategoryDescription { get; set; }
 
-    public string SupplierName { get; set; } = string.Empty;
+    public string? SupplierName { get; set; }
 
-    public string SupplierRegion { get; set; } = string.Empty;
+    public string? SupplierRegion { get; set; }
 }
