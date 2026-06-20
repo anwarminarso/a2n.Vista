@@ -1,99 +1,120 @@
-# Spec 02 — Filter & Query Engine (Pilar 2, paruh server)
+# Spec 02 — Filter & Query Engine (Pillar 2, server half)
 
-> Status: **DRAFT**
-> Tanggal: 2026-06-19
-> Scope: mesin eksekusi query netral di `a2n.Vista.Core` + `a2n.Vista.EntityFrameworkCore`. Mengubah `ViewQueryRequest` (kontrak netral dari Spec 01 §8) menjadi `IQueryable` ter-translate provider, dengan validasi whitelist, value coercion, sort, dan paging. **Bukan** termasuk: authoring View (Spec 01), adapter grid (Spec 04), source generator (Spec 03), endpoint HTTP (Spec 05), write/CRUD path (Spec 05).
+> Status: **PARTIALLY IMPLEMENTED (Pillar 1)** — reconciled with the code
+> Date: 2026-06-20 (rev: synchronized to the `pilar-1-core` implementation)
+> Scope: the neutral query execution engine in `a2n.Vista.Core` + `a2n.Vista.EntityFrameworkCore`. Turns the `ViewQueryRequest` (the neutral contract from Spec 01 §8) into a provider-translated `IQueryable`, with whitelist validation, value coercion, sort, and paging. **Not** included: View authoring (Spec 01), grid adapters (Spec 04), source generator (Spec 03), HTTP endpoints (Spec 05), write/CRUD path (Spec 05).
+>
+> **Reconciliation note (2026-06-20).** The read engine is already implemented (`EfViewExecutor`,
+> `FilterCompiler`, `ProviderAwareFilterCompiler`). Some contracts sketched here
+> **differ from the code**; the contracts that apply (see Spec 01 §13.1 DR1–DR10):
+> - `ViewQueryRequest`/`FilterLeaf` **remain as in Spec 01 §8** — without `Origin` on the leaf and without
+>   `IncludeUnfilteredCount`. `FilterOrigin` is a **public 3-value enum** (`Filter`/`Search`/`Scope`,
+>   without `Trusted`) that is passed as a **parameter** to `FilterCompiler.Compile(node, origin, view)`
+>   (DR9). The §6.1 refinement below is **not adopted**.
+> - The List result = **`ViewListResult<TRow>`** (Spec 01 §10.1 DR6), not `ViewQueryResult<T>` (§6.2).
+> - `IViewExecutor` is **generic** (`ListAsync<TRow>`/`DetailAsync<TRow>` + write), **not** the non-generic
+>   erased-to-`object` `QueryAsync(ViewQueryExecution)` (§6.3 DR8). There is no `ViewQueryExecution`.
+> - Trusted scope goes through `IViewScope` (not validated); there is no `Trusted` channel in `FilterOrigin`.
+> - Pillar 1 validates the entire tree as `FilterOrigin.Filter` in `EfViewExecutor`; the per-channel
+>   `Search`/`Scope` split is the job of the Pillar 2 adapter (Spec 04).
 
 ---
 
-## 1. Tujuan
+## 1. Purpose
 
-Spec ini mendefinisikan **engine baca** Vista: satu jalur tunggal dari request netral ke hasil ter-materialisasi yang aman, deterministik, dan AOT-friendly.
+This spec defines the **read engine** of Vista: a single path from a neutral request to a materialized result that is safe, deterministic, and AOT-friendly.
 
-Mesin ini wajib:
+The engine must be:
 
-1. **Netral** — tidak tahu grid apa (DataTables/AG Grid/dst.). Inputnya `ViewQueryRequest` (Spec 01 §8); penerjemahan dari format grid adalah tugas adapter (Spec 04).
-2. **Secure-by-whitelist** — setiap field & operator dalam request divalidasi terhadap `ViewMetadata` (Spec 01 §5.4) sebelum expression dibangun. Tidak ada nama field yang pernah di-string-concat ke SQL.
-3. **Provider-aware** — strategi `Contains`/case-sensitivity dipilih server berdasarkan provider EF Core (Spec 01 §8.2), bukan flag klien.
-4. **Deterministik** — paging selalu stabil (tiebreaker PK), count konsisten.
-5. **AOT-clean di hot path** — tidak ada `PropertyInfo.GetValue/SetValue`, tidak ada `Activator.CreateInstance`, tidak ada reflection saat membangun predikat (Spec 01 §9). Expression member-access di-source-gen (Pilar 3); spec ini menetapkan **perilaku/kontrak**-nya, bukan cara meng-generate-nya.
+1. **Neutral** — it does not know which grid is in use (DataTables/AG Grid/etc.). Its input is `ViewQueryRequest` (Spec 01 §8); translating from grid formats is the adapter's job (Spec 04).
+2. **Secure-by-whitelist** — every field & operator in the request is validated against `ViewMetadata` (Spec 01 §5.4) before the expression is built. No field name is ever string-concatenated into SQL.
+3. **Provider-aware** — the `Contains`/case-sensitivity strategy is chosen by the server based on the EF Core provider (Spec 01 §8.2), not a client flag.
+4. **Deterministic** — paging is always stable (PK tiebreaker), and the count is consistent.
+5. **AOT-clean on the hot path** — no `PropertyInfo.GetValue/SetValue`, no `Activator.CreateInstance`, no reflection while building predicates (Spec 01 §9). Member-access expressions are source-generated (Pillar 3); this spec defines their **behavior/contract**, not how to generate them.
 
-## 2. Posisi dalam Arsitektur
+## 2. Position in the Architecture
 
-`02` adalah **paruh server Pilar 2**: "kontrak query/response netral + expression filter standar" (ROADMAP Pilar 2). Hubungan ke dokumen lain:
+`02` is the **server half of Pillar 2**: "neutral query/response contract + standard filter expressions" (ROADMAP Pillar 2). Relationship to other documents:
 
-| Dokumen | Hubungan |
+| Document | Relationship |
 |---|---|
-| `01-view.md` | **Input.** Mendeklarasikan tipe kontrak (`ViewQueryRequest`, `FilterNode`, `FilterOperator`, `PagedResult`) & `ViewMetadata`. `02` *mengeksekusi*-nya; beberapa tipe di-*refine* di sini (ditandai eksplisit). |
-| `03-source-generator.md` | **Penyedia artefak.** Member-access expression, accessor, dan `CompiledView` di-generate compile-time; `02` mengonsumsinya via port. |
-| `04-adapter-contract.md` | **Konsumen.** Adapter menghasilkan `ViewQueryRequest` dan memetakan hasil ke JSON grid. |
-| `05-aspnetcore-mapping.md` | **Komposisi.** Memanggil `IViewAuthorizer` → membangun `IViewScope` → menyerahkan ke `IViewExecutor` (Spec 01 D48). |
+| `01-view.md` | **Input.** Declares the contract types (`ViewQueryRequest`, `FilterNode`, `FilterOperator`, `PagedResult`) & `ViewMetadata`. `02` *executes* them; some types are *refined* here (explicitly marked). |
+| `03-source-generator.md` | **Artifact provider.** Member-access expressions, accessors, and `CompiledView` are generated at compile time; `02` consumes them via a port. |
+| `04-adapter-contract.md` | **Consumer.** The adapter produces `ViewQueryRequest` and maps the result to grid JSON. |
+| `05-aspnetcore-mapping.md` | **Composition.** Calls `IViewAuthorizer` → builds `IViewScope` → hands off to `IViewExecutor` (Spec 01 D48). |
 
-Pembagian paket (Spec 01 D48): **port** (`IViewExecutor`, `IViewScope`, `IQueryDialect`, semua record kontrak) hidup di **Core** (bebas EF & HTTP). **Implementasi** translasi EF (`IViewExecutor`, dialect default) hidup di **`a2n.Vista.EntityFrameworkCore`**. Dialect PostgreSQL hidup di paket provider terpisah (lihat §10).
+Package split (Spec 01 D48): the **ports** (`IViewExecutor`, `IViewScope`, `IQueryDialect`, all contract records) live in **Core** (free of EF & HTTP). The EF translation **implementation** (`IViewExecutor`, default dialect) lives in **`a2n.Vista.EntityFrameworkCore`**. The PostgreSQL dialect lives in a separate provider package (see §10).
 
-## 3. Terminologi
+## 3. Terminology
 
-| Istilah | Arti |
+| Term | Meaning |
 |---|---|
-| **Engine / Executor** | Implementasi `IViewExecutor` yang menjalankan pipeline §5. |
-| **Channel** | Asal sebuah leaf filter: `Filter` (terstruktur), `Search` (global), `Scope` (kontekstual klien), `Trusted` (server-injected). Menentukan whitelist mana yang dipakai (§7). |
-| **Dialect** | `IQueryDialect` — strategi translasi string-match & case-sensitivity per provider EF (§10). |
-| **Coercion** | Konversi `FilterLeaf.Value` (mentah dari adapter: string/number/`JsonElement`) ke CLR type field target (§8). |
-| **Member-access** | `Expression` `q => q.Field` yang dibangun compile-time (source-gen) per field di `ViewMetadata`. Tidak pernah dari `PropertyInfo` di hot path. |
-| **Filtered count** | Jumlah baris setelah seluruh constraint (row filter + scope + filter + search). Dasar `TotalPages`. |
-| **Unfiltered count** | Jumlah baris setelah constraint server-trusted (row filter + trusted scope) tapi **tanpa** filter/search/scope-klien. Untuk `recordsTotal` DataTables (§12). |
+| **Engine / Executor** | The `IViewExecutor` implementation that runs the §5 pipeline. |
+| **Channel** | The origin of a filter leaf: `Filter` (structured), `Search` (global), `Scope` (client-contextual), `Trusted` (server-injected). Determines which whitelist applies (§7). |
+| **Dialect** | `IQueryDialect` — the string-match & case-sensitivity translation strategy per EF provider (§10). |
+| **Coercion** | Conversion of `FilterLeaf.Value` (raw from the adapter: string/number/`JsonElement`) to the CLR type of the target field (§8). |
+| **Member-access** | An `Expression` `q => q.Field` built at compile time (source-gen) per field in `ViewMetadata`. Never from `PropertyInfo` on the hot path. |
+| **Filtered count** | The number of rows after all constraints (row filter + scope + filter + search). The basis for `TotalPages`. |
+| **Unfiltered count** | The number of rows after server-trusted constraints (row filter + trusted scope) but **without** filter/search/client-scope. Used for DataTables `recordsTotal` (§12). |
 
 ## 4. Non-Goals
 
-- Penerjemahan format grid spesifik (DataTables `start/length`, `jsonQB`) → itu Spec 04.
-- Write path: kompilasi `MapWritable` (`TCrud → TEntity`), concurrency token, bulk → Spec 05 + Pilar 3.
-- Cara source generator **menghasilkan** member-access/accessor → Spec 03. Di sini hanya kontraknya.
-- Export streaming → Spec 01 §11 + Spec 07.
+- Translating specific grid formats (DataTables `start/length`, `jsonQB`) → that is Spec 04.
+- Write path: compiling `MapWritable` (`TCrud → TEntity`), concurrency token, bulk → Spec 05 + Pillar 3.
+- How the source generator **produces** member-access/accessors → Spec 03. Only the contract is here.
+- Streaming export → Spec 01 §11 + Spec 07.
 - Keyset/seek pagination → Open Question §17.
 
-## 5. Pipeline Eksekusi
+## 5. Execution Pipeline
 
-Urutan baku, dijalankan `IViewExecutor.QueryAsync`. Langkah 1–3 dilakukan pemanggil (AspNetCore, Spec 05) lalu diserahkan; 4–11 milik engine.
+The standard order, run by `IViewExecutor.QueryAsync`. Steps 1–3 are performed by the caller (AspNetCore, Spec 05) and then handed off; 4–11 belong to the engine.
 
 ```text
 [Adapter]      0. RequestGrid            → ViewQueryRequest          (Spec 04)
 [AspNetCore]   1. IViewAuthorizer.IsAllowedAsync(ctx)  → allow/deny (403)
 [AspNetCore]   2. IViewAuthorizer.ShapeQuery(ctx, scope)→ IViewScope (trusted row filters)
-[AspNetCore]   3. serahkan (ViewQueryRequest, IViewScope) ke IViewExecutor
+[AspNetCore]   3. hand off (ViewQueryRequest, IViewScope) to IViewExecutor
 ─────────────────────────────────────────────────────────────────────────
-[Engine]       4. VALIDATE   tiap FilterLeaf & SortSpec vs ViewMetadata (per-channel whitelist) → 400 bila langgar
-[Engine]       5. COERCE     FilterLeaf.Value → CLR type field          → 400 bila type mismatch
+[Engine]       4. VALIDATE   each FilterLeaf & SortSpec vs ViewMetadata (per-channel whitelist) → 400 if violated
+[Engine]       5. COERCE     FilterLeaf.Value → field CLR type           → 400 on type mismatch
 [Engine]       6. SOURCE     baseQuery = View.Source(sp)                 // IQueryable<TSource>
-[Engine]       7. PRE-FILTER baseQuery.Where(rowFilter).Where(trustedScope)   // di TSource, push-down SQL
+[Engine]       7. PRE-FILTER baseQuery.Where(rowFilter).Where(trustedScope)   // on TSource, push-down SQL
 [Engine]       8. PROJECT    .Select(projection)                         // → IQueryable<TQuery>
-[Engine]       9. POST-FILTER .Where(filterTree)                         // di TQuery (Filter+Search+Scope klien)
+[Engine]       9. POST-FILTER .Where(filterTree)                         // on TQuery (Filter+Search+client Scope)
 [Engine]      10. COUNT      FilteredRows = await q.LongCountAsync(ct)
-                             UnfilteredRows = (opsional) hitung di titik langkah 8
+                             UnfilteredRows = (optional) computed at the step 8 point
 [Engine]      11. ORDER+PAGE .OrderBy(sort + PK tiebreaker).Skip(..).Take(..)
 [Engine]      12. MATERIALIZE await .ToListAsync(ct) → mask (Spec 01 §5.2) → ViewQueryResult<TQuery>
 ```
 
-Catatan urutan:
+Ordering notes:
 
-- **Row filter & trusted scope di TSource** (langkah 7, pre-projection) — soft-delete/tenant hidup di entity (Spec 01 D28). Push-down SQL natural.
-- **Filter/Search/Scope-klien di TQuery** (langkah 9, post-projection) — beroperasi pada field projection yang sudah dikurasi (Spec 01 §4.4). EF mengomposisi langkah 7–11 menjadi satu SQL; computed field yang tak bisa di-SQL ditangani `WithProjectedRowFilter` (kasus khusus, Spec 01 §5.2).
-- **Mask post-materialisasi** (langkah 12) — `MaskField` adalah transform `TProp→TProp` di memori, bukan SQL.
+- **Row filter & trusted scope on TSource** (step 7, pre-projection) — soft-delete/tenant live on the entity (Spec 01 D28). Natural SQL push-down.
+- **Filter/Search/client-Scope on TQuery** (step 9, post-projection) — operate on the already-curated projection fields (Spec 01 §4.4). EF composes steps 7–11 into a single SQL statement; computed fields that cannot be expressed in SQL are handled by `WithProjectedRowFilter` (special case, Spec 01 §5.2).
+- **Post-materialization mask** (step 12) — `MaskField` is a `TProp→TProp` transform in memory, not SQL.
 
-## 6. Kontrak (refinement Spec 01 §8)
+## 6. Contracts (refinement of Spec 01 §8)
 
-### 6.1 Request (refined)
+### 6.1 Request (refined) — ⚠️ NOT ADOPTED (see reconciliation)
 
-`ViewQueryRequest` dari Spec 01 §8 di-refine: tiap `FilterLeaf` membawa `Origin` (memformalkan "record FilterOrigin internal" yang disebut Spec 01 §8.3), dan request menambah `IncludeUnfilteredCount`.
+> **Reconciliation (2026-06-20).** The refinement below (`Origin` on `FilterLeaf`, `IncludeUnfilteredCount`,
+> `FilterOrigin.Trusted`) is **not implemented**. The code keeps `ViewQueryRequest`/`FilterLeaf`
+> as in Spec 01 §8, uses the 3-value `FilterOrigin` as a **parameter** to `FilterCompiler.Compile`,
+> and computes the two counts via `ViewListResult<TRow>` (§6.2 / Spec 01 §10.1 DR6). The block below
+> is kept as a historical design note. If the Pillar 2 adapter (Spec 04) needs a multi-channel tree,
+> moving `Origin` onto the leaf will be reconsidered at that time.
+
+The `ViewQueryRequest` from Spec 01 §8 is refined: each `FilterLeaf` carries an `Origin` (formalizing the "internal FilterOrigin record" mentioned in Spec 01 §8.3), and the request adds `IncludeUnfilteredCount`.
 
 ```csharp
 namespace a2n.Vista;
 
 public sealed record ViewQueryRequest(
-    FilterNode? Filter,                  // tree tunggal hasil merge channel oleh adapter
+    FilterNode? Filter,                  // single tree resulting from the adapter merging channels
     IReadOnlyList<SortSpec> Sort,
     int Page,                            // 0-based
     int PageSize,
-    bool IncludeUnfilteredCount = false, // true → engine hitung juga total tanpa filter/search/scope (recordsTotal)
+    bool IncludeUnfilteredCount = false, // true → engine also computes the total without filter/search/scope (recordsTotal)
     IReadOnlyList<string>? SelectFields = null);
 
 public sealed record SortSpec(string Field, bool Descending);
@@ -108,57 +129,90 @@ public sealed record FilterAnd(IReadOnlyList<FilterNode> Children) : FilterNode;
 public sealed record FilterOr(IReadOnlyList<FilterNode> Children)  : FilterNode;
 public sealed record FilterNot(FilterNode Child) : FilterNode;
 
-// Channel asal leaf → menentukan whitelist mana yang berlaku (§7).
+// The leaf's origin channel → determines which whitelist applies (§7).
 public enum FilterOrigin
 {
-    Filter  = 0,  // terstruktur (QueryBuilder, per-column) → whitelist Filterable + AllowedOperators
-    Search  = 1,  // global search box                      → whitelist Searchable (string), op WAJIB Contains
-    Scope   = 2,  // contextual/lookup dari KLIEN           → whitelist Scopable (Spec 01 §5.6)
-    Trusted = 3,  // di-inject server (ShapeQuery)          → TIDAK divalidasi (trusted)
+    Filter  = 0,  // structured (QueryBuilder, per-column) → Filterable + AllowedOperators whitelist
+    Search  = 1,  // global search box                      → Searchable (string) whitelist, op MUST be Contains
+    Scope   = 2,  // contextual/lookup from the CLIENT       → Scopable whitelist (Spec 01 §5.6)
+    Trusted = 3,  // injected by the server (ShapeQuery)     → NOT validated (trusted)
 }
 ```
 
-`FilterOperator` tidak berubah dari Spec 01 §8 (flags enum).
+`FilterOperator` is unchanged from Spec 01 §8 (flags enum).
 
-### 6.2 Result (baru)
+### 6.2 Result — `ViewListResult<TRow>` (code), `ViewQueryResult<T>` (proposed, not used)
 
-Engine mengembalikan record kaya yang membawa **dua count**. `PagedResult<T>` (Spec 01 §10) adalah *proyeksi default-shape* dari result ini; adapter lain (DataTables) memetakan ke shape-nya sendiri.
+> **Reconciliation (2026-06-20).** The code returns **`ViewListResult<TRow>`** (Spec 01 §10.1 DR6):
+> `record ViewListResult<TRow>(PagedResult<TRow> Page, long TotalRowsUnfiltered)`. `Page.TotalRows`
+> = `recordsFiltered`; `TotalRowsUnfiltered` = `recordsTotal`. The `ViewQueryResult<T>` type below
+> is **not** created — `PagedResult<T>` + `ViewListResult<TRow>` already satisfy the two-count need.
+> The block below is kept as a design note.
+
+The engine returns a rich record that carries **two counts**. `PagedResult<T>` (Spec 01 §10) is the *default-shape projection* of this result; other adapters (DataTables) map it to their own shape.
 
 ```csharp
 namespace a2n.Vista;
 
 public sealed record ViewQueryResult<T>(
     IReadOnlyList<T> Items,
-    long FilteredRows,         // total setelah SEMUA constraint → dasar TotalPages
-    long? UnfilteredRows,      // null kecuali IncludeUnfilteredCount; total tanpa filter/search/scope-klien
+    long FilteredRows,         // total after ALL constraints → basis for TotalPages
+    long? UnfilteredRows,      // null unless IncludeUnfilteredCount; total without filter/search/client-scope
     int Page,
     int PageSize)
 {
     public long TotalPages => PageSize <= 0 ? 0 : (FilteredRows + PageSize - 1) / PageSize;
 
-    // Proyeksi ke shape netral Spec 01 §10.
+    // Projection to the neutral shape of Spec 01 §10.
     public PagedResult<T> ToPagedResult() =>
         new(Items, FilteredRows, Page, PageSize, TotalPages);
 }
 ```
 
-> Resolusi ref `dyndata-datatables-observed.md` §7 butir 7: `FilteredRows` = `recordsFiltered`; `UnfilteredRows` (saat diminta) = `recordsTotal`.
+> Resolution for ref `dyndata-datatables-observed.md` §7 item 7: `FilteredRows` = `recordsFiltered`; `UnfilteredRows` (when requested) = `recordsTotal`.
 
 ### 6.3 Port `IViewExecutor` (Core)
 
-Port non-generik, di-resolve via DI di composition root, di-implement EF layer. `TQuery` di-erase ke `object` di boundary (sejalan `IViewExporter` Spec 01 §11.1); materialisasi typed dilakukan delegate source-gen (Pilar 3).
+> **Reconciliation (2026-06-20).** The implemented port is **generic** and accepts `ViewMetadata`
+> directly (not `ViewQueryExecution`), and **merges write** (DR8):
+>
+> ```csharp
+> namespace a2n.Vista.Ports;
+>
+> public interface IViewExecutor
+> {
+>     // List: validate+filter+sort+page, materialize one page + two counts.
+>     Task<ViewListResult<TRow>> ListAsync<TRow>(
+>         ViewMetadata view, ViewQueryRequest request, IViewScope scope, CancellationToken ct);
+>
+>     // Detail by-key (null → 404 in Spec 05).
+>     Task<TRow?> DetailAsync<TRow>(
+>         ViewMetadata view, object key, IViewScope scope, CancellationToken ct);
+>
+>     // Write (Pillar 1: throw / endpoint 501) — TCrud typed.
+>     Task<object> CreateAsync<TCrud>(ViewMetadata view, TCrud model, IViewScope scope, CancellationToken ct) where TCrud : class;
+>     Task<bool> UpdateAsync<TCrud>(ViewMetadata view, object key, TCrud model, IViewScope scope, string? concurrencyToken, CancellationToken ct) where TCrud : class;
+>     Task<bool> DeleteAsync(ViewMetadata view, object key, IViewScope scope, string? concurrencyToken, CancellationToken ct);
+> }
+> ```
+>
+> There is no separate `IViewWriter` (contrasting the Spec 05 §7.1 D82 sketch); write lives in `IViewExecutor`.
+> All members are marked `[RequiresUnreferencedCode]` (the reflection path until source-gen in Pillar 3).
+> The non-generic block below is kept as a design note.
+
+A non-generic port, resolved via DI at the composition root, implemented by the EF layer. `TQuery` is erased to `object` at the boundary (consistent with `IViewExporter`, Spec 01 §11.1); typed materialization is performed by a source-gen delegate (Pillar 3).
 
 ```csharp
 namespace a2n.Vista;
 
 public interface IViewExecutor
 {
-    // Facet List/query (§5). viewName → ViewMetadata via IViewRegistry.
+    // List/query facet (§5). viewName → ViewMetadata via IViewRegistry.
     Task<ViewQueryResult<object>> QueryAsync(
         ViewQueryExecution exec,
         CancellationToken ct = default);
 
-    // Facet Detail (Spec 01 §4.6). null bila tidak ketemu → 404 di Spec 05.
+    // Detail facet (Spec 01 §4.6). null if not found → 404 in Spec 05.
     Task<object?> GetByKeyAsync(
         string viewName,
         object key,
@@ -166,7 +220,7 @@ public interface IViewExecutor
         CancellationToken ct = default);
 }
 
-// Semua input eksekusi yang sudah tervalidasi-host (auth lulus, scope terkumpul).
+// All execution inputs that have already been host-validated (auth passed, scope collected).
 public sealed record ViewQueryExecution(
     string ViewName,
     ViewQueryRequest Request,
@@ -174,88 +228,88 @@ public sealed record ViewQueryExecution(
     IServiceProvider Services);
 ```
 
-`IViewScope` tidak berubah dari Spec 01 §5.6 (`AddRowFilter<TSource>`). Leaf yang ditambahkan via scope masuk channel `Trusted` (tidak divalidasi).
+`IViewScope` is unchanged from Spec 01 §5.6 (`AddRowFilter<TSource>`). Leaves added via scope enter the `Trusted` channel (not validated).
 
-## 7. Validasi & Whitelist per-Channel
+## 7. Per-Channel Validation & Whitelist
 
-Validasi (langkah 4) adalah **gerbang keamanan utama** engine. Dijalankan sebelum coercion & expression. Setiap `FilterLeaf` dievaluasi menurut `Origin`-nya terhadap `ViewMetadata.Fields`:
+Validation (step 4) is the engine's **primary security gate**. It runs before coercion & expression building. Each `FilterLeaf` is evaluated according to its `Origin` against `ViewMetadata.Fields`:
 
-| `Origin` | Field harus | Operator harus | Pelanggaran |
+| `Origin` | Field must be | Operator must be | Violation |
 |---|---|---|---|
 | `Filter` | `IsFilterable == true` | `Op ∈ AllowedOperators[field]` | 400 `filter-field-not-allowed` / `filter-operator-not-allowed` |
-| `Search` | `IsSearchable == true` **dan** `ClrType == string` | `Op == Contains` (dipaksa) | 400 `search-field-not-allowed` |
+| `Search` | `IsSearchable == true` **and** `ClrType == string` | `Op == Contains` (forced) | 400 `search-field-not-allowed` |
 | `Scope` | `IsScopable == true` | `Op ∈ AllowedOperators[field]` | 400 `scope-field-not-allowed` |
-| `Trusted` | — | — | tidak divalidasi (server-trusted, Spec 01 §5.6/D46) |
+| `Trusted` | — | — | not validated (server-trusted, Spec 01 §5.6/D46) |
 
-`SortSpec.Field` harus `IsSortable == true`; jika tidak → 400 `sort-field-not-allowed`.
+`SortSpec.Field` must be `IsSortable == true`; otherwise → 400 `sort-field-not-allowed`.
 
-Aturan tambahan:
+Additional rules:
 
-1. **Field tak dikenal** (tidak ada di `ViewMetadata.Fields`) → selalu 400 `filter-field-not-allowed` (tidak pernah skip diam-diam — kebalikan DynData `externalFilter`, ref §7 butir 4).
-2. **`IsHidden` tidak menghalangi filter/scope** — PK teknis yang `Hidden().Scopable()` tetap valid sebagai lookup key (Spec 01 §5.6). Hidden hanya soal *tampilan/serialisasi*, bukan filterability.
-3. **Validasi rekursif** menelusuri `FilterAnd/Or/Not` sampai semua leaf tervalidasi. Satu pelanggaran membatalkan seluruh request (fail-fast), error menyertakan `field` + `operator` + `allowed` di `extensions` (Spec 01 §14.1).
-4. **Anti-injection invariant**: nama field di leaf **hanya** dipakai sebagai *key lookup* ke peta member-access source-gen. Tidak ada jalur di mana string field menjadi bagian teks SQL. Field tak terdaftar tidak punya entri member-access → otomatis ditolak di langkah ini.
+1. **Unknown field** (not present in `ViewMetadata.Fields`) → always 400 `filter-field-not-allowed` (never silently skipped — the opposite of DynData `externalFilter`, ref §7 item 4).
+2. **`IsHidden` does not block filter/scope** — a technical PK marked `Hidden().Scopable()` remains valid as a lookup key (Spec 01 §5.6). Hidden is only about *display/serialization*, not filterability.
+3. **Recursive validation** traverses `FilterAnd/Or/Not` until all leaves are validated. A single violation aborts the entire request (fail-fast), and the error includes `field` + `operator` + `allowed` in `extensions` (Spec 01 §14.1).
+4. **Anti-injection invariant**: a field name in a leaf is used **only** as a *lookup key* into the source-gen member-access map. There is no path where a field string becomes part of SQL text. An unregistered field has no member-access entry → it is automatically rejected at this step.
 
 ## 8. Value Model & Coercion (Sanitization)
 
-`FilterLeaf.Value` datang mentah dari adapter (`string`, angka, `bool`, `JsonElement`, atau array). Langkah 5 meng-coerce ke CLR type field (`FieldMetadata.ClrType`) sebelum masuk constant expression.
+`FilterLeaf.Value` arrives raw from the adapter (`string`, number, `bool`, `JsonElement`, or array). Step 5 coerces it to the field CLR type (`FieldMetadata.ClrType`) before it enters a constant expression.
 
-### 8.1 Aturan coercion
+### 8.1 Coercion rules
 
-| Target | Sumber diterima | Aturan |
+| Target | Accepted source | Rule |
 |---|---|---|
-| `string` | string | apa adanya (escaping wildcard di §10, bukan di sini) |
+| `string` | string | as-is (wildcard escaping is in §10, not here) |
 | `int/long/short/byte` | number / numeric-string | `InvariantCulture`; overflow → 400 |
 | `decimal/double/float` | number / numeric-string | `InvariantCulture` |
 | `bool` | bool / `"true"`/`"false"`/`"1"`/`"0"` | case-insensitive |
-| `DateTime/DateTimeOffset` | ISO-8601 string | `DateTimeStyles.RoundtripKind`; format lain → 400 |
-| `Guid` | string | `Guid.TryParse`; gagal → 400 |
-| `enum` | nama / nilai underlying | `Enum.TryParse` (case-insensitive); tidak valid → 400 |
-| `T?` (nullable) | di atas, atau `null` | `null` hanya legal untuk `IsNull`/`In`-anggota |
+| `DateTime/DateTimeOffset` | ISO-8601 string | `DateTimeStyles.RoundtripKind`; other formats → 400 |
+| `Guid` | string | `Guid.TryParse`; failure → 400 |
+| `enum` | name / underlying value | `Enum.TryParse` (case-insensitive); invalid → 400 |
+| `T?` (nullable) | the above, or `null` | `null` is only legal for `IsNull`/`In`-member |
 
-Coercion **culture-invariant** (server-locale-independent) — menutup bug DynData `ListSeparator`/locale (Spec 01 §11.3 analog). Gagal coerce → 400 `value-type-mismatch` dengan `field`, `expectedType`, `value`.
+Coercion is **culture-invariant** (server-locale-independent) — closing the DynData `ListSeparator`/locale bug (Spec 01 §11.3 analog). Coercion failure → 400 `value-type-mismatch` with `field`, `expectedType`, `value`.
 
-### 8.2 Bentuk multi-nilai
+### 8.2 Multi-value forms
 
-- **`In`**: `Value` wajib array/list. Tiap elemen di-coerce ke `ClrType`. Ukuran di-cap: default **1000** (`MaxInValues`), override global; lebih → 400 `payload-too-large` (413). Dibangun sebagai `list.Contains(member)` → EF translate ke SQL `IN`.
-- **`Between`**: `Value` wajib array 2-elemen `[lo, hi]`, keduanya non-null, di-coerce. Bukan 2-elemen → 400. Dibangun `member >= lo && member <= hi`.
-- **`IsNull`**: `Value` diabaikan. Hanya valid untuk field nullable / reference type; pada non-nullable value-type → 400 `operator-not-applicable`.
+- **`In`**: `Value` must be an array/list. Each element is coerced to `ClrType`. The size is capped: default **1000** (`MaxInValues`), with a global override; more → 400 `payload-too-large` (413). Built as `list.Contains(member)` → EF translates it to SQL `IN`.
+- **`Between`**: `Value` must be a 2-element array `[lo, hi]`, both non-null, coerced. Not 2 elements → 400. Built as `member >= lo && member <= hi`.
+- **`IsNull`**: `Value` is ignored. Only valid for a nullable / reference-type field; on a non-nullable value-type → 400 `operator-not-applicable`.
 
 ### 8.3 Sanitization invariants
 
-1. Tidak ada nilai klien yang menjadi **identifier** SQL (hanya **parameter** value).
-2. Panjang string filter di-cap (default `MaxFilterStringLength = 4096`) → lebih panjang ditolak 400 (anti-DoS pola LIKE).
-3. Kedalaman tree `FilterNode` di-cap (default `MaxFilterDepth = 16`) & total leaf (default `MaxFilterLeaves = 128`) → lebih → 400. Menutup serangan nested-OR yang meledakkan query plan.
+1. No client value becomes a SQL **identifier** (only a **parameter** value).
+2. The filter string length is capped (default `MaxFilterStringLength = 4096`) → anything longer is rejected with 400 (anti-DoS against LIKE patterns).
+3. The `FilterNode` tree depth is capped (default `MaxFilterDepth = 16`) & the total leaf count (default `MaxFilterLeaves = 128`) → more → 400. Closes nested-OR attacks that blow up the query plan.
 
 ## 9. Expression Building per Operator
 
-Setelah validasi+coercion, tiap `FilterLeaf` menjadi `Expression<Func<TQuery, bool>>`. `member` = member-access source-gen `q => q.Field`; `c` = constant hasil coercion.
+After validation+coercion, each `FilterLeaf` becomes an `Expression<Func<TQuery, bool>>`. `member` = the source-gen member-access `q => q.Field`; `c` = the coerced constant.
 
-| `FilterOperator` | Expression (semantik) | Catatan null |
+| `FilterOperator` | Expression (semantics) | Null note |
 |---|---|---|
 | `Equals` | `member == c` | `c == null` → `member == null` |
 | `NotEquals` | `member != c` | `c == null` → `member != null` |
-| `GreaterThan` | `member > c` | hanya tipe comparable; pada `null` member → SQL `false` |
-| `GreaterThanOrEqual` | `member >= c` | idem |
-| `LessThan` | `member < c` | idem |
-| `LessThanOrEqual` | `member <= c` | idem |
-| `Contains` | dialect string-match (§10) | null-guard untuk in-memory |
-| `StartsWith` | dialect string-match (§10) | idem |
-| `EndsWith` | dialect string-match (§10) | idem |
-| `In` | `values.Contains(member)` | `null` anggota → tergantung provider |
-| `Between` | `member >= lo && member <= hi` | lo/hi wajib non-null (§8.2) |
+| `GreaterThan` | `member > c` | comparable types only; on a `null` member → SQL `false` |
+| `GreaterThanOrEqual` | `member >= c` | same |
+| `LessThan` | `member < c` | same |
+| `LessThanOrEqual` | `member <= c` | same |
+| `Contains` | dialect string-match (§10) | null-guard for in-memory |
+| `StartsWith` | dialect string-match (§10) | same |
+| `EndsWith` | dialect string-match (§10) | same |
+| `In` | `values.Contains(member)` | a `null` member → provider-dependent |
+| `Between` | `member >= lo && member <= hi` | lo/hi must be non-null (§8.2) |
 | `IsNull` | `member == null` | — |
 
-Aturan:
+Rules:
 
-1. **`FilterNot(child)`** → `Expression.Not(...)` membungkus sub-predikat (mis. `is_not_empty`, `not_in` dari adapter, ref §6.2).
-2. **Operator vs tipe**: operator komparasi (`>`,`>=`,`<`,`<=`,`Between`) pada `string`/`bool`/`Guid` → 400 `operator-not-applicable` (selain yang diizinkan `AllowedOperators`). Whitelist field (§7) adalah pertahanan pertama; cek ini pertahanan kedua untuk konsistensi tipe.
-3. **Null-guard in-memory**: untuk provider InMemory/tes, string-match dibungkus `member != null && ...` agar tidak `NullReferenceException`; di provider relasional null member menghasilkan `unknown`/false secara natural — guard tetap aman & tidak mengubah hasil SQL.
-4. **Komposisi**: `FilterAnd/Or` → `AndAlso`/`OrElse` ber-rantai dengan parameter sama; pohon kosong (`null` Filter) → tanpa `Where`.
+1. **`FilterNot(child)`** → `Expression.Not(...)` wrapping the sub-predicate (e.g., `is_not_empty`, `not_in` from the adapter, ref §6.2).
+2. **Operator vs type**: a comparison operator (`>`,`>=`,`<`,`<=`,`Between`) on `string`/`bool`/`Guid` → 400 `operator-not-applicable` (other than what `AllowedOperators` permits). The field whitelist (§7) is the first line of defense; this check is the second line of defense for type consistency.
+3. **In-memory null-guard**: for the InMemory/test provider, string-match is wrapped with `member != null && ...` to avoid a `NullReferenceException`; on a relational provider a null member naturally yields `unknown`/false — the guard stays safe & does not change the SQL result.
+4. **Composition**: `FilterAnd/Or` → chained `AndAlso`/`OrElse` with the same parameter; an empty tree (`null` Filter) → no `Where`.
 
 ## 10. Provider-aware String Matching
 
-Inti "provider-detected, bukan flag klien" (Spec 01 §8.2, D17). Klien hanya mengirim intent (`Contains`/`StartsWith`/`EndsWith`); engine memilih translasi.
+The core of "provider-detected, not a client flag" (Spec 01 §8.2, D17). The client only sends intent (`Contains`/`StartsWith`/`EndsWith`); the engine chooses the translation.
 
 ### 10.1 Port `IQueryDialect` (Core)
 
@@ -266,147 +320,155 @@ public enum StringMatchKind { Contains, StartsWith, EndsWith }
 
 public interface IQueryDialect
 {
-    string ProviderName { get; }                 // mis. "Microsoft.EntityFrameworkCore.SqlServer"
+    string ProviderName { get; }                 // e.g. "Microsoft.EntityFrameworkCore.SqlServer"
     bool CaseInsensitiveByDefault { get; }
 
-    // Membangun predikat string-match untuk SATU member string.
-    // Implementasi memilih string.Contains (EF auto-escape) atau pola LIKE/ILIKE
-    // (escape manual via EscapeLikePattern).
+    // Builds the string-match predicate for ONE string member.
+    // The implementation chooses string.Contains (EF auto-escape) or a LIKE/ILIKE pattern
+    // (manual escape via EscapeLikePattern).
     Expression BuildStringMatch(Expression member, string value, StringMatchKind kind);
 }
 ```
 
-### 10.2 Strategi default per provider
+### 10.2 Default strategy per provider
 
-| Provider | `Contains` default | Mekanisme |
+| Provider | `Contains` default | Mechanism |
 |---|---|---|
-| SQL Server | CI (collation default) | `string.Contains/StartsWith/EndsWith` (EF translate + **auto-escape**) |
-| SQLite | CI (ASCII) native | idem |
-| MySQL / Pomelo | CI (collation default) | idem |
-| InMemory / tes | CI | `string.Contains(StringComparison.OrdinalIgnoreCase)` + null-guard |
-| **PostgreSQL (Npgsql)** | **CS** (LIKE) → butuh ILIKE untuk CI | `EF.Functions.ILike(member, "%" + Escape(value) + "%")` |
+| SQL Server | CI (default collation) | `string.Contains/StartsWith/EndsWith` (EF translate + **auto-escape**) |
+| SQLite | CI (ASCII) native | same |
+| MySQL / Pomelo | CI (default collation) | same |
+| InMemory / test | CI | `string.Contains(StringComparison.OrdinalIgnoreCase)` + null-guard |
+| **PostgreSQL (Npgsql)** | **CS** (LIKE) → needs ILIKE for CI | `EF.Functions.ILike(member, "%" + Escape(value) + "%")` |
 
-Default `DefaultStringMatch` (Spec 01 §8.2): semua provider memakai jalur `string.Contains` **kecuali** PostgreSQL yang case-insensitive memerlukan `ILIKE`.
+The `DefaultStringMatch` default (Spec 01 §8.2): every provider uses the `string.Contains` path **except** PostgreSQL, whose case-insensitive matching requires `ILIKE`.
 
-### 10.3 PostgreSQL = dialect di paket terpisah
+### 10.3 PostgreSQL = a dialect in a separate package
 
-`string.Contains` pada Npgsql menerjemahkan ke `LIKE` yang **case-sensitive** di PostgreSQL. Untuk paritas CI dengan provider lain, dibutuhkan `EF.Functions.ILike` — yang ada di paket `Npgsql.EntityFrameworkCore.PostgreSQL`. Agar Core/EF tidak terkopel ke satu provider (Spec 01 D48):
+`string.Contains` on Npgsql translates to a `LIKE` that is **case-sensitive** in PostgreSQL. For CI parity with other providers, `EF.Functions.ILike` is needed — which lives in the `Npgsql.EntityFrameworkCore.PostgreSQL` package. So that Core/EF is not coupled to a single provider (Spec 01 D48):
 
-- `a2n.Vista.EntityFrameworkCore` menyediakan **dialect default** (`string.Contains`) untuk SQL Server/SQLite/MySQL/InMemory.
-- `a2n.Vista.EntityFrameworkCore.Npgsql` (paket kecil terpisah) menyediakan `NpgsqlQueryDialect` (ILIKE). Registrasi via `services.AddVistaNpgsql()`.
-- Engine me-resolve `IQueryDialect` berdasarkan `DbContext.Database.ProviderName`; bila tak ada dialect spesifik → dialect default.
+- `a2n.Vista.EntityFrameworkCore` provides the **default dialect** (`string.Contains`) for SQL Server/SQLite/MySQL/InMemory.
+- `a2n.Vista.EntityFrameworkCore.Npgsql` (a small separate package) provides `NpgsqlQueryDialect` (ILIKE). Registered via `services.AddVistaNpgsql()`.
+- The engine resolves `IQueryDialect` based on `DbContext.Database.ProviderName`; if there is no specific dialect → the default dialect.
 
-### 10.4 Wildcard escaping (wajib)
+### 10.4 Wildcard escaping (required)
 
-Jalur `string.Contains/StartsWith/EndsWith` (EF) meng-escape `%`/`_` otomatis lewat parameterisasi — **aman**. Jalur **pola mentah** (`EF.Functions.ILike`) **tidak** — value klien `%`/`_`/`\` harus di-escape manual agar tidak jadi wildcard injection:
+The `string.Contains/StartsWith/EndsWith` path (EF) escapes `%`/`_` automatically through parameterization — **safe**. The **raw-pattern** path (`EF.Functions.ILike`) does **not** — a client value `%`/`_`/`\` must be escaped manually so it does not become wildcard injection:
 
 ```csharp
-// dipakai HANYA di jalur ILIKE/LIKE pola mentah
+// used ONLY on the raw-pattern ILIKE/LIKE path
 static string EscapeLikePattern(string v) => v
     .Replace("\\", "\\\\")
     .Replace("%",  "\\%")
     .Replace("_",  "\\_");
-// pola: "%" + EscapeLikePattern(v) + "%", dengan ESCAPE '\'
+// pattern: "%" + EscapeLikePattern(v) + "%", with ESCAPE '\'
 ```
 
-Override per-view (mis. paksa case-sensitive untuk kolom collation khusus) tersedia via metadata field — kandidat API di Open Question §17.
+A per-view override (e.g., force case-sensitive for a special-collation column) is available via field metadata — a candidate API in Open Question §17.
 
 ## 11. Sort Building
 
-`SortSpec[]` → `OrderBy/OrderByDescending` + `ThenBy*` ber-rantai, memakai member-access source-gen.
+`SortSpec[]` → chained `OrderBy/OrderByDescending` + `ThenBy*`, using source-gen member-access.
 
-1. **Validasi**: tiap field `IsSortable` (§7). Field di luar projection → 400 (bukan sort diam-diam diabaikan seperti DynData yang `OrderBy(string)`).
-2. **Tiebreaker PK (deterministik)**: engine **selalu** menambahkan field PK (`FieldMetadata` ber-`PrimaryKey`, Spec 01 §5.5) sebagai kunci sort **terakhir** bila belum ada di `Sort`. Tanpa ini, `Skip/Take` pada nilai sort non-unik bisa mengembalikan baris duplikat/hilang antar-halaman. PK majemuk → ditambahkan berurutan (urutan deklarasi).
-3. **Default order**: bila `Sort` kosong → urut by PK ascending (deterministik). View tanpa PK terdeklarasi → engine memakai field pertama projection + **warning** (kandidat: wajibkan PK untuk paging stabil, §17).
-4. **Null ordering**: ikut default provider (mis. SQL Server `NULLS` implicit). Override eksplisit → §17.
+1. **Validation**: each field must be `IsSortable` (§7). A field outside the projection → 400 (not a silently ignored sort like DynData's `OrderBy(string)`).
+2. **PK tiebreaker (deterministic)**: the engine **always** adds the PK field (`FieldMetadata` marked `PrimaryKey`, Spec 01 §5.5) as the **last** sort key if it is not already in `Sort`. Without this, `Skip/Take` on non-unique sort values could return duplicate/missing rows across pages. A composite PK → added in sequence (declaration order).
+3. **Default order**: if `Sort` is empty → order by PK ascending (deterministic). A View with no declared PK → the engine uses the first projection field + a **warning** (candidate: require a PK for stable paging, §17).
+4. **Null ordering**: follows the provider default (e.g., SQL Server implicit `NULLS`). An explicit override → §17.
 
 ## 12. Paging & Counts
 
 ### 12.1 Offset paging
 
 ```csharp
-long offset = (long)request.Page * request.PageSize;   // long: cegah overflow int (Spec 01 §10)
+long offset = (long)request.Page * request.PageSize;   // long: prevent int overflow (Spec 01 §10)
 if (offset > int.MaxValue) → 400 "page-offset-too-large";
 query.Skip((int)offset).Take(request.PageSize);
 ```
 
-- `PageSize` di-clamp ke `HardLimits.MaxPageSize` (Spec 01 §5.4/§7). `PageSize <= 0` → 400. **`length = -1` (DynData "return all") ditolak** (Spec 01 §12.2).
-- v1.0 hanya offset paging. Keyset/seek (untuk offset sangat besar) ditunda (§17).
+- `PageSize` is clamped to `HardLimits.MaxPageSize` (Spec 01 §5.4/§7). `PageSize <= 0` → 400. **`length = -1` (DynData "return all") is rejected** (Spec 01 §12.2).
+- v1.0 supports offset paging only. Keyset/seek (for very large offsets) is deferred (§17).
 
-### 12.2 Dua count
+### 12.2 Two counts
 
-- **`FilteredRows`** selalu dihitung: `LongCountAsync` pada query setelah langkah 9 (sebelum order/page). Dasar `TotalPages`.
-- **`UnfilteredRows`** hanya bila `IncludeUnfilteredCount == true`: `LongCountAsync` pada query di akhir langkah 8 (setelah row filter + trusted scope, **sebelum** filter/search/scope-klien). Ini `recordsTotal` DataTables (ref §6.3/§7.7).
-- Keduanya menghormati `CancellationToken`. Dua count = dua round-trip DB; adapter yang tak butuh `recordsTotal` membiarkan `IncludeUnfilteredCount = false` (default) untuk hemat satu query.
+- **`FilteredRows`** is always computed: `LongCountAsync` on the query after step 9 (before order/page). The basis for `TotalPages`.
+- **`UnfilteredRows`** only when `IncludeUnfilteredCount == true`: `LongCountAsync` on the query at the end of step 8 (after row filter + trusted scope, **before** filter/search/client-scope). This is DataTables `recordsTotal` (ref §6.3/§7.7).
+- Both honor the `CancellationToken`. Two counts = two DB round-trips; an adapter that does not need `recordsTotal` leaves `IncludeUnfilteredCount = false` (default) to save one query.
 
-### 12.3 Materialisasi
+### 12.3 Materialization
 
-- `await query.ToListAsync(ct)` — async-only, `CancellationToken` wajib (Spec 01 §10). Tidak ada overload sync.
-- `.AsNoTracking()` default untuk jalur baca (read-only projection). Tidak ada `AsNoTrackingDynamic` DynData (Spec 01 §12.4).
-- Tidak ada extension publik `ToPagedResultAsync` di Core (Spec 01 §10.2) — paging adalah detail internal engine.
+- `await query.ToListAsync(ct)` — async-only, `CancellationToken` required (Spec 01 §10). There is no sync overload.
+- `.AsNoTracking()` is the default for the read path (read-only projection). There is no DynData `AsNoTrackingDynamic` (Spec 01 §12.4).
+- There is no public `ToPagedResultAsync` extension in Core (Spec 01 §10.2) — paging is an internal engine detail.
 
 ## 13. Masking & Post-processing
 
-`MaskField(field, predicate, masker)` (Spec 01 §5.2/D29) diterapkan **setelah** materialisasi (langkah 12), per-item, memakai accessor/mutator source-gen (bukan `PropertyInfo`). `predicate` dievaluasi sekali per-request (`Func<IServiceProvider,bool>`), bukan per-baris. Masking **tidak** memengaruhi filter/sort/count — hanya bentuk akhir yang dikirim. Implikasi: field ter-mask tetap bisa difilter di SQL (mis. cari email persis) kecuali di-`Filterable(false)` (Spec 01 §4.4 poin 2).
+`MaskField(field, predicate, masker)` (Spec 01 §5.2/D29) is applied **after** materialization (step 12), per-item, using a source-gen accessor/mutator (not `PropertyInfo`). `predicate` is evaluated once per request (`Func<IServiceProvider,bool>`), not per-row. Masking does **not** affect filter/sort/count — only the final shape that is sent. Implication: a masked field can still be filtered in SQL (e.g., search for an exact email) unless it is set `Filterable(false)` (Spec 01 §4.4 point 2 / D95).
 
-## 14. Constraint AOT
+## 14. AOT Constraints
 
-Selaras Spec 01 §9 dan Pilar 3:
+In line with Spec 01 §9 and Pillar 3:
 
-1. **Member-access** (`q => q.Field`) untuk tiap field di `ViewMetadata` di-generate source-gen sebagai delegate/`Expression` statik — bukan `Expression.Property(p, PropertyInfo)` runtime via reflection. Spec 02 menetapkan kontraknya; Spec 03 menetapkan generatornya.
-2. **Constant value** dibangun via `Expression.Constant` dari hasil coercion typed — tidak ada boxing reflection di hot path.
-3. **Materialisasi & mask** memakai accessor source-gen, bukan `PropertyInfo.GetValue/SetValue`.
-4. Jalur fallback reflection-based (mis. View terdaftar via `RegisterAssembly`, Spec 01 §5.3) di-mark `[RequiresUnreferencedCode]`. Engine harus punya jalur source-gen yang setara untuk semua operasi di atas.
-5. Anonymous-projection View (gaya A, Spec 01 §4.5) tetap `[RequiresUnreferencedCode]` pada serialisasi; **filter/sort/paging-nya AOT-clean** karena member-access tetap di-generate dari shape projection.
+1. **Member-access** (`q => q.Field`) for each field in `ViewMetadata` is generated by source-gen as a static delegate/`Expression` — not `Expression.Property(p, PropertyInfo)` at runtime via reflection. Spec 02 defines the contract; Spec 03 defines the generator.
+2. **Constant values** are built via `Expression.Constant` from typed coercion results — no reflection boxing on the hot path.
+3. **Materialization & mask** use a source-gen accessor, not `PropertyInfo.GetValue/SetValue`.
+4. The reflection-based fallback path (e.g., a View registered via `RegisterAssembly`, Spec 01 §5.3) is marked `[RequiresUnreferencedCode]`. The engine must have an equivalent source-gen path for all of the operations above.
+5. An anonymous-projection View (Style A, Spec 01 §4.5) remains `[RequiresUnreferencedCode]` on serialization; **its filter/sort/paging is AOT-clean** because member-access is still generated from the projection shape.
 
 ## 15. Error Model (query-specific)
 
-Memperluas tabel Spec 01 §14.1. Semua RFC 7807, `type` di bawah `https://a2n.dev/vista/errors/`. `extensions` machine-readable (`field`, `operator`, `allowed`, `expectedType`).
+Extends the table in Spec 01 §14.1. All RFC 7807, with `type` under `https://a2n.dev/vista/errors/`. `extensions` is machine-readable (`field`, `operator`, `allowed`, `expectedType`).
 
-| Kondisi | HTTP | `type` |
+| Condition | HTTP | `type` |
 |---|---|---|
-| Field filter bukan `Filterable` / tak dikenal | 400 | `.../filter-field-not-allowed` |
-| Operator di luar `AllowedOperators` | 400 | `.../filter-operator-not-allowed` |
-| Field search bukan `Searchable`/bukan string | 400 | `.../search-field-not-allowed` |
-| Field scope bukan `Scopable` | 400 | `.../scope-field-not-allowed` |
-| Field sort bukan `Sortable` | 400 | `.../sort-field-not-allowed` |
-| Operator tak berlaku untuk tipe (mis. `>` pada `bool`) | 400 | `.../operator-not-applicable` |
-| Coercion gagal (type mismatch) | 400 | `.../value-type-mismatch` |
-| `Between`/`In` bentuk nilai salah | 400 | `.../malformed-value` |
-| Tree terlalu dalam / leaf terlalu banyak / string terlalu panjang | 400 | `.../query-too-complex` |
-| `In` melebihi `MaxInValues` | 413 | `.../payload-too-large` |
+| Filter field is not `Filterable` / unknown | 400 | `.../filter-field-not-allowed` |
+| Operator outside `AllowedOperators` | 400 | `.../filter-operator-not-allowed` |
+| Search field is not `Searchable`/not a string | 400 | `.../search-field-not-allowed` |
+| Scope field is not `Scopable` | 400 | `.../scope-field-not-allowed` |
+| Sort field is not `Sortable` | 400 | `.../sort-field-not-allowed` |
+| Operator not applicable to the type (e.g., `>` on `bool`) | 400 | `.../operator-not-applicable` |
+| Coercion failed (type mismatch) | 400 | `.../value-type-mismatch` |
+| `Between`/`In` value form is wrong | 400 | `.../malformed-value` |
+| Tree too deep / too many leaves / string too long | 400 | `.../query-too-complex` |
+| `In` exceeds `MaxInValues` | 413 | `.../payload-too-large` |
 | Page offset overflow / `PageSize<=0` / `length=-1` | 400 | `.../invalid-paging` |
 
-Prinsip: **fail-fast & spesifik**. Satu pelanggaran membatalkan request dengan detail field+operator agar adapter/klien bisa memperbaiki. Tidak ada "skip diam-diam" (kontras DynData).
+Principle: **fail-fast & specific**. A single violation aborts the request with field+operator detail so the adapter/client can fix it. There is no "silent skip" (contrasting DynData).
 
-## 16. Decision Log (lanjutan dari Spec 01 D50)
+## 16. Decision Log (continued from Spec 01 D50)
 
-| # | Keputusan | Status | Catatan |
+> **Reconciliation (2026-06-20).** Some of the decisions below are **overridden** by the Pillar 1
+> implementation (see Spec 01 §13.1): **D51** (`ViewQueryResult<T>`) → replaced by `ViewListResult<TRow>` (DR6);
+> **D52** (`FilterOrigin` on `FilterLeaf`) → `FilterOrigin` becomes a 3-value enum-parameter, no `Trusted` (DR9);
+> **D53** (non-generic port erased-to-`object`) → `IViewExecutor` generic + write merged (DR8);
+> **D58** (`IncludeUnfilteredCount`) → two counts via `ViewListResult.TotalRowsUnfiltered` without a request flag.
+> The other decisions (coercion, dialect, deterministic paging, complexity guards) remain in effect as the
+> engine target; some are new and some are implemented in Pillar 1.
+
+| # | Decision | Status | Note |
 |---|---|---|---|
-| D51 | `IViewExecutor.QueryAsync` mengembalikan `ViewQueryResult<T>` (Items + `FilteredRows` + opsional `UnfilteredRows`). `PagedResult<T>` (Spec 01 §10) = proyeksi default-shape via `ToPagedResult()`. | **Decided** | Menyelesaikan ref `dyndata-datatables-observed.md` §7.7 (recordsTotal vs recordsFiltered). |
-| D52 | `FilterLeaf` membawa `FilterOrigin` (`Filter`/`Search`/`Scope`/`Trusted`); engine memvalidasi per-channel (§7). | **Decided** | Memformalkan "record FilterOrigin internal" Spec 01 §8.3. |
-| D53 | `IViewExecutor` & `IViewScope` & `IQueryDialect` adalah **port di Core**; implementasi EF di `a2n.Vista.EntityFrameworkCore`. | **Decided** | Spec 01 D48. `TQuery` di-erase ke `object` di boundary port. |
-| D54 | Default string-match `string.Contains/StartsWith/EndsWith` (EF auto-escape). PostgreSQL CI via dialect terpisah `a2n.Vista.EntityFrameworkCore.Npgsql` (ILIKE). | **Decided** | §10. Hindari kopling Core ke satu provider. |
-| D55 | Jalur pola mentah (ILIKE/LIKE) **wajib** `EscapeLikePattern` untuk `%`/`_`/`\`. | **Decided** | §10.4. Anti wildcard-injection. |
-| D56 | Paging deterministik: PK selalu ditambahkan sebagai sort tiebreaker terakhir; `Sort` kosong → by PK asc. | **Decided** | §11. Cegah duplikat/hilang antar-halaman. |
-| D57 | v1.0 offset paging saja; `Skip((int)(long)Page*PageSize)`, offset > `int.MaxValue` → 400. Keyset/seek ditunda. | **Decided** | §12.1, §17. |
-| D58 | Dua count: `FilteredRows` selalu; `UnfilteredRows` hanya bila `IncludeUnfilteredCount`. | **Decided** | §12.2. Hemat round-trip default. |
-| D59 | Coercion culture-invariant; `In` di-cap (`MaxInValues=1000`); type mismatch → 400. | **Decided** | §8. Tutup bug locale & DoS. |
-| D60 | Anti-injection invariant: nama field hanya key lookup ke member-access source-gen; tak pernah teks SQL. Field tak terdaftar → 400 (tak ada skip diam-diam). | **Decided** | §7.4, §15. Kontras DynData `externalFilter`. |
-| D61 | Guard kompleksitas query: `MaxFilterDepth=16`, `MaxFilterLeaves=128`, `MaxFilterStringLength=4096` (semua override global). | **Decided** | §8.3. Anti query-plan blow-up. |
-| D62 | Mask diterapkan post-materialisasi via accessor source-gen; tidak memengaruhi filter/sort/count. | **Decided** | §13. Spec 01 D29. |
+| D51 | `IViewExecutor.QueryAsync` returns `ViewQueryResult<T>` (Items + `FilteredRows` + optional `UnfilteredRows`). `PagedResult<T>` (Spec 01 §10) = the default-shape projection via `ToPagedResult()`. | **Decided** | Resolves ref `dyndata-datatables-observed.md` §7.7 (recordsTotal vs recordsFiltered). |
+| D52 | `FilterLeaf` carries `FilterOrigin` (`Filter`/`Search`/`Scope`/`Trusted`); the engine validates per-channel (§7). | **Decided** | Formalizes the "internal FilterOrigin record" of Spec 01 §8.3. |
+| D53 | `IViewExecutor` & `IViewScope` & `IQueryDialect` are **ports in Core**; the EF implementation is in `a2n.Vista.EntityFrameworkCore`. | **Decided** | Spec 01 D48. `TQuery` is erased to `object` at the port boundary. |
+| D54 | Default string-match `string.Contains/StartsWith/EndsWith` (EF auto-escape). PostgreSQL CI via the separate dialect `a2n.Vista.EntityFrameworkCore.Npgsql` (ILIKE). | **Decided** | §10. Avoids coupling Core to a single provider. |
+| D55 | The raw-pattern path (ILIKE/LIKE) **must** use `EscapeLikePattern` for `%`/`_`/`\`. | **Decided** | §10.4. Anti wildcard-injection. |
+| D56 | Deterministic paging: the PK is always added as the last sort tiebreaker; an empty `Sort` → by PK asc. | **Decided** | §11. Prevents duplicate/missing rows across pages. |
+| D57 | v1.0 offset paging only; `Skip((int)(long)Page*PageSize)`, offset > `int.MaxValue` → 400. Keyset/seek deferred. | **Decided** | §12.1, §17. |
+| D58 | Two counts: `FilteredRows` always; `UnfilteredRows` only when `IncludeUnfilteredCount`. | **Decided** | §12.2. Saves a round-trip by default. |
+| D59 | Culture-invariant coercion; `In` capped (`MaxInValues=1000`); type mismatch → 400. | **Decided** | §8. Closes locale & DoS bugs. |
+| D60 | Anti-injection invariant: a field name is only a lookup key into source-gen member-access; never SQL text. An unregistered field → 400 (no silent skip). | **Decided** | §7.4, §15. Contrasts DynData `externalFilter`. |
+| D61 | Query complexity guards: `MaxFilterDepth=16`, `MaxFilterLeaves=128`, `MaxFilterStringLength=4096` (all globally overridable). | **Decided** | §8.3. Anti query-plan blow-up. |
+| D62 | Mask applied post-materialization via a source-gen accessor; does not affect filter/sort/count. | **Decided** | §13. Spec 01 D29. |
 
 ## 17. Open Questions
 
-1. **Keyset/seek pagination** untuk offset besar (`Skip` mahal di OLTP). Kandidat v1.x: `ViewQueryRequest.After` (cursor token) berbasis PK+sort. Perlu kontrak cursor stabil yang kompatibel adapter.
-2. **PK wajib untuk paging stabil?** §11 poin 3 saat ini *warning* bila View tanpa PK. Kandidat: jadikan error build-time (source-gen diagnostic) karena paging tanpa kunci unik fundamental tak deterministik.
-3. **Null ordering & collation override per-field** — API metadata (`f.NullsFirst()` / `f.Collation("...")`)? Saat ini ikut default provider (§10.4, §11.4).
-4. **Semantik `is_empty`/`is_not_empty`** (ref §6.2/§7.2): map ke `IsNull`, string kosong, atau keduanya (`member == null || member == ""`)? Keputusan memengaruhi adapter QueryBuilder (Spec 04). Kandidat default: keduanya untuk string.
-5. **Per-column search DataTables** (`columns[i][search][value]`, ref §7.5): map ke `FilterLeaf(Contains, Origin=Filter)` atau channel `Search`? Memengaruhi whitelist mana yang berlaku. Kandidat: `Filter` (per-kolom = filter terstruktur, bukan global search).
-6. **Distinct-values** (`GET .../distinct/{field}`, Spec 01 §14.3) — query-path mana yang melayaninya? Reuse validasi §7 (`field ∈ Filterable`, `take ≤ 1000`). Detail di spec terpisah.
+1. **Keyset/seek pagination** for large offsets (`Skip` is expensive in OLTP). v1.x candidate: `ViewQueryRequest.After` (a cursor token) based on PK+sort. Requires a stable cursor contract that is adapter-compatible.
+2. **Require a PK for stable paging?** §11 point 3 currently *warns* when a View has no PK. Candidate: make it a build-time error (a source-gen diagnostic) because paging without a unique key is fundamentally non-deterministic.
+3. **Null ordering & per-field collation override** — a metadata API (`f.NullsFirst()` / `f.Collation("...")`)? Currently follows the provider default (§10.4, §11.4).
+4. **`is_empty`/`is_not_empty` semantics** (ref §6.2/§7.2): map to `IsNull`, an empty string, or both (`member == null || member == ""`)? The decision affects the QueryBuilder adapter (Spec 04). Candidate default: both for strings.
+5. **Per-column search in DataTables** (`columns[i][search][value]`, ref §7.5): map to `FilterLeaf(Contains, Origin=Filter)` or the `Search` channel? It affects which whitelist applies. Candidate: `Filter` (per-column = structured filter, not global search).
+6. **Distinct-values** (`GET .../distinct/{field}`, Spec 01 §14.3) — which query path serves it? Reuses the §7 validation (`field ∈ Filterable`, `take ≤ 1000`). Details in a separate spec.
 
 ## 18. Next / Forward References
 
-- `03-source-generator.md` — generator member-access, accessor, `CompiledView`, `JsonSerializerContext` yang dikonsumsi engine ini (§14).
-- `04-adapter-contract.md` — `IViewAdapter`: produksi `ViewQueryRequest` (set `FilterOrigin` per leaf, §6.1), konsumsi `ViewQueryResult`/`PagedResult`. Termasuk mapping DataTables & jQuery-QueryBuilder (ref `dyndata-datatables-observed.md` §6).
-- `05-aspnetcore-mapping.md` — komposisi auth → `IViewScope` → `IViewExecutor`, error model HTTP, write/CRUD path & concurrency.
+- `03-source-generator.md` — the generator for member-access, accessors, `CompiledView`, `JsonSerializerContext` consumed by this engine (§14).
+- `04-adapter-contract.md` — `IViewAdapter`: producing `ViewQueryRequest` (set `FilterOrigin` per leaf, §6.1), consuming `ViewQueryResult`/`PagedResult`. Includes DataTables & jQuery-QueryBuilder mapping (ref `dyndata-datatables-observed.md` §6).
+- `05-aspnetcore-mapping.md` — composition of auth → `IViewScope` → `IViewExecutor`, the HTTP error model, the write/CRUD path & concurrency.

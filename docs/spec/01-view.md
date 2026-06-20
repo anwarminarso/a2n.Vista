@@ -1,145 +1,169 @@
-# Spec 01 — View (Pilar 1)
+# Spec 01 — View (Pillar 1)
 
-> Status: **DRAFT**
-> Tanggal: 2026-06-19 (rev: dua gaya authoring + model facet — Vista sebagai evolusi DynData)
-> Scope: konsep `View` di `a2n.Vista.Core`. Tidak termasuk: adapter UI (Pilar 2), source generator (Pilar 3), integrasi EF Core lengkap. Spec ini fokus pada **kontrak publik** yang menjadi fondasi semua project lain.
+> Status: **IMPLEMENTED (Pillar 1)** — reconciled with the code
+> Date: 2026-06-20 (rev: synchronized to the `pilar-1-core` implementation; source of truth = code)
+> Scope: the `View` concept in `a2n.Vista.Core`. Not included: UI adapters (Pillar 2), source generator (Pillar 3), full EF Core integration. This spec focuses on the **public contract** that forms the foundation for all other projects.
+>
+> **Reconciliation note (2026-06-20).** Pillar 1 has been implemented (`.kiro/specs/pilar-1-core`,
+> Tasks 1–13 complete). Where this document and the code differ, **the code prevails**.
+> Adjusted sections are marked inline; important differences that surfaced during implementation
+> are recorded in Decision Log §13 (DR1–DR10). Some API members sketched here are still
+> *forward-looking* (write path, validator/interceptor, adapter `Accept`-negotiation) and are marked
+> as the next milestone.
 
 ---
 
-## 1. Tujuan
+## 1. Purpose
 
-Mendefinisikan **View** sebagai unit deklaratif inti `a2n.Vista`. View harus:
+Define the **View** as the core declarative unit of `a2n.Vista`. A View must be:
 
-1. **Eksplisit** — tidak ada auto-expose. Developer harus mendeklarasikan tiap View.
-2. **Type-safe di jalur tulis** — operasi tulis (create/edit) selalu strongly-typed `TCrud` + whitelist, bukan `IQueryable<dynamic>`. Jalur baca (grid/detail) boleh anonymous projection demi ergonomi (lihat 4.5).
-3. **Sumber tunggal** untuk: metadata, endpoint contract, filter contract, UI binding, TS client codegen.
-4. **Secure-by-default** — field whitelist deklaratif, CRUD opt-in, otorisasi mandatory.
-5. **AOT-clean** — kontrak publik tidak boleh memaksa reflection runtime; semua jalur "panas" dilayani source generator (Pilar 3).
+1. **Explicit** — no auto-expose. The developer must declare each View.
+2. **Type-safe on the write path** — write operations (create/edit) are always strongly-typed `TCrud` + whitelist, not `IQueryable<dynamic>`. The read path (grid/detail) may use anonymous projection for ergonomics (see 4.5).
+3. **Single source** for: metadata, endpoint contract, filter contract, UI binding, TS client codegen.
+4. **Secure-by-default** — declarative field whitelist, CRUD opt-in, mandatory authorization.
+5. **AOT-clean** — the public contract must not force runtime reflection; all "hot" paths are served by the source generator (Pillar 3).
 
-## 2. Terminologi
+## 2. Terminology
 
-| Istilah | Arti |
+| Term | Meaning |
 |---------|------|
-| **View** | Unit deklaratif: projection LINQ + metadata + (opsional) CRUD target. Menggantikan `QueryTemplate` dari DynData. |
-| **TQuery** | Tipe DTO hasil projection (yang dikirim ke klien sebagai response item). |
-| **TCrud** | Tipe DTO untuk operasi tulis (create/update). Berbeda dari `TQuery` untuk memisahkan read & write contract. |
-| **Source** | Entity EF Core (atau `IQueryable<T>` lain) yang menjadi asal data. |
-| **CrudTarget** | Entity tujuan operasi tulis. Boleh sama dengan `Source`, boleh subset, boleh tidak ada (read-only View). |
-| **ViewBuilder** | Fluent API untuk mengonfigurasi sebuah View saat registrasi. |
-| **IViewRegistry** | Tempat penampungan semua View terdaftar; di-resolve oleh endpoint mapper, adapter, dan codegen. |
-| **ViewMetadata** | Snapshot deklaratif View setelah builder selesai — input untuk source generator & TS client. |
-| **Adapter** | Komponen per-grid yang menerjemahkan request klien ke `ViewQueryRequest` netral dan response ke format grid. |
-| **ViewTemplate** | Kelas authoring terpusat (gaya DynData): mendaftarkan banyak View via `AddView(...)` dalam satu tempat. Lihat 4.5. |
-| **Facet** | Salah satu dari tiga kapabilitas sebuah View: **List** (read banyak), **Detail** (read satu by-key), **Write** (create/edit/delete). Lihat 4.6. |
-| **Anonymous view** | View dengan projection anonymous (`select new { ... }`) — read-only kecuali dilampiri facet Write typed. |
+| **View** | Declarative unit: LINQ projection + metadata + (optional) CRUD target. Replaces `QueryTemplate` from DynData. |
+| **TQuery** | The DTO type produced by the projection (sent to the client as a response item). |
+| **TCrud** | The DTO type for write operations (create/update). Distinct from `TQuery` to separate the read & write contracts. |
+| **Source** | The EF Core entity (or another `IQueryable<T>`) that the data originates from. |
+| **CrudTarget** | The target entity of write operations. May be the same as `Source`, a subset, or absent (read-only View). |
+| **ViewBuilder** | Fluent API for configuring a View at registration time. |
+| **IViewRegistry** | The container holding all registered Views; resolved by the endpoint mapper, adapters, and codegen. |
+| **ViewMetadata** | A declarative snapshot of the View after the builder completes — the input for the source generator & TS client. |
+| **Adapter** | A per-grid component that translates client requests into a neutral `ViewQueryRequest` and responses into a grid format. |
+| **ViewTemplate** | A centralized authoring class (DynData style): registers many Views via `AddView(...)` in one place. See 4.5. |
+| **Facet** | One of the three capabilities of a View: **List** (read many), **Detail** (read one by-key), **Write** (create/edit/delete). See 4.6. |
+| **Anonymous view** | A View with an anonymous projection (`select new { ... }`) — read-only unless attached to a typed Write facet. |
 
-## 3. Non-Goals (untuk spec ini)
+## 3. Non-Goals (for this spec)
 
-- Implementasi adapter konkret apapun.
-- Implementasi EF Core query translation.
-- Implementasi source generator.
-- Definisi format response (JSON shape) ke klien — itu domain Pilar 2.
-- Otentikasi (siapa user) — Vista hanya mendelegasi ke ASP.NET Core identity.
+- Implementation of any concrete adapter.
+- Implementation of EF Core query translation.
+- Implementation of the source generator.
+- Definition of the response format (JSON shape) sent to the client — that is Pillar 2's domain.
+- Authentication (who the user is) — Vista only delegates to ASP.NET Core identity.
 
-## 4. Konsep Inti
+## 4. Core Concepts
 
 ### 4.1 View = projection + contract
 
-Sebuah View **selalu** punya empat hal:
+A View **always** has four things:
 
-1. **Source query**: `Func<TServices, IQueryable<TSource>>` — bagaimana mendapatkan `IQueryable` dasar.
-2. **Projection**: `Expression<Func<TSource, TQuery>>` — bentuk akhir yang dikirim ke klien.
-3. **Filter contract**: daftar field `TQuery` yang boleh difilter klien + operator yang diizinkan.
-4. **Metadata**: nama view, route, deskripsi, hard limits, auth requirement.
+1. **Source query**: `Func<TServices, IQueryable<TSource>>` — how to obtain the base `IQueryable`.
+2. **Projection**: `Expression<Func<TSource, TQuery>>` — the final shape sent to the client.
+3. **Filter contract**: the list of `TQuery` fields the client may filter on + the allowed operators.
+4. **Metadata**: view name, route, description, hard limits, auth requirement.
 
-CRUD opsional:
+CRUD is optional:
 
-- Jika `CrudTarget<TEntity>` di-set: View ini bisa create/update/delete.
-- `TCrud` adalah DTO write yang field-nya **whitelist eksplisit** ke `TEntity`.
-- Tanpa `CrudTarget`, View adalah **read-only** dan endpoint tulis tidak akan di-generate.
+- If `CrudTarget<TEntity>` is set: this View can create/update/delete.
+- `TCrud` is the write DTO whose fields are an **explicit whitelist** onto `TEntity`.
+- Without `CrudTarget`, the View is **read-only** and write endpoints will not be generated.
 
-### 4.2 Raw DbSet = View tanpa projection
+### 4.2 Raw DbSet = View without projection
 
-Tidak ada API "expose semua DbSet". Tapi kalau developer butuh akses langsung ke entity tanpa projection, dia tetap mendeklarasikan View — projection-nya identity (`x => x`). Hal ini menjaga *one path, one rule*: semua data yang keluar dari Vista lewat View.
+There is no "expose every DbSet" API. But if a developer needs direct access to an entity without a projection, they still declare a View — with an identity projection (`x => x`). This preserves *one path, one rule*: all data leaving Vista goes through a View.
 
 ### 4.3 Read DTO vs Write DTO
 
-`TQuery` dan `TCrud` **wajib dipisah** secara tipe. Alasannya:
+`TQuery` and `TCrud` **must be separated** at the type level. The reasons:
 
-- Field yang aman ditampilkan ≠ field yang aman diubah klien.
-- DynData mencampur keduanya → mass assignment bocor.
-- Pemisahan ini juga rapi untuk TS client (`MyViewQueryDto` vs `MyViewCrudDto`).
+- The fields safe to display ≠ the fields safe for the client to change.
+- DynData mixed the two → mass assignment leaked.
+- This separation is also clean for the TS client (`MyViewQueryDto` vs `MyViewCrudDto`).
 
-View read-only memakai base class `View<TQuery>` (tanpa `TCrud`) — bukan `Unit`/`NoCrud` (lihat 5.1). Untuk tulis: `View<TQuery, TCrud>` (gaya B) atau `WithCrud<TCrud, TEntity>` (gaya A).
+A read-only View uses the base class `View<TQuery>` (without `TCrud`) — not `Unit`/`NoCrud` (see 5.1). For writes: `View<TQuery, TCrud>` (Style B) or `WithCrud<TCrud, TEntity>` (Style A).
 
 ### 4.4 Searchable vs Filterable
 
-DynData mencampur dua konsep berbeda dalam satu request. Vista tetap **memisahkan** keduanya secara konseptual, tapi (revisi D42) **default-nya allow** — bukan opt-in seperti versi spec awal. Kuncinya: di Vista batas keamanan adalah **projection**-nya, bukan tabel. Field yang ada di projection memang sudah dikurasi developer (tidak ada password hash, dll.), jadi default "semua field projection bisa filter/sort/search" jauh lebih aman daripada DynData yang meng-expose semua kolom entity.
+DynData mixed two distinct concepts into a single request. Vista still **separates** them conceptually, but (revision D42) **defaults to allow** — not opt-in as in the early spec version. The key point: in Vista the security boundary is the **projection**, not the table. Fields present in the projection have already been curated by the developer (no password hashes, etc.), so the default of "every projection field can be filtered/sorted/searched" is far safer than DynData, which exposed all entity columns.
 
-| Konsep | Default Vista | Override |
+| Concept | Vista default | Override |
 |--------|---------------|----------|
-| **Filter** (per-field, operator eksplisit) | Semua field projection filterable, operator default per tipe | `.Field(x => x.F, f => f.Operators(...))` atau `f.Filterable(false)` |
-| **Sort** | Semua field projection sortable | `.Field(x => x.F, f => f.Sortable(false))` |
-| **Search** (global, OR-`Contains` ke field string) | Semua field **string** projection ikut | `.Field(x => x.F, f => f.Searchable(false))` |
+| **Filter** (per-field, explicit operator) | All projection fields filterable, default operators per type | `.Field(x => x.F, f => f.Operators(...))` or `f.Filterable(false)` |
+| **Sort** | All projection fields sortable | `.Field(x => x.F, f => f.Sortable(false))` |
+| **Search** (global, OR-`Contains` over string fields) | All **string** projection fields participate | `.Field(x => x.F, f => f.Searchable(false))` |
 
-Pemisahan Filter vs Search tetap penting:
+Separating Filter vs Search still matters:
 
-1. Operator filter (`Equals`, `In`, `Between`, dll.) tidak bisa "diakses lewat search box" — global search hanya `Contains` ke field string.
-2. Field bisa di-opt-out dari search tapi tetap filterable (mis. field PII yang ditampilkan ter-mask: `.Field(x => x.Email, f => f.Searchable(false))`).
-3. Hanya field **string** yang ikut global search; numeric/date tidak pernah (kecuali filter eksplisit).
+1. Filter operators (`Equals`, `In`, `Between`, etc.) cannot be "reached through the search box" — global search is only `Contains` over string fields.
+2. A field can opt out of search but remain filterable (e.g. a PII field shown masked: `.Field(x => x.Email, f => f.Searchable(false))`).
+3. Only **string** fields participate in global search; numeric/date never do (except via explicit filter).
 
-### 4.5 Dua Gaya Authoring
+### 4.5 Two Authoring Styles
 
-Vista adalah **evolusi** DynData: ergonomi *view-first* DynData dipertahankan sebagai **gaya authoring pertama**, di samping gaya class-per-view yang strongly-typed. Keduanya menghasilkan `ViewMetadata` (5.4) yang sama dan melewati pipeline validasi/auth/limit yang sama.
+Vista is an **evolution** of DynData: DynData's *view-first* ergonomics are retained as the **first authoring style**, alongside the strongly-typed class-per-view style. Both produce the same `ViewMetadata` (5.4) and go through the same validation/auth/limit pipeline.
 
-**Gaya A — Central Template (anonymous, ala DynData).** Satu kelas `ViewTemplate<TDbContext>` mendaftarkan banyak View via `AddView(...)` dengan projection **anonymous** inline. Tidak perlu membuat class DTO; kolom view gampang di-adjust. Inilah gaya yang dirindukan pengguna DynData.
+**Style A — Central Template (anonymous, DynData-like).** A single `ViewTemplate<TDbContext>` class registers many Views via `AddView(...)` with an inline **anonymous** projection. No DTO class is needed; view columns are easy to adjust. This is the style DynData users miss.
 
-**Gaya B — Class-per-View (typed).** Satu kelas `View<TQuery>` / `View<TQuery, TCrud>` per view dengan DTO eksplisit. Lebih verbose, tapi AOT-clean penuh.
+**Style B — Class-per-View (typed).** A single `View<TQuery>` / `View<TQuery, TCrud>` class per view with an explicit DTO. More verbose, but fully AOT-clean.
 
-#### Aturan typing (invarian keamanan)
+#### Typing rules (security invariant)
 
-> **Projection anonymous hanya boleh melayani facet baca (List/Detail). Facet Write WAJIB `TCrud` typed + whitelist.**
+> **An anonymous projection may only serve read facets (List/Detail). The Write facet REQUIRES a typed `TCrud` + whitelist.**
 
-Konsekuensi: View yang facet-nya hanya anonymous read adalah **read-only**. Tidak ada jalan dari anonymous projection ke operasi tulis — itu menutup mass-assignment sejak desain. Untuk menambah tulis, lampirkan facet Write typed (lihat 4.6 + 5.5 `WithCrud`). Rumusan ini me-refine ide awal "anonymous ⇒ seluruh view read-only" menjadi **per-facet**: baca boleh anonymous, tulis wajib typed.
+Consequence: a View whose only facets are anonymous reads is **read-only**. There is no path from an anonymous projection to a write operation — that closes mass-assignment by design. To add writes, attach a typed Write facet (see 4.6 + 5.5 `WithCrud`). This formulation refines the original idea "anonymous ⇒ the whole view is read-only" into a **per-facet** rule: reads may be anonymous, writes must be typed.
 
-| | Gaya A (central template) | Gaya B (class-per-view) |
+| | Style A (central template) | Style B (class-per-view) |
 |---|---|---|
-| Projection baca | anonymous | typed `TQuery` |
-| Bikin class DTO? | tidak (baca); ya (kalau ada tulis) | ya |
-| Facet Write (CRUD) | hanya via `WithCrud<TCrud, TEntity>` (typed) | `View<TQuery, TCrud>` |
-| AOT-clean | tidak (RUC, serialisasi reflection) | ya |
-| Cocok untuk | back-office, banyak view, iterasi cepat, migrasi DynData | view kompleks, target Native AOT |
+| Read projection | anonymous | typed `TQuery` |
+| Create a DTO class? | no (read); yes (if there are writes) | yes |
+| Write facet (CRUD) | only via `WithCrud<TCrud, TEntity>` (typed) | `View<TQuery, TCrud>` |
+| AOT-clean | no (RUC, reflection serialization) | yes |
+| Suited for | back-office, many views, fast iteration, DynData migration | complex views, Native AOT target |
 
-### 4.6 Model Facet
+#### Commitment: both styles are permanent (D96)
 
-Satu **View** adalah satu *resource* bernama (mis. `"vProductCategory"`) yang punya sampai tiga **facet**:
+Style A **and** Style B are **permanent** first-class features — there is no plan to deprecate Style A.
+Selection guidance (use-case):
 
-| Facet | Kardinalitas | Typing | Endpoint (lihat 12.3) |
+| Application topology | Recommendation | Reason |
+|---|---|---|
+| Monolith (many views) | **Style A** | Views centralized in one template; easy to find & maintain without hunting through separate files. |
+| Modular monolith (views in sub-projects) | **Style B** | Views live in sub-projects as classes; the main project attaches their assemblies. Requires **cross-assembly view discovery** (D97). |
+| Microservices | A or B | Free choice — follow each team's preference per service. |
+
+> **The AOT asymmetry is permanent & explicit (D96).** Because Style A projections are anonymous,
+> their serialization is **never** fully Native-AOT-clean (no by-name `JsonSerializerContext`) →
+> it stays `[RequiresUnreferencedCode]` forever (D40). **Style A filter/sort/paging stays AOT-clean**
+> (member-access shape-driven); only *serialization* is not. Developers targeting full Native AOT
+> must use Style B. This is not a temporary shortcoming — it is a guaranteed design consequence.
+
+### 4.6 Facet Model
+
+A single **View** is one named *resource* (e.g. `"vProductCategory"`) that has up to three **facets**:
+
+| Facet | Cardinality | Typing | Endpoint (see 12.3) |
 |-------|-------------|--------|------------------------|
-| **List** | banyak, paged | anonymous / typed | `POST /api/views/{name}/query` |
-| **Detail** | satu, by-key | anonymous / typed | `GET /api/views/{name}/{key}` |
-| **Write** | satu (create/update/delete) | **typed only** | `POST/PUT/DELETE /api/views/{name}` |
+| **List** | many, paged | anonymous / typed | `POST /api/views/{name}/query` |
+| **Detail** | one, by-key | anonymous / typed | `GET /api/views/{name}/{key}` |
+| **Write** | one (create/update/delete) | **typed only** | `POST/PUT/DELETE /api/views/{name}` |
 
-Aturan:
+Rules:
 
-1. **List wajib.** Setiap View minimal punya facet List (projection bacanya).
-2. **Detail opsional.** Kalau tidak dideklarasi, Detail memakai projection List difilter by primary key. PK ditentukan via field metadata (`PrimaryKey()`). Facet Detail dengan projection sendiri (kolom lebih lengkap dari grid) tersedia di gaya B; di gaya A v0.x, Detail = List by-key.
-3. **Write opsional & typed.** Tanpa facet Write → resource read-only. Write tidak pernah memakai projection anonymous.
-4. **PK adalah jembatan antar-facet.** Baris List → tombol → Detail/Write semuanya pakai PK yang sama. Karena itu PK harus ada di projection List (boleh `Hidden()` seperti `ProductId` di DynData).
-5. **Auth per-facet.** Default ke auth level-View; bisa di-override per facet (mis. baca `CanReadProducts`, tulis `CanEditProducts`).
+1. **List is mandatory.** Every View has at least a List facet (its read projection).
+2. **Detail is optional.** If not declared, Detail uses the List projection filtered by primary key. The PK is determined via field metadata (`PrimaryKey()`). A Detail facet with its own projection (more columns than the grid) is available in Style B; in Style A v0.x, Detail = List by-key.
+3. **Write is optional & typed.** Without a Write facet → the resource is read-only. Write never uses an anonymous projection.
+4. **PK is the bridge between facets.** List row → button → Detail/Write all use the same PK. Therefore the PK must be present in the List projection (it may be `Hidden()`, like `ProductId` in DynData).
+5. **Auth per-facet.** Defaults to View-level auth; can be overridden per facet (e.g. read `CanReadProducts`, write `CanEditProducts`).
 
-Pemetaan ke "lanjur" UI: **List = grid**, **Detail = form display**, **Write = create/edit form**.
+Mapping to the UI "surfaces": **List = grid**, **Detail = display form**, **Write = create/edit form**.
 
 ## 5. API Surface (Public Contract)
 
-> Catatan: signature di bawah adalah **target spec**, belum diimplementasi. Nama tipe bersifat normatif, body bersifat ilustratif.
+> Note: the signatures below are the **spec target**, not yet implemented. Type names are normative, bodies are illustrative.
 
-### 5.1 Tipe utama
+### 5.1 Main types
 
 ```csharp
 namespace a2n.Vista;
 
-// Non-generik marker untuk registry & polymorphism (tidak pakai View<object>).
+// Non-generic marker for registry & polymorphism (does not use View<object>).
 public interface IConfiguredView
 {
     string Name { get; }
@@ -148,16 +172,16 @@ public interface IConfiguredView
     void ConfigureCore(IViewBuilderCore builder);
 }
 
-// Read-only View. Builder yang dipakai TIDAK punya CrudOn / MapWritable.
+// Read-only View. The builder used does NOT have CrudOn / MapWritable.
 public abstract class View<TQuery> : IConfiguredView
     where TQuery : class
 {
-    // Dipanggil registry saat startup.
+    // Called by the registry at startup.
     protected internal abstract void Configure(IViewBuilder<TQuery> builder);
-    // Implementasi IConfiguredView di-generate oleh source generator (Pilar 3).
+    // The IConfiguredView implementation is generated by the source generator (Pillar 3).
 }
 
-// View dengan CRUD. Builder punya CrudOn dan harus dipakai untuk write path.
+// View with CRUD. The builder has CrudOn and must be used for the write path.
 public abstract class View<TQuery, TCrud> : IConfiguredView
     where TQuery : class
     where TCrud : class
@@ -166,20 +190,20 @@ public abstract class View<TQuery, TCrud> : IConfiguredView
 }
 ```
 
-Catatan:
+Notes:
 
-- `View<TQuery>` **bukan** subclass dari `View<TQuery, TCrud>`. Pemisahan tipe builder mencegah developer memanggil `CrudOn(...)` di view read-only.
-- Marker `NoCrud` (versi sebelumnya) dihilangkan. Read-only ditangani melalui base class terpisah, bukan generic dummy parameter.
-- Registrasi & polymorphism via `IConfiguredView` non-generik — tidak ada `View<object>` (lihat 5.3).
+- `View<TQuery>` is **not** a subclass of `View<TQuery, TCrud>`. Separating the builder types prevents a developer from calling `CrudOn(...)` on a read-only view.
+- The `NoCrud` marker (previous version) is removed. Read-only is handled through a separate base class, not a generic dummy parameter.
+- Registration & polymorphism go through the non-generic `IConfiguredView` — there is no `View<object>` (see 5.3).
 
-### 5.2 ViewBuilder (Gaya B)
+### 5.2 ViewBuilder (Style B)
 
-Dua interface dipisah eksplisit. Read-only view (`IViewBuilder<TQuery>`) tidak punya `CrudOn`, sehingga compile-error muncul kalau salah pakai. Bagian non-generik `IViewBuilderCore` ada agar `IConfiguredView.ConfigureCore(...)` (lihat 5.1) bisa di-codegen.
+Two interfaces are explicitly separated. The read-only view (`IViewBuilder<TQuery>`) does not have `CrudOn`, so a compile error appears if used incorrectly. The non-generic `IViewBuilderCore` part exists so that `IConfiguredView.ConfigureCore(...)` (see 5.1) can be codegen'd.
 
-Sejalan dengan Gaya A (§5.5): **tidak ada** `Route()`/`RequireAuthorization()` (route global §5.6, auth terpusat §5.6), dan filter/sort/search **default-allow** untuk semua field projection — kustomisasi via `.Field(...)` (§4.4). `IFieldBuilder<TProp>` dipakai bersama dengan §5.5.
+In line with Style A (§5.5): there is **no** `Route()`/`RequireAuthorization()` (global route §5.6, centralized auth §5.6), and filter/sort/search are **default-allow** for all projection fields — customize via `.Field(...)` (§4.4). `IFieldBuilder<TProp>` is shared with §5.5.
 
 ```csharp
-// Bagian non-generik untuk source-gen interop (lihat 5.1 IConfiguredView).
+// Non-generic part for source-gen interop (see 5.1 IConfiguredView).
 public interface IViewBuilderCore
 {
     IViewBuilderCore Named(string viewName);
@@ -193,7 +217,7 @@ public interface IViewBuilder<TQuery> : IViewBuilderCore
 {
     new IViewBuilder<TQuery> Named(string viewName);
 
-    // Source query — WAJIB salah satu.
+    // Source query — REQUIRED, one of these.
     IViewBuilder<TQuery> From<TSource>(
         Expression<Func<TSource, TQuery>> projection)
         where TSource : class;
@@ -203,9 +227,9 @@ public interface IViewBuilder<TQuery> : IViewBuilderCore
         Expression<Func<TSource, TQuery>> projection)
         where TSource : class;
 
-    // Konfigurasi per-field (opsional). Default: filterable + sortable +
-    // (string) searchable, label auto. Override/opt-out via IFieldBuilder<TProp>
-    // (lihat 5.5) — termasuk .Scopable(...) untuk contextual filter klien (§5.6).
+    // Per-field configuration (optional). Default: filterable + sortable +
+    // (string) searchable, auto label. Override/opt-out via IFieldBuilder<TProp>
+    // (see 5.5) — including .Scopable(...) for client contextual filters (§5.6).
     IViewBuilder<TQuery> Field<TProp>(
         Expression<Func<TQuery, TProp>> field,
         Action<IFieldBuilder<TProp>> configure);
@@ -213,13 +237,13 @@ public interface IViewBuilder<TQuery> : IViewBuilderCore
     new IViewBuilder<TQuery> MaxPageSize(int rows);
     new IViewBuilder<TQuery> MaxExportRows(int rows);
 
-    // Row-level security — pre-projection (rekomendasi). TSource = entity asal.
-    // Soft-delete & tenant-filter umumnya hidup di TSource.
+    // Row-level security — pre-projection (recommended). TSource = source entity.
+    // Soft-delete & tenant-filter generally live on TSource.
     IViewBuilder<TQuery> WithRowFilter<TSource>(
         Func<IServiceProvider, Expression<Func<TSource, bool>>> filterFactory)
         where TSource : class;
 
-    // Row-level security — post-projection (kasus khusus, mis. computed field).
+    // Row-level security — post-projection (special case, e.g. computed field).
     IViewBuilder<TQuery> WithProjectedRowFilter(
         Func<IServiceProvider, Expression<Func<TQuery, bool>>> filterFactory);
 
@@ -230,12 +254,12 @@ public interface IViewBuilder<TQuery> : IViewBuilderCore
         Func<TProp, TProp> masker);
 }
 
-// View dengan CRUD. Inherit read-side knob dari read-only builder + jalur write.
+// View with CRUD. Inherits the read-side knobs from the read-only builder + write path.
 public interface IViewBuilder<TQuery, TCrud> : IViewBuilder<TQuery>
     where TQuery : class
     where TCrud : class
 {
-    // CRUD — wajib dipanggil minimal satu kali pada View<TQuery, TCrud>.
+    // CRUD — must be called at least once on View<TQuery, TCrud>.
     ICrudBuilder<TQuery, TCrud, TEntity> CrudOn<TEntity>(
         Expression<Func<TEntity, TQuery>>? projectionForRead = null)
         where TEntity : class;
@@ -246,7 +270,7 @@ public interface ICrudBuilder<TQuery, TCrud, TEntity>
     where TCrud : class
     where TEntity : class
 {
-    // Write whitelist — WAJIB minimal satu. Tidak ada field default-mapped.
+    // Write whitelist — REQUIRED at least once. No field is default-mapped.
     ICrudBuilder<TQuery, TCrud, TEntity> MapWritable<TProp>(
         Expression<Func<TCrud, TProp>> from,
         Expression<Func<TEntity, TProp>> to);
@@ -254,69 +278,85 @@ public interface ICrudBuilder<TQuery, TCrud, TEntity>
     ICrudBuilder<TQuery, TCrud, TEntity> WithConcurrencyToken<TToken>(
         Expression<Func<TEntity, TToken>> tokenField);
 
-    ICrudBuilder<TQuery, TCrud, TEntity> WithValidator<TValidator>()
-        where TValidator : IViewCrudValidator<TCrud>;
-
-    // Forecast v1.x audit log (hook Before/After Create/Update/Delete).
-    ICrudBuilder<TQuery, TCrud, TEntity> WithInterceptor<TInterceptor>()
-        where TInterceptor : IViewCrudInterceptor<TCrud, TEntity>;
+    // FORWARD-LOOKING (not in Pillar 1 code yet; see DR4): validator & interceptor.
+    // ICrudBuilder<TQuery, TCrud, TEntity> WithValidator<TValidator>()
+    //     where TValidator : IViewCrudValidator<TCrud>;
+    // ICrudBuilder<TQuery, TCrud, TEntity> WithInterceptor<TInterceptor>()
+    //     where TInterceptor : IViewCrudInterceptor<TCrud, TEntity>;
 
     ICrudBuilder<TQuery, TCrud, TEntity> AllowBulk(bool allow = true);
 }
 ```
 
-Konsekuensi yang sengaja:
+Deliberate consequences:
 
-- **Default-allow**: filter/sort/search aktif untuk semua field projection; batasi via `.Field(x => x.F, f => f.Filterable(false)/.Searchable(false)/.Operators(...))` (§4.4, D42).
-- **Tidak ada auth/route di builder**: route global (§5.6), auth via `IViewAuthorizer` (§5.6) — D43/D44.
-- `WithRowFilter<TSource>` adalah jalur **utama** (pre-projection). Push-down ke SQL natural; soft-delete/tenant di entity, bukan DTO.
-- `WithProjectedRowFilter` untuk kasus khusus saja.
-- `MaskField` butuh tiga argumen: field selector, predicate, transformer (tanpa transformer masking tak punya semantik).
-- `WithConcurrencyToken` (detail HTTP di Spec 05) & `WithInterceptor` (forecast audit v1.x).
+- **Default-allow**: filter/sort/search are active for all projection fields; restrict via `.Field(x => x.F, f => f.Filterable(false)/.Searchable(false)/.Operators(...))` (§4.4, D42).
+- **No auth/route in the builder**: global route (§5.6), auth via `IViewAuthorizer` (§5.6) — D43/D44.
+- `WithRowFilter<TSource>` is the **primary** path (pre-projection). Pushes down to SQL naturally; soft-delete/tenant on the entity, not the DTO.
+- `WithProjectedRowFilter` is for special cases only.
+- `MaskField` needs three arguments: field selector, predicate, transformer (without a transformer, masking has no semantics). **A field that is `MaskField`'d defaults to `Filterable(false)` (D95)** — preventing *probing* of the original value (e.g. binary-search `StartsWith`) that would expose the masked value via filter responses. Explicit opt-in `Filterable(true)` if genuinely needed (ideally restrict to `Equals` only).
+- `WithConcurrencyToken` (HTTP detail in Spec 05) & `WithInterceptor` (audit forecast v1.x).
 
 ### 5.3 Registry
 
+`IViewRegistry` (in `a2n.Vista.Core`) stores `ViewMetadata` keyed by `Name`. Implementation (DR1):
+
 ```csharp
+namespace a2n.Vista.Ports;
+
 public interface IViewRegistry
 {
-    // AOT-clean path. Dipanggil source generator untuk tiap view yang
-    // ditemukan di compile-time. TView terikat ke IConfiguredView (5.1),
-    // bukan View<object> (yang tidak compatible dengan View<TQuery, TCrud>
-    // karena tidak ada covariance).
-    void Register<TView>()
-        where TView : class, IConfiguredView, new();
+    // Primary metadata sink. Called by authoring (Style A/B) & the source generator (Pillar 3)
+    // after ViewMetadata is built. Duplicate name → throw at startup (R1.3).
+    void Add(ViewMetadata view);
 
-    // Type-only overload untuk skenario reflection-bound (mis. test).
-    // Tidak AOT-clean kecuali TView dianotasi DAM.
-    [RequiresUnreferencedCode("Type-based view registration may use reflection.")]
-    void Register(Type viewType);
+    // Reflection registration path (Style B by type). AOT-unsafe → RequiresUnreferencedCode.
+    // The source generator emits an equivalent Add(...) on the AOT-clean path.
+    [RequiresUnreferencedCode("View registration introspects the view type at runtime.")]
+    void Register<TView>() where TView : class;
 
-    [RequiresUnreferencedCode("Assembly scan walks all types via reflection.")]
-    void RegisterAssembly(Assembly assembly);
+    // Miss → null (not throw). The endpoint maps null to 404 (R1.1).
+    // Note: refines the early sketch that used a non-null Get.
+    ViewMetadata? Get(string name);
 
-    ViewMetadata Get(string viewName);
     IReadOnlyCollection<ViewMetadata> All { get; }
 }
 ```
 
-DI extension yang ditargetkan di `a2n.Vista.AspNetCore`:
+Differences from the early sketch (already applied in the code): `Add(ViewMetadata)` is the primary sink;
+`Get` returns **nullable**; there is **no** `Register(Type)` nor `RegisterAssembly` on the Core
+surface — the registration sugar (`RegisterTemplate`, `Register<TView>`, `Register<TView>(plan)`)
+lives on the DI builder (`IVistaBuilder`, see below).
+
+DI is split into **two doors** (DR2): view/execution (EF) wiring in `a2n.Vista.EntityFrameworkCore`,
+HTTP auth/route in `a2n.Vista.AspNetCore`. The two meet through Core ports (`IViewRegistry`,
+`IViewExecutor`, `IViewScope`) and do **not** reference each other (R11.3, D48).
 
 ```csharp
-services.AddVista(vista =>
+// 1) EF door (view registration + execution plan). IVistaBuilder.
+builder.Services.AddVista(vista =>
 {
-    vista.RouteRoot("/api/views");            // route global; view route = {root}/{viewName}/... (§5.6)
-    vista.UseAuthorizer<AppViewAuthorizer>(); // satu pintu auth (§5.6). Tanpa ini → default allow + warning.
-
-    vista.RegisterTemplate<AppViews>();       // gaya A (central template) — direkomendasikan
-    vista.Register<CustomerListView>();       // gaya B (class-per-view) — untuk view kompleks
-
-    // Non-AOT shortcut untuk prototyping; men-trigger trim warning.
-    // vista.RegisterAssemblyContaining<Program>();
+    vista.RouteRoot("/api/views");                       // route root embedded into ViewMetadata.Route
+    vista.RegisterTemplate<AppViews, AppDbContext>();    // Style A — explicit TDbContext (two type params)
+    vista.Register<CustomerListView>();                  // Style B — metadata-only (see note)
+    // vista.Register<CustomerListView>(plan);           // Style B + execution plan (executable)
 });
 
-app.MapVistaViews();              // generic mapper
-app.MapView<CustomerListView>();  // explicit, recommended (codegen-friendly)
+// 2) AspNetCore door (HTTP route root + single auth door). IVistaEndpointBuilder.
+builder.Services.AddVistaEndpoints(v =>
+{
+    v.RouteRoot("/api/views");                           // live endpoint route root
+    v.UseAuthorizer<AppViewAuthorizer>();                // single auth door (§5.6). Without it → allow + warning.
+});
+
+app.MapVistaViews();              // generic map of all views (resolve by name at request time)
+app.MapView("customers");         // map a single view by NAME (not MapView<TView>(); see §5.6)
 ```
+
+> **Pillar 1 implementation note.** `RegisterTemplate<TTemplate, TDbContext>` (Style A) produces
+> metadata **and** an EF execution plan (executable). `Register<TView>()` (Style B) is currently
+> **metadata-only** — the view is discoverable but its execution throws until a plan is supplied via
+> `Register<TView>(IViewExecutionPlan)` or the source generator (Pillar 3). See DR5.
 
 ### 5.4 ViewMetadata (output)
 
@@ -328,36 +368,36 @@ public sealed record ViewMetadata(
     Type? CrudType,
     Type? CrudEntityType,
     IReadOnlyList<FieldMetadata> Fields,
-    AuthorizationRequirement? Authorization,  // null = pakai authorizer pusat (§5.6); per-view override jarang
+    AuthorizationRequirement? Authorization,  // null = use the central authorizer (§5.6); per-view override is rare
     HardLimits Limits,
     bool IsReadOnly);
 
 public sealed record FieldMetadata(
     string Name,
-    string Label,            // auto dari Name ("ProductName" → "Product Name"); override via .Field(..., f => f.Label(...))
+    string Label,            // auto from Name ("ProductName" → "Product Name"); override via .Field(..., f => f.Label(...))
     Type ClrType,
-    bool IsFilterable,       // default true (semua field projection)
+    bool IsFilterable,       // default true (all projection fields)
     bool IsSortable,         // default true
-    bool IsSearchable,       // default true untuk field string
-    bool IsScopable,         // default false; contextual/lookup key dari klien (§5.6)
-    bool IsHidden,           // default false; hidden = tidak dikirim/ditampilkan (mis. PK teknis)
+    bool IsSearchable,       // default true for string fields
+    bool IsScopable,         // default false; contextual/lookup key from the client (§5.6)
+    bool IsHidden,           // default false; hidden = not sent/displayed (e.g. technical PK)
     bool IsWritable,
     bool IsMaskable,
     FilterOperator AllowedOperators);
 ```
 
-`ViewMetadata` adalah **input utama** untuk:
+`ViewMetadata` is the **primary input** for:
 
-- Source generator (Pilar 3) — codegen endpoint, expression builder, OpenAPI doc.
-- `IViewAdapter<TRequest, TResponse>` (Pilar 2) — translate request klien.
-- `a2n.Vista.Client.TypeScript` — codegen DTO + filter contract di TS.
+- The source generator (Pillar 3) — codegen of endpoints, expression builders, OpenAPI doc.
+- `IViewAdapter<TRequest, TResponse>` (Pillar 2) — translate client requests.
+- `a2n.Vista.Client.TypeScript` — codegen of DTOs + filter contract in TS.
 
-### 5.5 Central Template API (Gaya A)
+### 5.5 Central Template API (Style A)
 
 ```csharp
 namespace a2n.Vista;
 
-// Authoring terpusat ala DynData. TDbContext jadi sumber IQueryable.
+// DynData-like centralized authoring. TDbContext is the IQueryable source.
 public abstract class ViewTemplate<TDbContext>
     where TDbContext : DbContext
 {
@@ -367,68 +407,68 @@ public abstract class ViewTemplate<TDbContext>
 public interface IViewTemplateBuilder<TDbContext>
     where TDbContext : DbContext
 {
-    // Read-only anonymous view. TRow di-infer compiler dari body lambda
-    // (boleh anonymous type) — tidak perlu DTO eksplisit.
+    // Read-only anonymous view. TRow is inferred by the compiler from the lambda body
+    // (may be an anonymous type) — no explicit DTO needed.
     IReadViewBuilder<TRow> AddView<TRow>(
         string name,
         Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
         where TRow : class;
 }
 
-// Builder facet baca. Field selector tetap strongly-typed walau TRow anonymous,
-// karena lambda dievaluasi di scope yang sama dengan AddView.
+// Read facet builder. The field selector remains strongly-typed even when TRow is anonymous,
+// because the lambda is evaluated in the same scope as AddView.
 //
-// Catatan: TIDAK ada Route()/RequireAuthorization() di sini — route bersifat
-// global (§5.6) dan auth terpusat (§5.6). Filter/sort/search SEMUA field aktif
-// by default; kustomisasi lewat .Field(...).
+// Note: there is NO Route()/RequireAuthorization() here — routes are global (§5.6)
+// and auth is centralized (§5.6). Filter/sort/search are active for ALL fields
+// by default; customize via .Field(...).
 public interface IReadViewBuilder<TRow>
     where TRow : class
 {
     IReadViewBuilder<TRow> MaxPageSize(int rows);
     IReadViewBuilder<TRow> MaxExportRows(int rows);
 
-    // Konfigurasi per-field (opsional). Default tiap field: filterable + sortable
-    // + (jika string) searchable, label auto dari nama. .Field(...) untuk override.
+    // Per-field configuration (optional). Each field defaults to: filterable + sortable
+    // + (if string) searchable, label auto from the name. Use .Field(...) to override.
     IReadViewBuilder<TRow> Field<TProp>(
         Expression<Func<TRow, TProp>> field,
         Action<IFieldBuilder<TProp>> configure);
 
-    // Row-level security pre-projection (lihat 5.2). Untuk scope server-trusted
-    // lintas-view, gunakan IViewAuthorizer.ShapeQuery (§5.6).
+    // Pre-projection row-level security (see 5.2). For server-trusted scope
+    // across views, use IViewAuthorizer.ShapeQuery (§5.6).
     IReadViewBuilder<TRow> WithRowFilter<TSource>(
         Func<IServiceProvider, Expression<Func<TSource, bool>>> filterFactory)
         where TSource : class;
 
-    // Jembatan ke facet Write — WAJIB typed. Mengubah resource jadi read+write.
-    // Satu-satunya pintu CRUD dari gaya central-template; tidak menerima
-    // anonymous type (invarian 4.5).
+    // Bridge to the Write facet — REQUIRED typed. Turns the resource into read+write.
+    // The only CRUD door from the central-template style; does not accept
+    // anonymous types (invariant 4.5).
     ICrudFacetBuilder<TCrud, TEntity> WithCrud<TCrud, TEntity>()
         where TCrud : class
         where TEntity : class;
 }
 
-// Konfigurasi per-field. Semua opsional; default sudah aman/benar.
+// Per-field configuration. All optional; the defaults are already safe/correct.
 public interface IFieldBuilder<TProp>
 {
     IFieldBuilder<TProp> PrimaryKey();
-    IFieldBuilder<TProp> Hidden();                        // tidak dikirim/ditampilkan
-    IFieldBuilder<TProp> Label(string label);             // override label auto
+    IFieldBuilder<TProp> Hidden();                        // not sent/displayed
+    IFieldBuilder<TProp> Label(string label);             // override the auto label
     IFieldBuilder<TProp> Format(string formatString);
 
-    // Opt-out / kustomisasi default (default semuanya true):
+    // Opt-out / customize defaults (everything defaults to true):
     IFieldBuilder<TProp> Filterable(bool allowed = true);
     IFieldBuilder<TProp> Sortable(bool allowed = true);
-    IFieldBuilder<TProp> Searchable(bool allowed = true);   // hanya berdampak untuk field string
-    IFieldBuilder<TProp> Operators(FilterOperator allowed); // batasi operator (implisit Filterable)
+    IFieldBuilder<TProp> Searchable(bool allowed = true);   // only affects string fields
+    IFieldBuilder<TProp> Operators(FilterOperator allowed); // restrict operators (implies Filterable)
 
-    // Izinkan field jadi contextual/lookup key dari KLIEN (default false, opt-in).
-    // Filter scoping klien (padanan externalFilter DynData) hanya boleh ke field
-    // Scopable — terpisah dari Filterable UI (§5.6, D47).
+    // Allow the field to be a contextual/lookup key from the CLIENT (default false, opt-in).
+    // Client filter scoping (the DynData externalFilter equivalent) may only target
+    // Scopable fields — separate from UI Filterable (§5.6, D47).
     IFieldBuilder<TProp> Scopable(bool allowed = true);
 }
 
-// Sama semantik dengan ICrudBuilder<TQuery, TCrud, TEntity> (5.2), tanpa TQuery
-// karena facet baca di gaya A dilayani anonymous TRow.
+// Same semantics as ICrudBuilder<TQuery, TCrud, TEntity> (5.2), without TQuery
+// because the read facet in Style A is served by an anonymous TRow.
 public interface ICrudFacetBuilder<TCrud, TEntity>
     where TCrud : class
     where TEntity : class
@@ -438,41 +478,60 @@ public interface ICrudFacetBuilder<TCrud, TEntity>
         Expression<Func<TEntity, TProp>> to);
     ICrudFacetBuilder<TCrud, TEntity> WithConcurrencyToken<TToken>(
         Expression<Func<TEntity, TToken>> tokenField);
-    ICrudFacetBuilder<TCrud, TEntity> WithValidator<TValidator>()
-        where TValidator : IViewCrudValidator<TCrud>;
+    // FORWARD-LOOKING (not in Pillar 1 code yet; see DR4):
+    // ICrudFacetBuilder<TCrud, TEntity> WithValidator<TValidator>()
+    //     where TValidator : IViewCrudValidator<TCrud>;
     ICrudFacetBuilder<TCrud, TEntity> AllowBulk(bool allow = true);
 }
 ```
 
-Catatan AOT: gaya A men-trigger `[RequiresUnreferencedCode]` pada jalur registrasi & serialisasi anonymous-type (lihat ROADMAP Pilar 3). Untuk Native AOT penuh, pakai gaya B. Facet Write di kedua gaya tetap AOT-clean karena mapping `TCrud → TEntity` di-source-gen dari `MapWritable`.
+AOT note: Style A triggers `[RequiresUnreferencedCode]` on the registration & anonymous-type serialization path (see ROADMAP Pillar 3). For full Native AOT, use Style B. The Write facet in both styles stays AOT-clean because the `TCrud → TEntity` mapping is source-gen'd from `MapWritable`.
 
-Registrasi `ViewTemplate` di DI (lihat juga 5.3 & 5.6):
+`ViewTemplate` registration in DI (see also 5.3 & 5.6) — two doors:
 
 ```csharp
+// EF: view registration + execution plan
 services.AddVista(vista =>
 {
-    vista.RouteRoot("/api/views");                  // route global (§5.6)
-    vista.UseAuthorizer<NorthwindViewAuthorizer>(); // satu pintu auth (§5.6); tanpa ini → allow
-    vista.RegisterTemplate<NorthwindViews>();       // gaya A (central template)
-    vista.Register<CustomerListView>();             // gaya B (class-per-view)
+    vista.RouteRoot("/api/views");                           // global route (§5.6)
+    vista.RegisterTemplate<NorthwindViews, NorthwindDbContext>(); // Style A (explicit TDbContext)
+    // vista.Register<CustomerListView>(plan);               // Style B + plan (executable)
+});
+
+// AspNetCore: HTTP route root + single auth door
+services.AddVistaEndpoints(v =>
+{
+    v.RouteRoot("/api/views");
+    v.UseAuthorizer<NorthwindViewAuthorizer>();              // without it → allow + warning
 });
 ```
 
-### 5.6 Authorization & Routing (lintas-gaya)
+### 5.6 Authorization & Routing (cross-style)
 
-Berlaku untuk Gaya A maupun B. Menggantikan `Route()` + `RequireAuthorization()` per-view (Decision Log D43/D44).
+Applies to both Style A and Style B. Replaces per-view `Route()` + `RequireAuthorization()` (Decision Log D43/D44).
 
-#### Routing global
+#### Global routing
 
 ```csharp
-services.AddVista(v => v.RouteRoot("/api/views"));  // default "/api/views"
+services.AddVistaEndpoints(v => v.RouteRoot("/api/views"));  // default "/api/views" (HTTP layer)
 ```
 
-Route tiap view diturunkan: `{root}/{viewName}` untuk List/query, `{root}/{viewName}/{key}` untuk Detail, dst. (mengikuti pola DynData `/{prefix}/{controller}/{viewName}/{action}`, lihat 12.3). Tidak ada `Route()` per-view; `viewName` dari `AddView("...")` / `Named("...")`. Override per-view hanya escape-hatch (jarang).
+Each view's route is derived from `{root}/{viewName}`. **Verb-to-facet in Pillar 1** (see 12.3):
+`GET {root}/{viewName}` (List, paging/sort from the query string), `GET {root}/{viewName}/{key}` (Detail),
+`POST {root}/{viewName}` (Create), `PUT {root}/{viewName}/{key}` (Update),
+`DELETE {root}/{viewName}/{key}` (Delete). There is no per-view `Route()`; `viewName` comes from
+`AddView("...")` / `Named("...")`.
 
-#### Authorization — satu pintu (`IViewAuthorizer`)
+> **Reconciliation note.** Pillar 1 maps List to **`GET {root}/{viewName}`** (query string),
+> not `POST {root}/{viewName}/query`. The `POST .../query` form (body filter + response shape
+> via `Accept`) is the **Pillar 2 adapter form** that layers on top of this route without changing it
+> (DR3). `MapVistaViews()` uses one generic route per verb that resolves the view by name at
+> request time; `MapView(string viewName)` maps a single view (not `MapView<TView>()` — that needs
+> compile-time type→name resolution from the Pillar 3 source generator).
 
-Menggantikan auth per-view. Satu implementasi, didaftarkan sekali, jadi gerbang untuk **semua** view & facet — gaya `IDynDataAPIAuth` DynData.
+#### Authorization — a single door (`IViewAuthorizer`)
+
+Replaces per-view auth. One implementation, registered once, becomes the gate for **all** views & facets — DynData's `IDynDataAPIAuth` style.
 
 ```csharp
 public enum ViewFacet { List, Detail, Export, Create, Update, Delete }
@@ -486,53 +545,65 @@ public sealed record ViewAuthContext(
 
 public interface IViewAuthorizer
 {
-    // Gerbang allow/deny per (view, facet, user). Dipanggil tiap request.
+    // Allow/deny gate per (view, facet, user). Called on every request.
     ValueTask<bool> IsAllowedAsync(ViewAuthContext ctx);
 
-    // Padanan IDynDataAPIAuth.ApplyRequest: inject filter row/scope yang
-    // server-trusted (tenant, ownership) — terpusat, bukan dari klien.
-    // Inilah jalur "contextual filter" trusted (lihat referensi externalFilter).
+    // The IDynDataAPIAuth.ApplyRequest equivalent: inject server-trusted row/scope
+    // filters (tenant, ownership) — centralized, not from the client.
+    // This is the trusted "contextual filter" path (see externalFilter reference).
     void ShapeQuery(ViewAuthContext ctx, IViewScope scope);
 }
 
 public interface IViewScope
 {
-    // Di-AND-kan ke query, di-push-down ke SQL. TSource = entity asal view.
+    // AND-ed into the query, pushed down to SQL. TSource = the view's source entity.
     void AddRowFilter<TSource>(Expression<Func<TSource, bool>> filter) where TSource : class;
 }
 ```
 
-Registrasi & semantik default:
+Registration & default semantics:
 
 ```csharp
-services.AddVista(v => v.UseAuthorizer<AppViewAuthorizer>());
+services.AddVistaEndpoints(v => v.UseAuthorizer<AppViewAuthorizer>());
 ```
 
-| Kondisi | Perilaku |
+> **Location.** `UseAuthorizer<T>` lives on `IVistaEndpointBuilder` (`AddVistaEndpoints`, the
+> AspNetCore package), **not** on `AddVista` (the EF package). The authorizer is registered with a
+> **scoped** lifetime so it can depend on request-scoped services (current user/tenant, scoped `DbContext`).
+
+| Condition | Behavior |
 |---------|----------|
-| `UseAuthorizer<T>` terdaftar | `T` adalah satu-satunya gerbang. Yang tidak di-`IsAllowedAsync` → ditolak (403). |
-| `UseAuthorizer` **tidak** dipanggil | **Default allow** (ikut DynData). Vista mengeluarkan **warning startup** (`"no IViewAuthorizer registered — all views are publicly accessible"`) supaya tidak diam-diam terbuka di produksi. |
+| `UseAuthorizer<T>` registered | `T` is the sole gate. Anything not allowed by `IsAllowedAsync` → rejected (403). |
+| No authorizer **in Development** | **Allow-all** + startup warning (frictionless dev). |
+| No authorizer **in non-Development** (Production/Staging/UAT/env unset) | **Fail-closed: startup fails** with an actionable message, **unless** the explicit opt-in `AllowAnonymousAccess()`. |
 
-Catatan: ini sengaja **bukan** fail-closed (beda dari versi spec awal D4). Trade-off: ergonomi back-office + paritas DynData, dengan biaya default-open bila lupa konfigurasi. Dokumentasi produksi mewajibkan `UseAuthorizer`. Multi-tenant/row-scope memakai `ShapeQuery`, bukan filter dari klien.
+> **Auth posture (revision D43 → D94).** The two-level model is retained: a *switch* (authorizer present/absent)
+> + a *policy* (handler). What changed: "no authorizer" **no longer means silent allow-all in
+> production**. Organization-neutral rationale: operators are often not the code authors and may lack
+> source access, so a security *omission* must fail-safe. "The road being open" is now an **explicit**
+> decision (`AllowAnonymousAccess()`) — one reviewed line, not the result of forgetting. Forgetting to
+> register in non-Dev → the app fails to start (caught at deploy, not leaked silently). See D94 & the
+> Operations/Observability doc (authorizer status exposed via a health check). ASP.NET treats an unset
+> env = `Production` → the safe direction.
 
-**Lokasi tipe (D48):** `IViewAuthorizer`, `ViewAuthContext`, dan `ViewFacet` berada di **`a2n.Vista.AspNetCore`** (HTTP-bound — `ViewAuthContext` membawa `HttpContext`). `IViewScope` berada di **`a2n.Vista.Core`** (netral). Alur: AspNetCore memanggil `IsAllowedAsync`/`ShapeQuery`, membangun `IViewScope`, lalu menyerahkannya ke `IViewExecutor` (Core/EF). Dengan begitu Core tetap bebas dependensi HTTP & EF.
+**Type locations (D48):** `IViewAuthorizer`, `ViewAuthContext`, and `ViewFacet` live in **`a2n.Vista.AspNetCore`** (HTTP-bound — `ViewAuthContext` carries `HttpContext`). `IViewScope` lives in **`a2n.Vista.Core`** (neutral). Flow: AspNetCore calls `IsAllowedAsync`/`ShapeQuery`, builds an `IViewScope`, then hands it to `IViewExecutor` (Core/EF). This keeps Core free of HTTP & EF dependencies.
 
-#### Contextual filter dari klien (lookup / drilldown) — `Scopable`
+#### Contextual filter from the client (lookup / drilldown) — `Scopable`
 
-`externalFilter` DynData (lihat referensi DataTables) dipakai untuk lookup modal & drilldown dari klien. Di Vista, filter scoping **dari klien** hanya boleh menyentuh field yang dideklarasikan `Scopable` — **terpisah** dari `Filterable` UI:
+DynData's `externalFilter` (see the DataTables reference) is used for lookup modals & drilldown from the client. In Vista, filter scoping **from the client** may only touch fields declared `Scopable` — **separate** from UI `Filterable`:
 
 ```csharp
-.Field(x => x.CategoryId, f => f.Hidden().Scopable())  // boleh jadi lookup key klien
+.Field(x => x.CategoryId, f => f.Hidden().Scopable())  // may become a client lookup key
 ```
 
-- `Scopable` **default false** (opt-in) — beda dari `Filterable` yang default-allow. Lookup adalah jalur sensitif, jadi harus dideklarasi eksplisit.
-- Adapter memetakan contextual filter klien → `FilterLeaf` yang divalidasi `field ∈ Scopable` (bukan `Filterable`). Pelanggaran → 400.
-- Scope **server-trusted** (tenant, ownership) tetap lewat `IViewAuthorizer.ShapeQuery` — tidak butuh `Scopable` dan tidak bisa di-bypass klien.
+- `Scopable` **defaults to false** (opt-in) — unlike `Filterable`, which is default-allow. Lookup is a sensitive path, so it must be declared explicitly.
+- The adapter maps the client's contextual filter → a `FilterLeaf` validated as `field ∈ Scopable` (not `Filterable`). A violation → 400.
+- **Server-trusted** scope (tenant, ownership) still goes through `IViewAuthorizer.ShapeQuery` — it does not need `Scopable` and cannot be bypassed by the client.
 
 ## 6. Hello World End-to-End
 
 ```csharp
-// 1. Entity (EF Core, milik aplikasi)
+// 1. Entity (EF Core, owned by the application)
 public class Customer
 {
     public int Id { get; set; }
@@ -542,7 +613,7 @@ public class Customer
     public bool IsDeleted { get; set; }
 }
 
-// 2. Query DTO (yang dikirim ke klien)
+// 2. Query DTO (sent to the client)
 public class CustomerListItem
 {
     public int Id { get; set; }
@@ -550,7 +621,7 @@ public class CustomerListItem
     public DateTime CreatedAt { get; set; }
 }
 
-// 3. Crud DTO (yang diterima dari klien)
+// 3. Crud DTO (received from the client)
 public class CustomerWriteDto
 {
     public string Name { get; set; } = "";
@@ -570,47 +641,56 @@ public class CustomerListView : View<CustomerListItem, CustomerWriteDto>
              Name = c.Name,
              CreatedAt = c.CreatedAt
          })
-         // Filter/sort/search SEMUA field projection aktif by default.
-         // Cukup override yang perlu:
-         .Field(x => x.Id,        f => f.Hidden())                  // PK teknis, sembunyikan dari UI
+         // Filter/sort/search are active for ALL projection fields by default.
+         // Just override what you need:
+         .Field(x => x.Id,        f => f.Hidden())                  // technical PK, hide from the UI
          .Field(x => x.CreatedAt, f => f.Operators(FilterOperator.Range))
          .MaxPageSize(200)
          .MaxExportRows(10_000)
-         // Route global ({root}/customers) & auth via authorizer pusat — tidak diset di sini.
-         // Row filter di TSource (Customer), bukan TQuery — soft-delete ada di entity.
+         // Global route ({root}/customers) & auth via the central authorizer — not set here.
+         // Row filter on TSource (Customer), not TQuery — soft-delete lives on the entity.
          .WithRowFilter<Customer>(_ => c => !c.IsDeleted)
          .CrudOn<Customer>()
               .MapWritable(w => w.Name,  e => e.Name)
               .MapWritable(w => w.Email, e => e.Email)
-              .WithConcurrencyToken(e => e.RowVersion); // asumsikan ditambah
+              .WithConcurrencyToken(e => e.RowVersion); // assume this was added
     }
 }
 
-// 5. Bootstrap (AOT-clean path)
+// 5. Bootstrap — two DI doors
 var builder = WebApplication.CreateBuilder(args);
 
 builder.Services.AddDbContext<AppDb>(/* ... */);
+
+// EF: view registration + execution plan
 builder.Services.AddVista(v =>
 {
-    v.RouteRoot("/api/views");            // route global (§5.6)
-    v.UseAuthorizer<AppViewAuthorizer>(); // satu pintu auth (§5.6)
-    v.Register<CustomerListView>();       // (source-gen menambahkan ini otomatis)
+    v.RouteRoot("/api/views");                 // global route (§5.6)
+    v.Register<CustomerListView>(plan);        // Style B needs an execution plan to be executable (DR5)
+});                                            // (source-gen emits this automatically in Pillar 3)
+
+// AspNetCore: route + single auth door
+builder.Services.AddVistaEndpoints(v =>
+{
+    v.RouteRoot("/api/views");
+    v.UseAuthorizer<AppViewAuthorizer>();      // single auth door (§5.6)
 });
 
 var app = builder.Build();
+app.UseVistaExceptionHandling();   // RFC 7807 error mapping (Spec 05 §9)
 app.MapVistaViews();
 app.Run();
 ```
 
-Yang **tidak** muncul di Hello World tapi disengaja:
+What does **not** appear in Hello World but is deliberate:
 
-- `CustomerListItem` tidak punya field `Email` → tidak akan pernah dikirim klien. Mass assignment ke `Email` hanya bisa lewat `CustomerWriteDto.Email`, dan itu hanya pada endpoint CRUD yang sudah ter-authorize.
-- Field `IsDeleted` tidak ada di `CustomerListItem` dan tidak di-`MapWritable` → tidak dapat di-set klien.
-- `Filterable` eksplisit per field → klien tidak bisa filter `Email` walaupun ada di entity.
+- `CustomerListItem` has no `Email` field → it will never be sent to the client. Mass assignment to `Email` is only possible via `CustomerWriteDto.Email`, and only on the CRUD endpoint that is already authorized.
+- The `IsDeleted` field is not in `CustomerListItem` and is not `MapWritable`'d → it cannot be set by the client.
+- Explicit `Filterable` per field → the client cannot filter `Email` even though it exists on the entity.
 
-## 6A. Contoh: `vProductCategory` (gaya central-template)
+## 6A. Example: `vProductCategory` (central-template style)
 
-Padanan langsung `NorthwindQueryTemplate.vProductCategory` dari DynData, di-port ke Vista gaya A. Read-only (anonymous projection), search/filter/sort opt-in, auth wajib.
+A direct equivalent of DynData's `NorthwindQueryTemplate.vProductCategory`, ported to Vista Style A. Read-only (anonymous projection), search/filter/sort opt-in, mandatory auth.
 
 ```csharp
 public class NorthwindViews : ViewTemplate<NorthwindDbContext>
@@ -633,41 +713,41 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
                     SupplierName    = s.CompanyName,
                     SupplierContact = s.ContactName
                 })
-            // Default: SEMUA field filter+sort+search, label auto, route {root}/vProductCategory,
-            // auth via authorizer pusat. Cukup tandai yang khusus:
-            .Field(x => x.ProductId,  f => f.PrimaryKey().Hidden())   // PK, sembunyikan
+            // Default: ALL fields filter+sort+search, auto label, route {root}/vProductCategory,
+            // auth via the central authorizer. Just mark the special ones:
+            .Field(x => x.ProductId,  f => f.PrimaryKey().Hidden())   // PK, hide
             .Field(x => x.CategoryId, f => f.Hidden())
             .Field(x => x.SupplierId, f => f.Hidden());
-        // Tidak ada facet Write → read-only (List + Detail by ProductId).
+        // No Write facet → read-only (List + Detail by ProductId).
     }
 }
 ```
 
-Beda dengan DynData (`AddQuery("vProductCategory", typeof(Product), ...)`):
+Differences from DynData (`AddQuery("vProductCategory", typeof(Product), ...)`):
 
-- **Tidak ada `typeof(Product)`** → tidak ada CRUD di sini → tidak ada mass-assignment. Tetap read-only.
-- **Filter/sort/search default aktif** untuk semua field projection (seperti DynData), tapi terbatas pada kolom yang **memang di-projeksi** — bukan semua kolom entity. Opt-out per field tersedia (`f.Searchable(false)`).
-- **Auth terpusat** — tidak ada atribut auth di view; gerbang ada di `IViewAuthorizer` (§5.6).
-- Metadata field via fluent `.Field(x => x.ProductId, ...)` strongly-typed (label auto), bukan callback string DynData.
+- **No `typeof(Product)`** → no CRUD here → no mass-assignment. Stays read-only.
+- **Filter/sort/search active by default** for all projection fields (like DynData), but limited to the columns that are **actually projected** — not all entity columns. Per-field opt-out is available (`f.Searchable(false)`).
+- **Centralized auth** — no auth attribute on the view; the gate lives in `IViewAuthorizer` (§5.6).
+- Field metadata via the fluent `.Field(x => x.ProductId, ...)` is strongly-typed (auto label), not DynData's string callback.
 
-### 6A.1 Menambah CRUD (naik ke facet Write, typed)
+### 6A.1 Adding CRUD (rising to a typed Write facet)
 
-Kalau resource yang sama butuh create/edit, lampirkan facet Write typed via `WithCrud` — projection grid tetap anonymous, tulis lewat DTO + whitelist:
+If the same resource needs create/edit, attach a typed Write facet via `WithCrud` — the grid projection stays anonymous, writes go through a DTO + whitelist:
 
 ```csharp
-views.AddView("vProductCategory", (db, sp) => /* ... projection anonymous sama ... */)
+views.AddView("vProductCategory", (db, sp) => /* ... same anonymous projection ... */)
     .Field(x => x.ProductId, f => f.PrimaryKey().Hidden())
-    // filter/sort/search semua field aktif default; override seperlunya
+    // filter/sort/search active by default for all fields; override as needed
     .WithCrud<ProductWriteDto, Product>()
         .MapWritable(w => w.ProductName,  e => e.ProductName)
         .MapWritable(w => w.UnitPrice,    e => e.UnitPrice)
         .MapWritable(w => w.UnitsInStock, e => e.UnitsInStock)
         .MapWritable(w => w.CategoryId,   e => e.CategoryId)
         .MapWritable(w => w.SupplierId,   e => e.SupplierId);
-// Route global ({root}/vProductCategory). Auth terpusat: IViewAuthorizer melihat
-// ViewFacet (List/Detail vs Create/Update/Delete) → bisa beda kebijakan baca vs tulis (§5.6).
+// Global route ({root}/vProductCategory). Centralized auth: IViewAuthorizer sees the
+// ViewFacet (List/Detail vs Create/Update/Delete) → can apply different read vs write policy (§5.6).
 
-public class ProductWriteDto      // strong typed — wajib untuk tulis
+public class ProductWriteDto      // strongly typed — required for writes
 {
     public string ProductName { get; set; } = "";
     public decimal? UnitPrice { get; set; }
@@ -677,33 +757,33 @@ public class ProductWriteDto      // strong typed — wajib untuk tulis
 }
 ```
 
-Inilah tiga lanjur dari diskusi desain dalam satu resource: **List (grid, anonymous)**, **Detail (form display, anonymous)**, **Write (create/edit, typed)** — dihubungkan via `ProductId`.
+These are the three surfaces from the design discussion within one resource: **List (grid, anonymous)**, **Detail (display form, anonymous)**, **Write (create/edit, typed)** — connected via `ProductId`.
 
-## 7. Aturan Keamanan Default
+## 7. Default Security Rules
 
-| Aturan | Default |
+| Rule | Default |
 |--------|---------|
-| Field di response | Hanya yang ada di `TQuery`. |
-| Field yang bisa difilter | **Semua field projection** (default allow). Opt-out: `.Field(x => x.F, f => f.Filterable(false))`. Batas aman = isi projection. |
-| Field yang bisa di-sort | **Semua field projection** (default allow). Opt-out: `f.Sortable(false)`. |
-| Field yang ikut global search | **Semua field string projection** (default allow). Opt-out: `f.Searchable(false)`. Berbeda dari versi spec awal (opt-in); aman karena projection sudah dikurasi. |
-| Field yang bisa ditulis | Tidak ada. Harus opt-in via `MapWritable(...)`. **(Tetap default-deny — tulis ≠ baca.)** |
-| Facet Write (CRUD) | Wajib typed `TCrud` + `MapWritable`. Projection anonymous **tidak pernah** jadi kontrak tulis. View anonymous-only = read-only. |
-| Authorization | **Authorizer pusat** (`UseAuthorizer<T>`). Terdaftar → ia satu-satunya gerbang (yang tidak di-allow = ditolak). **Tidak** terdaftar → default **allow** (ikut DynData) + **warning startup**. Lihat §5.6. |
+| Fields in the response | Only those present in `TQuery`. |
+| Filterable fields | **All projection fields** (default allow). Opt-out: `.Field(x => x.F, f => f.Filterable(false))`. The safe boundary = the projection contents. **Exception (D95): a `MaskField`'d field defaults to `Filterable(false)`** — see the masking note below. |
+| Sortable fields | **All projection fields** (default allow). Opt-out: `f.Sortable(false)`. |
+| Fields in global search | **All string projection fields** (default allow). Opt-out: `f.Searchable(false)`. Differs from the early spec version (opt-in); safe because the projection is already curated. |
+| Writable fields | None. Must opt-in via `MapWritable(...)`. **(Stays default-deny — write ≠ read.)** |
+| Write facet (CRUD) | Requires a typed `TCrud` + `MapWritable`. An anonymous projection is **never** a write contract. An anonymous-only View = read-only. |
+| Authorization | **Central authorizer** (`UseAuthorizer<T>`). Registered → it is the sole gate. Not registered: **Development** → allow-all + warning; **non-Development** → **fail-closed startup** unless explicit `AllowAnonymousAccess()` (D94). See §5.6. |
 | Bulk operation | Off by default. Opt-in via `AllowBulk(true)`. |
-| Export rows | Hard-capped global, override per view via `MaxExportRows`. **Berbeda dengan DynData** yang tidak ada cap. |
-| Page size | Hard-capped global, override per view via `MaxPageSize`. **Berbeda dengan DynData** yang menerima `length=-1` (no paging). |
-| Case-sensitivity filter/search | **Provider-detected di server**, bukan flag klien. Klien hanya kirim intent (`Contains`/`Equals`). Lihat Section 8. |
-| Concurrency control (write) | Opt-in via `WithConcurrencyToken(...)`. Endpoint write me-respect header `If-Match`; konflik → 412 Precondition Failed. Detail di Spec 05. |
-| Error contract | RFC 7807 Problem Details. Lihat Section 14. |
+| Export rows | Globally hard-capped, override per view via `MaxExportRows`. **Differs from DynData** which had no cap. |
+| Page size | Globally hard-capped, override per view via `MaxPageSize`. **Differs from DynData** which accepted `length=-1` (no paging). |
+| Filter/search case-sensitivity | **Provider-detected on the server**, not a client flag. The client only sends intent (`Contains`/`Equals`). See Section 8. |
+| Concurrency control (write) | Opt-in via `WithConcurrencyToken(...)`. The write endpoint respects the `If-Match` header; conflict → 412 Precondition Failed. Detail in Spec 05. |
+| Error contract | RFC 7807 Problem Details. See Section 14. |
 
-## 8. Filter & Search Contract (Hubungan ke Pilar 2)
+## 8. Filter & Search Contract (Relation to Pillar 2)
 
-Vista menetapkan **satu tree filter netral**, bukan tiga jalur paralel seperti DynData (`externalFilter` + `globalSearch` + `jsonQB`). Apapun bentuk request dari grid spesifik (DataTables, jQuery-QueryBuilder, AG Grid, OData), adapter (Pilar 2) menerjemahkannya ke struktur tunggal berikut sebelum sampai ke Core:
+Vista defines **one neutral filter tree**, not three parallel paths like DynData (`externalFilter` + `globalSearch` + `jsonQB`). Whatever the request shape from a specific grid (DataTables, jQuery-QueryBuilder, AG Grid, OData), the adapter (Pillar 2) translates it into the following single structure before it reaches Core:
 
 ```csharp
 public sealed record ViewQueryRequest(
-    FilterNode? Filter,                  // tree tunggal, hasil merge filter + search dari adapter
+    FilterNode? Filter,                  // single tree, the merged filter + search from the adapter
     IReadOnlyList<SortSpec> Sort,
     int Page,
     int PageSize,
@@ -730,9 +810,9 @@ public enum FilterOperator
 }
 ```
 
-### 8.1 Search vs Filter di sisi adapter
+### 8.1 Search vs Filter on the adapter side
 
-Adapter bertugas mengubah request klien (mis. DataTables `search.value`) menjadi sub-tree `FilterOr` dari `FilterLeaf(Contains)` **hanya untuk field yang di-deklarasi `Searchable(...)`**, lalu meng-AND-kan dengan filter terstruktur (mis. dari Query Builder). Klien tidak menentukan field mana yang ikut search — itu keputusan View.
+The adapter's job is to turn the client request (e.g. DataTables `search.value`) into a `FilterOr` sub-tree of `FilterLeaf(Contains)` **only for fields declared `Searchable(...)`**, then AND it with the structured filter (e.g. from a Query Builder). The client does not decide which fields participate in search — that is the View's decision.
 
 ```text
 Adapter input (DataTables):                Adapter output (ViewQueryRequest.Filter):
@@ -747,102 +827,117 @@ Adapter input (DataTables):                Adapter output (ViewQueryRequest.Filt
 
 ### 8.2 Case-sensitivity
 
-Klien **tidak** mengirim flag `usePGSQL` / `ignoreCase` (kontras dengan DynData). Vista menentukan strategi di server berdasarkan provider EF Core:
+The client does **not** send a `usePGSQL` / `ignoreCase` flag (in contrast to DynData). Vista decides the strategy on the server based on the EF Core provider:
 
 | Provider | Default `Contains` translation |
 |----------|--------------------------------|
 | Npgsql (PostgreSQL) | `EF.Functions.ILike("%v%")` |
-| SQL Server | `LIKE '%v%'` dengan collation default (CI by default di kebanyakan DB) |
+| SQL Server | `LIKE '%v%'` with the default collation (CI by default in most DBs) |
 | SQLite | `LIKE` (ASCII-CI native) |
-| MySQL / Pomelo | `LIKE` dengan collation default |
+| MySQL / Pomelo | `LIKE` with the default collation |
 | InMemory / test | `string.Contains(StringComparison.OrdinalIgnoreCase)` |
 
-Override per-view tersedia jika perlu (mis. force case-sensitive untuk kolom dengan collation khusus).
+Per-view override is available if needed (e.g. force case-sensitive for a column with a special collation).
 
 ### 8.3 Operator whitelist enforcement
 
-Validasi dilakukan oleh `IViewExecutor` sebelum expression dibangun. Aturan eksplisit:
+Validation is performed by `IViewExecutor` before the expression is built. The explicit rules:
 
-1. **Jalur filter klien** (filter terstruktur dari adapter): tiap `FilterLeaf(field, op, value)` harus memenuhi `field` filterable (default true, kecuali di-`Filterable(false)`) **dan** `op ∈ AllowedOperators[field]`. Pelanggaran → HTTP 400 dengan `field` & `operator` yang ditolak (lihat 14 — error model).
-2. **Jalur global-search** (sub-tree `FilterOr(Contains, ...)` yang dibangun adapter dari `search.value`): field string searchable (default true, kecuali `Searchable(false)`) mengizinkan `Contains` **hanya pada jalur ini**.
-3. **Pemisahan jalur** dilakukan adapter: ia menandai sub-tree mana yang berasal dari search vs filter (mis. record `FilterOrigin` internal atau menyusun sub-tree search di posisi tetap di pohon). `IViewExecutor` mengevaluasi tiap jalur dengan whitelist-nya.
-4. Konsekuensi: field bisa di-opt-out dari salah satu jalur — search-only (`Filterable(false)`), filter-only (`Searchable(false)`), atau keduanya (default).
+1. **Client filter path** (structured filter from the adapter): each `FilterLeaf(field, op, value)` must satisfy `field` filterable (default true, unless `Filterable(false)`) **and** `op ∈ AllowedOperators[field]`. A violation → HTTP 400 with the rejected `field` & `operator` (see 14 — error model).
+2. **Global-search path** (the `FilterOr(Contains, ...)` sub-tree the adapter builds from `search.value`): a searchable string field (default true, unless `Searchable(false)`) permits `Contains` **on this path only**.
+3. **Path separation** is done by the adapter: it marks which sub-tree comes from search vs filter (e.g. an internal `FilterOrigin` record, or placing the search sub-tree at a fixed position in the tree). `IViewExecutor` evaluates each path with its own whitelist.
+4. Consequence: a field can opt out of one path — search-only (`Filterable(false)`), filter-only (`Searchable(false)`), or both (default).
 
-Contoh (default semua aktif; cukup opt-out yang khusus):
+Example (everything active by default; just opt out the special ones):
 
 ```csharp
-b.Field(x => x.CreditCardLast4, f => f.Searchable(false))            // filterable, TIDAK ikut search box
- .Field(x => x.Description,     f => f.Filterable(false))            // searchable, tak bisa filter eksplisit
- .Field(x => x.Status,          f => f.Operators(FilterOperator.Equals)) // batasi operator
- .Field(x => x.CategoryId,      f => f.Hidden().Scopable());        // lookup key klien (§5.6)
+b.Field(x => x.CreditCardLast4, f => f.Searchable(false))            // filterable, NOT in the search box
+ .Field(x => x.Description,     f => f.Filterable(false))            // searchable, cannot be filtered explicitly
+ .Field(x => x.Status,          f => f.Operators(FilterOperator.Equals)) // restrict operators
+ .Field(x => x.CategoryId,      f => f.Hidden().Scopable());        // client lookup key (§5.6)
 ```
 
-**Jalur contextual/scope** (D47): sub-tree yang dibangun adapter dari `externalFilter`/lookup klien divalidasi terhadap **`Scopable`** (bukan `Filterable`). Scope server-trusted dari `IViewAuthorizer.ShapeQuery` (§5.6) tidak divalidasi whitelist — memang trusted.
+**The contextual/scope path** (D47): the sub-tree the adapter builds from the client's `externalFilter`/lookup is validated against **`Scopable`** (not `Filterable`). Server-trusted scope from `IViewAuthorizer.ShapeQuery` (§5.6) is not whitelist-validated — it is trusted by definition.
 
-Berbeda dengan DynData yang menerima filter ke field apa saja yang ada di property, dan yang mengikutkan semua field string ke global search secara otomatis.
+This differs from DynData, which accepted a filter on any field present on the property, and which automatically included all string fields in global search.
 
-## 9. Constraint AOT
+## 9. AOT Constraints
 
-Spec ini menetapkan agar implementasi **tidak melanggar**:
+This spec mandates that the implementation **must not violate**:
 
-1. Tidak ada `Activator.CreateInstance(Type)` di hot path. Konstruksi `TQuery` lewat expression yang dikompilasi compile-time oleh source generator.
-2. Tidak ada `JsonSerializer.Deserialize(string, Type)` tanpa `JsonTypeInfo`. Semua DTO punya `JsonSerializerContext` yang di-generate.
-3. Tidak ada `PropertyInfo.GetValue/SetValue` di hot path. Mapping `TCrud → TEntity` dikompilasi compile-time dari `MapWritable(...)`.
-4. Public surface yang tidak bisa AOT-clean diberi `[RequiresUnreferencedCode]` eksplisit dan harus punya jalur alternatif non-reflection.
-5. `IViewRegistry.RegisterAssembly(...)` di-mark `[RequiresUnreferencedCode]`. Jalur AOT-friendly: `Register<TView>()` eksplisit (yang juga jalur yang dipanggil source generator).
+1. No `Activator.CreateInstance(Type)` on the hot path. `TQuery` is constructed via an expression compiled at compile-time by the source generator.
+2. No `JsonSerializer.Deserialize(string, Type)` without a `JsonTypeInfo`. Every DTO has a generated `JsonSerializerContext`.
+3. No `PropertyInfo.GetValue/SetValue` on the hot path. The `TCrud → TEntity` mapping is compiled at compile-time from `MapWritable(...)`.
+4. Any public surface that cannot be AOT-clean is given an explicit `[RequiresUnreferencedCode]` and must have a non-reflection alternative path.
+5. `IViewRegistry.Register<TView>()` is marked `[RequiresUnreferencedCode]` (runtime introspection of the view type). The AOT-clean path: the source generator emits an equivalent `Add(ViewMetadata)` (Pillar 3). There is no `RegisterAssembly` on the Core surface (DR1).
 
 ## 10. Paging & Response Shape
 
-DynData `PagingResult<T>` adalah bentuk yang sudah dipakai konsumen. Vista mempertahankan **bentuk** ini (dengan penyesuaian breaking yang sengaja) supaya migrasi minimal:
+DynData's `PagingResult<T>` is a shape consumers already use. Vista preserves this **shape** (with deliberate breaking adjustments) so migration is minimal:
 
 ### 10.1 `PagedResult<T>`
 
 ```csharp
 public sealed record PagedResult<T>(
     IReadOnlyList<T> Items,
-    long TotalRows,        // long (DynData: int) — hindari overflow > 2B rows
+    long TotalRows,        // long (DynData: int) — avoid overflow > 2B rows
     int PageIndex,         // 0-based
     int PageSize,
-    long TotalPages);      // long (DynData: int) — konsistensi dengan TotalRows
+    long TotalPages);      // long (DynData: int) — consistency with TotalRows
 ```
 
-Perbedaan disengaja dengan DynData:
+**`ViewListResult<TRow>` (DR6).** `IViewExecutor.ListAsync<TRow>` returns a wrapper that
+carries `PagedResult<TRow>` **plus** the unfiltered total (for DataTables `recordsTotal`, R10.4):
 
-| DynData | Vista | Alasan |
+```csharp
+namespace a2n.Vista.Ports;
+
+public sealed record ViewListResult<TRow>(
+    PagedResult<TRow> Page,        // .TotalRows = recordsFiltered
+    long TotalRowsUnfiltered);     // = recordsTotal (scope applied, client filter/search NOT)
+```
+
+`PagedResult<T>` remains the neutral read shape; `ViewListResult` layers a second count over it without
+duplicating `Items`. (Spec 02 once proposed `ViewQueryResult<T>` — **superseded** by
+this `ViewListResult<TRow>`, see the Spec 02 reconciliation.)
+
+Deliberate differences from DynData:
+
+| DynData | Vista | Reason |
 |---------|-------|--------|
-| `int totalRows` | `long TotalRows` | Tabel > 2.1B baris (rare tapi nyata) overflow di DynData. |
-| `int totalPages` | `long TotalPages` | Konsistensi. |
-| `object context` field | **dihapus** | Untyped, anti-pattern, tidak pernah dipakai secara strongly-typed di DynData. |
-| Mutable class (set di luar konstruktor) | `record` immutable | Thread-safety, defensive copy. |
-| Sync `ToPagingResult` ada | **Async-only** | Blocking IO di EF Core anti-pattern. |
-| Tidak ada `CancellationToken` | **Wajib di semua materializer** | Klien batal harus hentikan DB query. |
-| `pageIndex * pageSize` (`int * int`) | Computed sebagai `long` | DynData `Skip(pageIndex * pageSize)` bisa overflow `int`. |
+| `int totalRows` | `long TotalRows` | Tables > 2.1B rows (rare but real) overflow in DynData. |
+| `int totalPages` | `long TotalPages` | Consistency. |
+| `object context` field | **removed** | Untyped, anti-pattern, never used in a strongly-typed way in DynData. |
+| Mutable class (set outside the constructor) | immutable `record` | Thread-safety, defensive copy. |
+| Sync `ToPagingResult` present | **Async-only** | Blocking IO in EF Core is an anti-pattern. |
+| No `CancellationToken` | **Mandatory in all materializers** | A client cancel must stop the DB query. |
+| `pageIndex * pageSize` (`int * int`) | Computed as `long` | DynData's `Skip(pageIndex * pageSize)` could overflow `int`. |
 
 ### 10.2 Materialization helper
 
-Tidak ada extension method `IQueryable<T>.ToPagedResultAsync(...)` di public API Core — itu detail internal `IViewExecutor`. Alasan: extension method publik membuat developer tergoda memanggilnya dari mana saja, yang melewati path validasi/auth/limit Vista. Kalau developer butuh paging manual di luar View, mereka pakai EF Core LINQ langsung.
+There is no `IQueryable<T>.ToPagedResultAsync(...)` extension method in the Core public API — that is an internal detail of `IViewExecutor`. Reason: a public extension method tempts developers to call it from anywhere, bypassing Vista's validation/auth/limit path. If a developer needs manual paging outside a View, they use EF Core LINQ directly.
 
 ## 11. Export Contract
 
-DynData punya endpoint export built-in (`csv`, `xlsx`) dengan custom `LiteExcelWriter` no-dependency. Vista mempertahankan kemampuan ini, tapi:
+DynData has a built-in export endpoint (`csv`, `xlsx`) with a custom no-dependency `LiteExcelWriter`. Vista preserves this capability, but:
 
-- **Pluggable exporter**: `IViewExporter` adalah kontrak terpisah, satu instance per format.
-- **Default registrations**: `CsvViewExporter` dan `LiteXlsxViewExporter` (port `LiteExcelWriter` ke Core, tetap no-dependency).
-- **Advanced exporter** (ClosedXML / OpenXmlSdk untuk multi-sheet, styling, formula) ada di paket terpisah `a2n.Vista.Exporters.ClosedXml` — bukan dependency Core.
+- **Pluggable exporter**: `IViewExporter` is a separate contract, one instance per format.
+- **Default registrations**: `CsvViewExporter` and `LiteXlsxViewExporter` (the `LiteExcelWriter` ported to Core, still no-dependency).
+- **Advanced exporter** (ClosedXML / OpenXmlSdk for multi-sheet, styling, formulas) lives in the separate package `a2n.Vista.Exporters.ClosedXml` — not a Core dependency.
 
-### 11.1 Kontrak
+### 11.1 Contract
 
 ```csharp
-// Non-generic kontrak utama. Diresolve by Format string ("csv", "xlsx").
-// Tidak generic supaya bisa di-resolve via DI tanpa reflection ke TQuery.
+// Non-generic main contract. Resolved by the Format string ("csv", "xlsx").
+// Not generic so it can be resolved via DI without reflecting into TQuery.
 public interface IViewExporter
 {
     string Format { get; }            // "csv", "xlsx", ...
     string MimeType { get; }
     string FileExtension { get; }
 
-    // Erased TQuery: rows datang sebagai object dari pipeline streaming,
-    // accessor per kolom diambil dari `fields` (delegate dari source-gen).
+    // Erased TQuery: rows arrive as object from the streaming pipeline,
+    // per-column accessors are taken from `fields` (delegate from source-gen).
     Task ExportAsync(
         IAsyncEnumerable<object> rows,
         IReadOnlyList<FieldMetadata> fields,
@@ -852,8 +947,8 @@ public interface IViewExporter
         CancellationToken ct = default);
 }
 
-// Compile-time accessor map per view, dihasilkan source generator dari
-// ViewMetadata. Tidak ada PropertyInfo.GetValue di hot path.
+// Compile-time per-view accessor map, generated by the source generator from
+// ViewMetadata. No PropertyInfo.GetValue on the hot path.
 public sealed class ExportColumnAccessors
 {
     public Type RowType { get; }
@@ -867,220 +962,278 @@ public sealed record ExportOptions(
     string? CultureName = null);    // default invariant; format date/number
 ```
 
-- Input adalah `IAsyncEnumerable<object>` + accessor map per kolom — **bukan** `IQueryable<dynamic>` dan **bukan** generic method `ExportAsync<TQuery>`. Generic method di interface non-generic akan memaksa caller mono-morphize secara reflection saat resolve `IViewExporter` by string (dan itu balapan dengan pilar #3).
-- Source generator menghasilkan `ExportColumnAccessors` per `View<TQuery>` sebagai partial init — accessor adalah delegate compile-time, bukan `PropertyInfo.GetValue`.
-- `fields` dari `ViewMetadata` digunakan untuk header & formatting (`DisplayAttribute`, type formatting).
-- Streaming: writer wajib men-stream baris ke `destination`, tidak boleh load semua ke memory.
-- `CancellationToken` wajib di-cek tiap N baris (default `N = 1024`, override oleh implementor).
+- The input is `IAsyncEnumerable<object>` + a per-column accessor map — **not** `IQueryable<dynamic>` and **not** a generic `ExportAsync<TQuery>` method. A generic method on a non-generic interface would force the caller to mono-morphize via reflection when resolving `IViewExporter` by string (and that races with pillar #3).
+- The source generator produces `ExportColumnAccessors` per `View<TQuery>` as a partial init — the accessors are compile-time delegates, not `PropertyInfo.GetValue`.
+- `fields` from `ViewMetadata` is used for headers & formatting (`DisplayAttribute`, type formatting).
+- Streaming: the writer must stream rows to `destination` and must not load everything into memory.
+- `CancellationToken` must be checked every N rows (default `N = 1024`, override by the implementor).
 
 ### 11.2 Hard limits
 
-- `MaxExportRows` di-enforce **sebelum** pipeline export jalan: `qry.Take(maxRows + 1)`; kalau lebih, return `413 Payload Too Large` dengan saran narrow filter.
-- Default global: 100.000 baris. Per-view override via `MaxExportRows(...)`.
-- Hard cap absolut (tidak bisa di-bypass): 1.000.000 baris. Lebih dari itu, pakai background job (bukan endpoint sinkron).
+- `MaxExportRows` is enforced **before** the export pipeline runs: `qry.Take(maxRows + 1)`; if exceeded, return `413 Payload Too Large` with a suggestion to narrow the filter.
+- Global default: 100,000 rows. Per-view override via `MaxExportRows(...)`.
+- Absolute hard cap (cannot be bypassed): 1,000,000 rows. Beyond that, use a background job (not a synchronous endpoint).
 
-### 11.3 Bug DynData yang TIDAK boleh ikut migrasi
+### 11.3 DynData bugs that MUST NOT come along in migration
 
-`LinqExtension.ExportToCSV` (DynData) punya bug konkret. Setiap implementor `IViewExporter` di Vista **wajib** memenuhi properti berikut, divalidasi dengan test:
+`LinqExtension.ExportToCSV` (DynData) has concrete bugs. Every `IViewExporter` implementor in Vista **must** satisfy the following properties, validated with tests:
 
-| Properti | DynData (LinqExtension.ExportToCSV) | Vista (mandatory) |
+| Property | DynData (LinqExtension.ExportToCSV) | Vista (mandatory) |
 |----------|-------------------------------------|-------------------|
-| Newline dalam nilai sel | `txt.Replace("\r", "").Replace("\n", "")` — **menghilangkan data** | RFC 4180: newline diizinkan **di dalam** quoted value. |
-| Quote di dalam nilai | `Replace("\"", "\"\"")` — benar | Pertahankan: double-quote escape. |
-| Separator | `CultureInfo.CurrentCulture.TextInfo.ListSeparator` — di server locale ID/DE jadi `;`, Excel locale lain rusak | Default `,` (RFC 4180). Override eksplisit per export call. |
-| Encoding | Tidak ada BOM → Excel Windows non-UTF rusak karakter non-ASCII | UTF-8 **dengan BOM** default. |
-| Materializer | `foreach (var item in query)` — load semua ke memory | `IAsyncEnumerable<TQuery>` streaming, await per batch. |
-| Accessor per cell | `PropertyInfo.GetValue(item, null)` per row × per kolom | Delegate accessor dari source-gen (compile-time), `ref` mutable struct. |
-| CancellationToken | Tidak ada | Wajib di kontrak; dicheck per N rows. |
+| Newline inside a cell value | `txt.Replace("\r", "").Replace("\n", "")` — **drops data** | RFC 4180: newline allowed **inside** a quoted value. |
+| Quote inside a value | `Replace("\"", "\"\"")` — correct | Keep: double-quote escape. |
+| Separator | `CultureInfo.CurrentCulture.TextInfo.ListSeparator` — on an ID/DE server locale becomes `;`, breaks Excel on other locales | Default `,` (RFC 4180). Explicit override per export call. |
+| Encoding | No BOM → Windows Excel corrupts non-ASCII characters on non-UTF | UTF-8 **with BOM** by default. |
+| Materializer | `foreach (var item in query)` — loads everything into memory | `IAsyncEnumerable<TQuery>` streaming, await per batch. |
+| Per-cell accessor | `PropertyInfo.GetValue(item, null)` per row × per column | Source-gen delegate accessor (compile-time), mutable `ref` struct. |
+| CancellationToken | None | Mandatory in the contract; checked every N rows. |
 
 ### 11.4 Import — out of v1.0
 
-Import (CSV/Excel → bulk insert) **bukan fitur v1.0**. Alasannya:
+Import (CSV/Excel → bulk insert) is **not a v1.0 feature**. The reasons:
 
-- DynData tidak punya fitur ini, jadi tidak ada *parity gap* untuk migrasi user.
-- Desain yang aman butuh: row validation per-record, field whitelist (lebih ketat dari `MapWritable`), transactional batching, error reporting per-row, deduplikasi, mapping kolom file → field DTO.
-- Lebih baik direncanakan setelah Core stabil.
+- DynData does not have this feature, so there is no *parity gap* for user migration.
+- A safe design needs: per-record row validation, a field whitelist (stricter than `MapWritable`), transactional batching, per-row error reporting, deduplication, file column → DTO field mapping.
+- Better planned after Core stabilizes.
 
-Direncanakan untuk **v1.x** sebagai paket terpisah `a2n.Vista.Import` (CSV/Excel → `TCrud[]` validation pipeline → bulk insert via `ExecuteUpdateAsync`/`SaveChangesAsync`). Spec terpisah saat itu.
+Planned for **v1.x** as a separate package `a2n.Vista.Import` (CSV/Excel → `TCrud[]` validation pipeline → bulk insert via `ExecuteUpdateAsync`/`SaveChangesAsync`). A separate spec at that time.
 
-## 12. Migration Notes dari DynData
+## 12. Migration Notes from DynData
 
-Spec ini sebagian **breaking** terhadap DynData. Konsumen `a2n.DynData` yang migrasi ke Vista akan mengalami:
+This spec is partly **breaking** with respect to DynData. Consumers of `a2n.DynData` migrating to Vista will encounter:
 
-### 12.1 Perubahan perilaku default
+### 12.1 Default behavior changes
 
-| DynData (otomatis) | Vista |
+| DynData (automatic) | Vista |
 |---------------------|-------|
-| Semua field string entity → global search | **Tetap default-allow**, tapi hanya field string **di projection** (bukan semua kolom entity). Opt-out per field via `.Field(x => x.F, f => f.Searchable(false))`. |
-| Semua property → filterable | **Tetap default-allow**, terbatas field projection. Opt-out `f.Filterable(false)`. |
-| Semua property → sortable | **Tetap default-allow**, terbatas field projection. Opt-out `f.Sortable(false)`. |
-| Auto-expose semua `DbSet` | **Hilang** — setiap view di-`AddView(...)`/`Register<TView>()` eksplisit. |
-| Endpoint CRUD aktif by default | **Hilang** — `WithCrud<TCrud,TEntity>()` / `CrudOn<TEntity>()` + `MapWritable(...)` eksplisit. |
-| `IDynDataAPIAuth` (opsional) | `IViewAuthorizer` + `UseAuthorizer<T>` — gaya sama (satu pintu). Tanpa registrasi → default allow (paritas DynData). |
+| All entity string fields → global search | **Still default-allow**, but only string fields **in the projection** (not all entity columns). Per-field opt-out via `.Field(x => x.F, f => f.Searchable(false))`. |
+| All properties → filterable | **Still default-allow**, limited to projection fields. Opt-out `f.Filterable(false)`. |
+| All properties → sortable | **Still default-allow**, limited to projection fields. Opt-out `f.Sortable(false)`. |
+| Auto-expose all `DbSet`s | **Gone** — every view is explicitly `AddView(...)`/`Register<TView>()`. |
+| CRUD endpoint active by default | **Gone** — explicit `WithCrud<TCrud,TEntity>()` / `CrudOn<TEntity>()` + `MapWritable(...)`. |
+| `IDynDataAPIAuth` (optional) | `IViewAuthorizer` + `UseAuthorizer<T>` — same style (single door). Without registration → default allow (DynData parity). |
 
-Catatan: filter/sort/search **tidak hilang** (beda dari versi spec awal yang opt-in). Yang berubah dari DynData hanyalah **cakupan**: dibatasi ke field yang di-projeksi, bukan seluruh kolom entity.
+Note: filter/sort/search are **not gone** (unlike the early spec version, which was opt-in). What changed from DynData is only the **scope**: limited to the projected fields, not the entire entity column set.
 
-### 12.2 Format request
+### 12.2 Request format
 
 | DynData | Vista |
 |---------|-------|
-| `externalFilter` (JSON object datar) | `FilterNode` tree via adapter |
+| `externalFilter` (flat JSON object) | `FilterNode` tree via the adapter |
 | `jsonQB` (jQuery-QueryBuilder format) | `FilterNode` tree via `a2n.Vista.Adapters.QueryBuilder` |
 | DataTables shape (`start`, `length`, `columns[]`, `order[]`) | `ViewQueryRequest` via `a2n.Vista.Adapters.DataTablesNet` |
-| `usePGSQL=true` flag dari klien | Tidak ada. Provider-detected di server. |
-| `EnableSearchIgnoreCase=true` flag | Tidak ada. Provider-detected di server. |
-| `length=-1` (return all) | Tolak. Page size hard-capped. |
+| `usePGSQL=true` flag from the client | None. Provider-detected on the server. |
+| `EnableSearchIgnoreCase=true` flag | None. Provider-detected on the server. |
+| `length=-1` (return all) | Rejected. Page size hard-capped. |
 
 ### 12.3 Endpoint
 
-Vista memisahkan **list-query** (read banyak, body filter) dari **create** (write satu) — keduanya `POST` dan harus path berbeda untuk menghindari MVC routing collision dan ambiguitas klien.
+Vista separates **List** (read many) from **Create** (write one). **Pillar 1** maps List to
+`GET {root}/{viewName}` (paging/sort via query string) and Create to `POST {root}/{viewName}` — different
+paths, no routing collision. The `POST {root}/{viewName}/query` form (body filter + `Accept`
+negotiation) is the **Pillar 2 adapter layer** that layers on top of the Pillar 1 route.
 
-| DynData | Vista |
+| DynData | Vista (Pillar 1) |
 |---------|-------|
-| `POST /dyndata/{controller}/{viewName}/datatable` | `POST /api/views/{viewName}/query` (response shape dipilih adapter via `Accept` header atau route prefix) |
-| `POST /dyndata/{controller}/{viewName}/list` | `POST /api/views/{viewName}/query` (default JSON shape) |
-| `POST /dyndata/{controller}/{viewName}/export` | `POST /api/views/{viewName}/export?format=csv\|xlsx` |
+| `POST /dyndata/{controller}/{viewName}/datatable` | `POST /api/views/{viewName}/query` — **Pillar 2 adapter form** (response shape via `Accept`/route) |
+| `POST /dyndata/{controller}/{viewName}/list` | `GET /api/views/{viewName}` (Pillar 1, paging/sort from the query string; shape `ViewListResult`→JSON) |
+| `POST /dyndata/{controller}/{viewName}/export` | `POST /api/views/{viewName}/export?format=csv\|xlsx` (forward-looking) |
 | `POST /dyndata/{controller}/{viewName}/read` | `GET /api/views/{viewName}/{key}` |
-| `POST /dyndata/{controller}/{viewName}/create` | `POST /api/views/{viewName}` (jika `CrudOn` ada) |
-| `POST /dyndata/{controller}/{viewName}/update` | `PUT /api/views/{viewName}/{key}` (concurrency: `If-Match`) |
-| `POST /dyndata/{controller}/{viewName}/delete` | `DELETE /api/views/{viewName}/{key}` (concurrency: `If-Match`) |
-| `GET /dyndata/{controller}/{viewName}/metadata` | `GET /api/views/{viewName}/metadata` |
-| `GET /dyndata/{controller}/{viewName}/metadataQB` | Output adapter-spesifik (`a2n.Vista.Adapters.QueryBuilder` menghasilkan jQuery-QueryBuilder schema). |
-| `GET /dyndata/{controller}/{viewName}/dropdown` | Out of v1.0. Stub kontrak: `GET /api/views/{viewName}/distinct/{field}` direservasi (lihat Section 14). |
+| `POST /dyndata/{controller}/{viewName}/create` | `POST /api/views/{viewName}` (if the view is writable; Pillar 1 → 501) |
+| `POST /dyndata/{controller}/{viewName}/update` | `PUT /api/views/{viewName}/{key}` (Pillar 1 → 501; concurrency: `If-Match`) |
+| `POST /dyndata/{controller}/{viewName}/delete` | `DELETE /api/views/{viewName}/{key}` (Pillar 1 → 501; concurrency: `If-Match`) |
+| `GET /dyndata/{controller}/{viewName}/metadata` | `GET /api/views/{viewName}/metadata` (forward-looking) |
+| `GET /dyndata/{controller}/{viewName}/metadataQB` | Adapter-specific output (`a2n.Vista.Adapters.QueryBuilder` → jQuery-QueryBuilder schema). |
+| `GET /dyndata/{controller}/{viewName}/dropdown` | Out of v1.0. Contract stub: `GET /api/views/{viewName}/distinct/{field}` is reserved (see Section 14). |
 
-### 12.4 Fungsi `LinqExtension.cs` & `AnonymousType.cs` — **TIDAK** di-port
+> **Pillar 1 write status.** The Create/Update/Delete routes are already mapped, but the EF write
+> execution is not yet implemented → it returns **501 Not Implemented** (writable view) or **404**
+> (read-only view, R3.3). The surface was deliberately stabilized first; write wiring follows (DR7).
 
-DynData punya `Extensions/LinqExtension.cs` (1461 baris) yang berisi banyak ekstensi `IQueryable`. Hasil audit:
+### 12.4 The `LinqExtension.cs` & `AnonymousType.cs` functions — **NOT** ported
 
-| Fungsi DynData | Verdict | Pengganti di Vista |
+DynData has `Extensions/LinqExtension.cs` (1461 lines) containing many `IQueryable` extensions. Audit result:
+
+| DynData function | Verdict | Replacement in Vista |
 |----------------|---------|---------------------|
-| `ToPagingResult` / `ToPagingResultAsync` (paging) | **Port konsep** (rewrite) | Lihat Section 10. Internal `IViewExecutor`, bukan extension publik. |
-| `OrderBy(IQueryable, string key, bool asc)` + variants | **Tidak** | Sort default semua field projection (opt-out `.Field(x => x.F, f => f.Sortable(false))`); field di luar projection → HTTP 400. Expression via source-gen delegate. |
-| `ThenBy(IQueryable, string key, ...)` variants | **Tidak** | Bagian dari sort whitelist di atas. |
-| `Where(IQueryable, object whereExp, Type)` | **Tidak** | `IQueryable<TSource>` strongly-typed, expression dibangun dari `FilterNode` tree. |
-| `AsNoTrackingDynamic(IQueryable<dynamic>)` | **Tidak** | `.AsNoTracking()` standar EF Core. |
-| `Select(IQueryable, params string[] fieldNames)` + variants | **Tidak** | Projection compile-time di `From<TSource>(...)` + source-gen accessor untuk sparse `SelectFields`. |
-| `InnerJoin` / `LeftJoin` / `RightJoin` / `FullJoin` (~750 baris) | **Tidak** | Developer pakai EF Core LINQ standar di delegate `FromQuery<TSource>(...)`. |
-| `SelectRecursive<T>(IEnumerable<T>, Func<T, IEnumerable<T>>)` | Opsional | Utility umum, bisa di-drop atau ditaruh di `Vista.Core/Utilities` kalau dipakai banyak. |
-| `ExportToCSV` / `ExportToExcel` | **Port konsep** (rewrite) | Lihat Section 11. Bug RFC 4180 dan reflection per-cell wajib diperbaiki. |
-| `GroupByDateTimeInterval` (commented-out incomplete) | **Tidak** | Time-bucketing kandidat v1.x. |
-| `AnonymousType.cs` (Reflection.Emit, ~29 KB) | **Tidak** | Vista pakai tipe statis di developer-defined DTO. Source-gen menghasilkan partial classes, bukan emit type runtime. AOT-incompatible secara fundamental. |
+| `ToPagingResult` / `ToPagingResultAsync` (paging) | **Port the concept** (rewrite) | See Section 10. Internal to `IViewExecutor`, not a public extension. |
+| `OrderBy(IQueryable, string key, bool asc)` + variants | **No** | Sort defaults to all projection fields (opt-out `.Field(x => x.F, f => f.Sortable(false))`); fields outside the projection → HTTP 400. Expression via a source-gen delegate. |
+| `ThenBy(IQueryable, string key, ...)` variants | **No** | Part of the sort whitelist above. |
+| `Where(IQueryable, object whereExp, Type)` | **No** | Strongly-typed `IQueryable<TSource>`, expression built from the `FilterNode` tree. |
+| `AsNoTrackingDynamic(IQueryable<dynamic>)` | **No** | Standard EF Core `.AsNoTracking()`. |
+| `Select(IQueryable, params string[] fieldNames)` + variants | **No** | Compile-time projection in `From<TSource>(...)` + a source-gen accessor for sparse `SelectFields`. |
+| `InnerJoin` / `LeftJoin` / `RightJoin` / `FullJoin` (~750 lines) | **No** | The developer uses standard EF Core LINQ in the `FromQuery<TSource>(...)` delegate. |
+| `SelectRecursive<T>(IEnumerable<T>, Func<T, IEnumerable<T>>)` | Optional | A general utility, can be dropped or placed in `Vista.Core/Utilities` if widely used. |
+| `ExportToCSV` / `ExportToExcel` | **Port the concept** (rewrite) | See Section 11. The RFC 4180 bug and per-cell reflection must be fixed. |
+| `GroupByDateTimeInterval` (commented-out incomplete) | **No** | Time-bucketing is a v1.x candidate. |
+| `AnonymousType.cs` (Reflection.Emit, ~29 KB) | **No** | Vista uses static types in developer-defined DTOs. Source-gen produces partial classes, not runtime emitted types. Fundamentally AOT-incompatible. |
 
-### 12.5 Compatibility layer (kandidat, bukan komitmen)
+### 12.5 Compatibility layer — **Decided: none (D98)**
 
-Paket opsional `a2n.Vista.Compat.DynData` bisa menyediakan:
+Vista does **not** provide a DynData compatibility layer. **Migration is manual**: there is no
+seamless drop-in, no `/dyndata/*` route aliases, no committed wire shim for `externalFilter`/`jsonQB`.
+Reason: a wire shim = a permanent maintenance burden for the very format we want to leave behind, and
+it holds back the evolution of the Vista contract.
 
-- Route alias `/dyndata/{controller}/*` → forward ke Vista endpoint setara.
-- Adapter `externalFilter` & `jsonQB` (sudah di-rencanakan untuk Pilar 2).
-- Helper auto-register View dari `DbContext` (read-only, scaffold) untuk pengguna yang baru pindah.
+What replaces the compat shim:
 
-Keputusan apakah paket ini dirilis bersama v1.0 ditangguhkan sampai ada feedback user DynData.
+- **DynData ergonomics are preserved via Style A**, not via a shim. Style A is the "spiritual
+  successor" to DynData's `QueryTemplate` — the same concept & coding style, without the reflection/mass-assignment weaknesses.
+- **The migration guide (`08-migration-from-dyndata.md`) is the primary migration tool** (not optional):
+  concrete before/after examples for `QueryTemplate.AddQuery(...)` → `AddView(...)` Style A, the mapping
+  of `externalFilter`/`jsonQB` → `FilterNode`, and the mapping of old endpoints → Vista routes. Without a shim,
+  the quality of this guide = the quality of the migration experience.
 
 ## 13. Decision Log
 
-| # | Keputusan | Status | Catatan |
+| # | Decision | Status | Note |
 |---|-----------|--------|---------|
-| D1 | Pisahkan `TQuery` dan `TCrud` di level tipe | **Decided** | Cegah mass-assignment seperti DynData. |
-| D2 | Tidak ada auto-expose `DbSet` | **Decided** | View harus eksplisit. |
-| D3 | `Filterable` & `Sortable` opt-in per field | **Superseded by D42** | Dibalik jadi default-allow + opt-out. |
-| D4 | Authorization wajib di-set saat build | **Superseded by D43** | Diganti authorizer pusat; default-allow bila tak terdaftar. |
-| D5 | `System.Text.Json` native di Core, Newtonsoft di paket terpisah | **Decided** | Sesuai ROADMAP. |
-| D6 | CPM (Central Package Management) | **Decided** | `Directory.Packages.props` di repo root. |
-| D7 | Test framework | **Decided: TUnit** | Modern, AOT-friendly — selaras dengan Pilar 3. Dipasang saat test project pertama dibuat. |
-| D8 | Multi-target `net8.0;net9.0;net10.0` | **Decided** | Sudah di `Directory.Build.props`. |
-| D9 | `<Nullable>disable</Nullable>` global | **Superseded by D9-revised** | Lihat D9-revised di bawah. |
-| D10 | View identifier: string `Named("customers")` atau type-only | **Open** | String memudahkan TS client routing, tapi rawan typo. Kandidat: validate via source generator. |
-| D11 | Bagaimana `From<TSource>(projection)` mendapatkan `IQueryable<TSource>` | **Open** | Resolusi via DI: butuh `DbContext` factory atau abstraction `IQueryableProvider<T>`. Kandidat: konvensi `services.GetRequiredService<IQueryable<TSource>>()` via shim. |
-| D12 | Apakah `View` perlu generation dari source-gen (selain metadata)? | **Open** | Kandidat: source-gen menghasilkan `partial` View dengan registrasi otomatis. |
-| D13 | Lokasi `ViewMetadata` runtime vs compile-time | **Open** | Spec saat ini menyebut runtime. Mungkin perlu varian compile-time-only untuk AOT. |
-| D14 | `Searchable` terpisah dari `Filterable` (global search tidak auto-attack semua field string seperti DynData) | **Superseded by D42** | Konsep pemisahan Filter vs Search dipertahankan (§4.4), tapi default searchable dibalik jadi allow + opt-out. |
-| D15 | Import (CSV/Excel → bulk insert) | **Decided: defer ke v1.x** | Section 11.4. Bukan parity gap DynData; perlu desain validasi yang matang. Direncanakan sebagai paket terpisah `a2n.Vista.Import`. |
-| D16 | Exporter pluggable, default port `LiteExcelWriter` ke Core | **Decided** | Section 11. `IViewExporter` kontrak, default `CsvViewExporter` + `LiteXlsxViewExporter` no-dep. Advanced (ClosedXML/EPPlus) di paket terpisah. |
-| D17 | Case-sensitivity & ILIKE/LIKE: provider-detected di server, bukan flag klien | **Decided** | Section 8.2. Klien hanya kirim intent (`Contains`/`Equals`), Vista pilih translation berdasarkan provider EF Core. |
-| D18 | Single tree filter (`FilterNode`) menggantikan 3 jalur DynData (`externalFilter` + `globalSearch` + `jsonQB`) | **Decided** | Section 8. Adapter (Pilar 2) menerjemahkan format grid spesifik ke tree netral. |
-| D19 | Hard cap absolut export 1.000.000 baris (tidak bisa di-bypass via konfigurasi) | **Decided** | Section 10.2. Lebih dari itu pakai background job. |
-| D20 | Compatibility layer `a2n.Vista.Compat.DynData` (route alias `/dyndata/*` dst.) | **Open** | Section 12.5. Tergantung feedback user DynData. |
-| D21 | `PagedResult<T>` immutable record, `long` totals, no `object context`, async-only materialization | **Decided** | Section 10. Breaking dari DynData `PagingResult<T>` (mutable class, `int`, sync overload). |
-| D22 | `IViewExporter` mandatory properties: RFC 4180 CSV, UTF-8 BOM, streaming `IAsyncEnumerable`, source-gen accessor, `CancellationToken` | **Decided** | Section 11.3. Eksplisit tutup bug DynData. |
-| D23 | `AnonymousType.cs` (Reflection.Emit runtime types) tidak di-port. Vista pakai source-gen partial classes. | **Decided** | Section 12.4. Fundamental anti-AOT. |
-| D24 | Dynamic join via string field name (`InnerJoin`/`LeftJoin`/`RightJoin`/`FullJoin` di DynData) tidak di-port. Developer pakai LINQ EF langsung di delegate source query. | **Decided** | Section 12.4. ~750 baris kode dihilangkan, tipe statis menggantikan. |
-| D25 | `MapWritable` exhaustiveness: default **ignore** untuk field `TCrud` yang tidak di-map; opt-in strict via `[VistaWritable(strict: true)]`. Source-gen mengeluarkan diagnostic `VISTA0010` (info). | **Decided** | Closes prior Open Question #5. |
-| D26 | Read-only View dipisah ke base class `View<TQuery>` dengan builder `IViewBuilder<TQuery>` yang **tidak punya** `CrudOn`. `View<TQuery, TCrud>` adalah base terpisah, bukan subclass dari `View<TQuery>`. Marker `NoCrud` dihilangkan. | **Decided** | Section 5.1, 5.2. Cegah compile-time access ke CRUD knob di view read-only. |
-| D27 | Adapter **tidak** mengakses raw `IQueryable<TSource>`. Adapter hanya bicara `ViewQueryRequest` dan `PagedResult<TQuery>`. Optimasi seperti `Include` adalah tanggung jawab `FromQuery<TSource>(...)` di View definition. | **Decided** | Closes prior Open Question #3. |
-| D28 | Row filter default di **TSource** (pre-projection) via `WithRowFilter<TSource>(...)`. Post-projection `WithProjectedRowFilter` ada untuk kasus khusus. | **Decided** | Section 5.2, 6. Closes prior Open Question #2. |
-| D29 | `MaskField(field, predicate, masker)` — masker `Func<TProp, TProp>` wajib. Tidak ada masking implicit (`null` / `"***"`). | **Decided** | Section 5.2. |
-| D30 | `WithConcurrencyToken(field)` opt-in di `ICrudBuilder`. Endpoint write me-respect header `If-Match`. Konflik → 409 / 412. | **Decided** | Section 5.2, 14.2. |
-| D31 | `WithInterceptor<T>` opt-in. Forecast audit log v1.x supaya v1.0 → v1.x non-breaking. | **Decided** | Section 5.2. |
-| D32 | List-query endpoint dipisah dari create: `POST /api/views/{viewName}/query` vs `POST /api/views/{viewName}`. Hindari MVC routing collision. | **Decided** | Section 12.3. |
-| D33 | Error contract: RFC 7807 Problem Details, `type` namespace di bawah `https://a2n.dev/vista/errors/`. | **Decided** | Section 14.1. Detail bentuk JSON di Spec 05. |
-| D34 | `IViewExporter` non-generic. Generic method di interface non-generic akan memaksa reflection saat resolve by `Format`. Source-gen menghasilkan `ExportColumnAccessors` per view. | **Decided** | Section 11.1. |
-| D35 | Distinct-values endpoint `GET /api/views/{viewName}/distinct/{field}` direservasi sebagai stub kontrak — implementasi v1.x. | **Decided** | Section 14.3. v1.x tidak breaking. |
-| D36 | `Filterable<TProp>` overload tanpa default parameter generic. | **Superseded by D42/D45** | Standalone `Filterable(...)` dihapus; operator diatur via `.Field(..., f => f.Operators(...))`. |
-| D9-revised | `<Nullable>enable</Nullable>` global sebelum implementasi `a2n.Vista.Core` substantial. Mengubah dari `disable` di `Directory.Build.props` adalah pre-requisite untuk PR pertama yang menyentuh public API. | **Decided** | Replaces D9 "Open". Library AOT-first tidak boleh menabung NRT debt. |
-| D37 | Dua gaya authoring: central-template anonymous (gaya A, ala DynData) + class-per-view typed (gaya B). Keduanya hasilkan `ViewMetadata` sama. | **Decided** | Section 4.5. Vista = evolusi DynData, bukan rewrite. |
-| D38 | Invarian typing: projection anonymous hanya untuk facet baca (List/Detail); facet Write WAJIB `TCrud` typed + `MapWritable`. View anonymous-only = read-only. | **Decided** | Section 4.5, 4.6. Tutup mass-assignment di level desain. Me-refine rumusan awal "anonymous ⇒ seluruh view read-only" menjadi per-facet (read boleh anonymous, write wajib typed). |
-| D39 | Model facet: satu View = resource dengan ≤3 facet (List wajib, Detail opsional fallback-by-PK, Write opsional typed). PK menjembatani facet. Auth per-facet. | **Decided** | Section 4.6. List=grid, Detail=form display, Write=create/edit. |
-| D40 | Gaya A men-trigger `[RequiresUnreferencedCode]` (registrasi + serialisasi anonymous). Native AOT penuh → gaya B. Facet Write tetap AOT-clean di dua gaya. | **Decided** | Section 4.5, 5.5. Selaras tradeoff ROADMAP Pilar 3. |
-| D41 | Field metadata gaya A via fluent expression `.Field(x => x.Prop, f => f.PrimaryKey().Hidden())`, bukan callback string `meta.FieldName == "..."` (DynData). | **Decided** | Section 5.5, 6A. Lebih aman dari typo. |
-| D42 | Filter/Sort/Search **default-allow** untuk semua field projection (opt-out via `.Field(..., f => f.Filterable(false)/.Searchable(false))`). Batas keamanan = isi projection yang sudah dikurasi. | **Decided** | Section 4.4, 7. **Supersedes D3 & D14** (dulu opt-in/default-deny). |
-| D43 | Authorization **terpusat** via `IViewAuthorizer.IsAllowedAsync` + `ShapeQuery` (gaya `IDynDataAPIAuth`), didaftarkan `UseAuthorizer<T>`. Tanpa authorizer → **default allow** + warning startup (bukan fail-closed). | **Decided** | Section 5.6. **Supersedes D4**. Ikut DynData; trade-off ergonomi vs default-open. |
-| D44 | Route **global** via `RouteRoot(...)`; route view diturunkan `{root}/{viewName}`. Tidak ada `Route()` per-view (escape-hatch saja). | **Decided** | Section 5.6, 12.3. |
-| D45 | Konfigurasi per-field via satu builder `.Field(selector, f => f.Label(...).Hidden().Operators(...).Searchable(false))`; label auto dari nama field (PascalCase → "Title Case"). | **Decided** | Section 5.4, 5.5. Menggantikan rantai `.Filterable().Sortable().Searchable()` verbose. |
-| D46 | `IViewAuthorizer.ShapeQuery` jadi rumah contextual/row filter server-trusted (tenant, ownership) — menjawab opsi (a) pertanyaan `externalFilter` (lihat referensi DataTables). Filter scoping dari klien tetap tunduk whitelist. | **Decided** | Section 5.6. |
-| D47 | Contextual/lookup filter dari **klien** (padanan `externalFilter`) hanya ke field `Scopable` (opt-in, default false), terpisah dari `Filterable` UI. Scope server-trusted via `ShapeQuery`. | **Decided** | Section 5.6, 8.3. Opsi (c). |
-| D48 | **Layering paket**: `Core` bebas EF & HTTP (kontrak netral + port `IViewExecutor`/`IViewScope`). `EntityFrameworkCore` implement `IViewExecutor` + authoring DbContext-bound. `IViewAuthorizer` di `AspNetCore` (HTTP-bound). Adapter & `Client.TypeScript` → `Core` saja. EF & AspNetCore **tidak** saling referensi (ketemu di `IViewExecutor`). | **Decided** | ROADMAP "Struktur Paket NuGet". Diterapkan di csproj. |
-| D49 | Facet Detail v0.x = fallback ke projection List by-PK (gaya A). Facet Detail dengan projection sendiri ditunda. | **Decided** | Section 4.6. |
-| D50 | `<Nullable>enable</Nullable>` di-set global (implementasi D9-revised). | **Done** | `Directory.Build.props`. |
+| D1 | Separate `TQuery` and `TCrud` at the type level | **Decided** | Prevents mass-assignment like DynData. |
+| D2 | No auto-expose of `DbSet` | **Decided** | Views must be explicit. |
+| D3 | `Filterable` & `Sortable` opt-in per field | **Superseded by D42** | Inverted to default-allow + opt-out. |
+| D4 | Authorization must be set at build time | **Superseded by D43** | Replaced by the central authorizer; default-allow if not registered. |
+| D5 | `System.Text.Json` native in Core, Newtonsoft in a separate package | **Decided** | Per ROADMAP. |
+| D6 | CPM (Central Package Management) | **Decided** | `Directory.Packages.props` at the repo root. |
+| D7 | Test framework | **Decided: TUnit** | Modern, AOT-friendly — aligned with Pillar 3. Set up when the first test project is created. |
+| D8 | Multi-target `net8.0;net9.0;net10.0` | **Decided** | Already in `Directory.Build.props`. |
+| D9 | `<Nullable>disable</Nullable>` global | **Superseded by D9-revised** | See D9-revised below. |
+| D10 | View identifier: string `Named("customers")` or type-only | **Decided: string + startup dedup** | Identity via the `Named`/`AddView` string; duplicate name → startup error (R1.3). Compile-time validation via the source generator (Pillar 3). |
+| D11 | How `From<TSource>(projection)` obtains `IQueryable<TSource>` | **Decided** | Convention `DbContext.Set<TSource>()`; an explicit factory (`FromQuery`/`AddView` delegate) wins. Applied in `SplitViewExecutionPlan` (EF). |
+| D12 | Does `View` need generation from source-gen (besides metadata)? | **Decided: deferred to Pillar 3** | Pillar 1 uses a reflection path with `[RequiresUnreferencedCode]`; source-gen partial + auto-register in Spec 03. |
+| D13 | `ViewMetadata` location: runtime vs compile-time | **Decided: runtime (Pillar 1)** | Built at runtime via reflection (RUC); the compile-time variant = the source generator (Pillar 3, Spec 03 §6). |
+| D14 | `Searchable` separate from `Filterable` (global search does not auto-attack all string fields like DynData) | **Superseded by D42** | The Filter vs Search separation concept is retained (§4.4), but the searchable default is inverted to allow + opt-out. |
+| D15 | Import (CSV/Excel → bulk insert) | **Decided: defer to v1.x** | Section 11.4. Not a DynData parity gap; needs a mature validation design. Planned as a separate package `a2n.Vista.Import`. |
+| D16 | Pluggable exporter, default port of `LiteExcelWriter` into Core | **Decided** | Section 11. `IViewExporter` contract, default `CsvViewExporter` + `LiteXlsxViewExporter` no-dep. Advanced (ClosedXML/EPPlus) in a separate package. |
+| D17 | Case-sensitivity & ILIKE/LIKE: provider-detected on the server, not a client flag | **Decided** | Section 8.2. The client only sends intent (`Contains`/`Equals`), Vista picks the translation based on the EF Core provider. |
+| D18 | A single filter tree (`FilterNode`) replaces DynData's 3 paths (`externalFilter` + `globalSearch` + `jsonQB`) | **Decided** | Section 8. The adapter (Pillar 2) translates the specific grid format into the neutral tree. |
+| D19 | Absolute export hard cap of 1,000,000 rows (cannot be bypassed via configuration) | **Decided** | Section 10.2. Beyond that, use a background job. |
+| D20 | Compatibility layer `a2n.Vista.Compat.DynData` (route aliases `/dyndata/*` etc.) | **Revised by D98: none** | Section 12.5. Manual migration; DynData ergonomics via Style A + the migration guide. |
+| D21 | `PagedResult<T>` immutable record, `long` totals, no `object context`, async-only materialization | **Decided** | Section 10. Breaking from DynData's `PagingResult<T>` (mutable class, `int`, sync overload). |
+| D22 | `IViewExporter` mandatory properties: RFC 4180 CSV, UTF-8 BOM, streaming `IAsyncEnumerable`, source-gen accessor, `CancellationToken` | **Decided** | Section 11.3. Explicitly closes the DynData bugs. |
+| D23 | `AnonymousType.cs` (Reflection.Emit runtime types) is not ported. Vista uses source-gen partial classes. | **Decided** | Section 12.4. Fundamentally anti-AOT. |
+| D24 | Dynamic join via string field name (`InnerJoin`/`LeftJoin`/`RightJoin`/`FullJoin` in DynData) is not ported. The developer uses EF LINQ directly in the source query delegate. | **Decided** | Section 12.4. ~750 lines of code removed, static types replace it. |
+| D25 | `MapWritable` exhaustiveness: default **ignore** for `TCrud` fields that are not mapped; opt-in strict via `[VistaWritable(strict: true)]`. Source-gen emits the diagnostic `VISTA0010` (info). | **Decided** | Closes prior Open Question #5. |
+| D26 | The read-only View is split into the base class `View<TQuery>` with the builder `IViewBuilder<TQuery>` that **does not have** `CrudOn`. `View<TQuery, TCrud>` is a separate base, not a subclass of `View<TQuery>`. The `NoCrud` marker is removed. | **Decided** | Section 5.1, 5.2. Prevents compile-time access to the CRUD knobs on a read-only view. |
+| D27 | The adapter does **not** access the raw `IQueryable<TSource>`. The adapter only speaks `ViewQueryRequest` and `PagedResult<TQuery>`. Optimizations like `Include` are the responsibility of `FromQuery<TSource>(...)` in the View definition. | **Decided** | Closes prior Open Question #3. |
+| D28 | Row filter defaults to **TSource** (pre-projection) via `WithRowFilter<TSource>(...)`. Post-projection `WithProjectedRowFilter` exists for special cases. | **Decided** | Section 5.2, 6. Closes prior Open Question #2. |
+| D29 | `MaskField(field, predicate, masker)` — the `Func<TProp, TProp>` masker is required. No implicit masking (`null` / `"***"`). | **Decided** | Section 5.2. |
+| D30 | `WithConcurrencyToken(field)` opt-in on `ICrudBuilder`. The write endpoint respects the `If-Match` header. Conflict → 409 / 412. | **Decided** | Section 5.2, 14.2. |
+| D31 | `WithInterceptor<T>` opt-in. Forecasts the v1.x audit log so v1.0 → v1.x is non-breaking. | **Decided** | Section 5.2. |
+| D32 | The list-query endpoint is separated from create: `POST /api/views/{viewName}/query` vs `POST /api/views/{viewName}`. Avoids an MVC routing collision. | **Decided** | Section 12.3. |
+| D33 | Error contract: RFC 7807 Problem Details, `type` namespaced under `https://a2n.dev/vista/errors/`. | **Decided** | Section 14.1. JSON shape detail in Spec 05. |
+| D34 | `IViewExporter` non-generic. A generic method on a non-generic interface would force reflection when resolving by `Format`. Source-gen produces `ExportColumnAccessors` per view. | **Decided** | Section 11.1. |
+| D35 | Distinct-values endpoint `GET /api/views/{viewName}/distinct/{field}` reserved as a contract stub — v1.x implementation. | **Decided** | Section 14.3. v1.x is non-breaking. |
+| D36 | `Filterable<TProp>` overload without a generic default parameter. | **Superseded by D42/D45** | Standalone `Filterable(...)` removed; operators configured via `.Field(..., f => f.Operators(...))`. |
+| D9-revised | `<Nullable>enable</Nullable>` global before any substantial `a2n.Vista.Core` implementation. Changing it from `disable` in `Directory.Build.props` is a prerequisite for the first PR touching the public API. | **Decided** | Replaces D9 "Open". An AOT-first library must not accumulate NRT debt. |
+| D37 | Two authoring styles: anonymous central-template (Style A, DynData-like) + typed class-per-view (Style B). Both produce the same `ViewMetadata`. | **Decided** | Section 4.5. Vista = an evolution of DynData, not a rewrite. |
+| D38 | Typing invariant: an anonymous projection is only for read facets (List/Detail); the Write facet REQUIRES a typed `TCrud` + `MapWritable`. An anonymous-only View = read-only. | **Decided** | Section 4.5, 4.6. Closes mass-assignment at the design level. Refines the original formulation "anonymous ⇒ the whole view read-only" into per-facet (read may be anonymous, write must be typed). |
+| D39 | Facet model: one View = a resource with ≤3 facets (List mandatory, Detail optional fallback-by-PK, Write optional typed). The PK bridges the facets. Auth per-facet. | **Decided** | Section 4.6. List=grid, Detail=display form, Write=create/edit. |
+| D40 | Style A triggers `[RequiresUnreferencedCode]` (registration + anonymous serialization). Full Native AOT → Style B. The Write facet stays AOT-clean in both styles. | **Decided** | Section 4.5, 5.5. Aligned with the ROADMAP Pillar 3 tradeoff. |
+| D41 | Style A field metadata via the fluent expression `.Field(x => x.Prop, f => f.PrimaryKey().Hidden())`, not the string callback `meta.FieldName == "..."` (DynData). | **Decided** | Section 5.5, 6A. Safer from typos. |
+| D42 | Filter/Sort/Search **default-allow** for all projection fields (opt-out via `.Field(..., f => f.Filterable(false)/.Searchable(false))`). The security boundary = the contents of the curated projection. | **Decided** | Section 4.4, 7. **Supersedes D3 & D14** (formerly opt-in/default-deny). |
+| D43 | Authorization **centralized** via `IViewAuthorizer.IsAllowedAsync` + `ShapeQuery` (the `IDynDataAPIAuth` style), registered with `UseAuthorizer<T>`. Without an authorizer → **default allow** + startup warning (not fail-closed). | **Revised by D94** | Section 5.6. **Supersedes D4**. The "no authorizer = allow-all" posture now only applies in Development; non-Development is fail-closed (D94). |
+| D44 | Route **global** via `RouteRoot(...)`; the view route is derived `{root}/{viewName}`. No per-view `Route()` (escape-hatch only). | **Decided** | Section 5.6, 12.3. |
+| D45 | Per-field configuration via a single builder `.Field(selector, f => f.Label(...).Hidden().Operators(...).Searchable(false))`; auto label from the field name (PascalCase → "Title Case"). | **Decided** | Section 5.4, 5.5. Replaces the verbose `.Filterable().Sortable().Searchable()` chain. |
+| D46 | `IViewAuthorizer.ShapeQuery` becomes the home of the server-trusted contextual/row filter (tenant, ownership) — answering option (a) of the `externalFilter` question (see the DataTables reference). Client filter scoping remains subject to the whitelist. | **Decided** | Section 5.6. |
+| D47 | Contextual/lookup filter from the **client** (the `externalFilter` equivalent) only to `Scopable` fields (opt-in, default false), separate from UI `Filterable`. Server-trusted scope via `ShapeQuery`. | **Decided** | Section 5.6, 8.3. Option (c). |
+| D48 | **Package layering**: `Core` is free of EF & HTTP (neutral contracts + ports `IViewExecutor`/`IViewScope`). `EntityFrameworkCore` implements `IViewExecutor` + DbContext-bound authoring. `IViewAuthorizer` in `AspNetCore` (HTTP-bound). Adapters & `Client.TypeScript` → `Core` only. EF & AspNetCore do **not** reference each other (they meet at `IViewExecutor`). | **Decided** | ROADMAP "NuGet Package Structure". Applied in the csproj. |
+| D49 | Detail facet v0.x = fallback to the List projection by-PK (Style A). A Detail facet with its own projection is deferred. | **Decided** | Section 4.6. |
+| D50 | `<Nullable>enable</Nullable>` set globally (implements D9-revised). | **Done** | `Directory.Build.props`. |
+
+### 13.1 Implementation reconciliation (DR1–DR10)
+
+Decisions that surfaced/were resolved during the `pilar-1-core` implementation (code = source of truth).
+Prefixed `DR` so they do not collide with the `D51+` numbering used by Spec 02–05.
+
+| # | Decision | Status | Note |
+|---|-----------|--------|---------|
+| DR1 | `IViewRegistry`: primary sink `Add(ViewMetadata)`, `Register<TView>()` (RUC), `Get` **nullable** (miss→null→404), `All`. No `Register(Type)`/`RegisterAssembly` in Core. | **Decided** | §5.3. Refines the non-null `Get` sketch. |
+| DR2 | DI **two doors**: `AddVista` (`IVistaBuilder`, EF package — `RouteRoot`, `RegisterTemplate<TTemplate,TDbContext>`, `Register<TView>`, `Register<TView>(plan)`) + `AddVistaEndpoints` (`IVistaEndpointBuilder`, AspNetCore package — `RouteRoot`, `UseAuthorizer<T>`). | **Decided** | §5.3, §5.6. EF & AspNetCore do not reference each other (D48); `RegisterTemplate` requires an explicit `TDbContext`. |
+| DR3 | Pillar 1 List = **`GET {root}/{viewName}`** (query string), not `POST .../query`. `POST .../query` (body + `Accept`) is the Pillar 2 adapter form that layers on top. | **Decided** | §5.6, §12.3. |
+| DR4 | `WithValidator`/`WithInterceptor` (on `ICrudBuilder`/`ICrudFacetBuilder`) **deferred** — not in Pillar 1 code yet. | **Decided: deferred** | §5.2, §5.5. v1.x forecast. |
+| DR5 | Style B `Register<TView>()` = **metadata-only** (executable when + `IViewExecutionPlan` via `Register<TView>(plan)` / source-gen). Style A `RegisterTemplate` produces metadata + plan. | **Decided** | §5.3. The Style B builder does not yet route the source/projection to EF. |
+| DR6 | `IViewExecutor.ListAsync` returns `ViewListResult<TRow>(PagedResult<TRow> Page, long TotalRowsUnfiltered)`. **Replaces** the proposed `ViewQueryResult<T>` of Spec 02. | **Decided** | §10.1. |
+| DR7 | The write endpoints (Create/Update/Delete) are already mapped but the EF execution is not → **501** (writable) / **404** (read-only). | **Decided: write wiring follows** | §12.3. |
+| DR8 | Write is **merged** into `IViewExecutor` (`CreateAsync<TCrud>`/`UpdateAsync<TCrud>`/`DeleteAsync`), **not** a separate `IViewWriter` port. `IViewExecutor` is **generic** (`ListAsync<TRow>`/`DetailAsync<TRow>`), not erased-to-`object`. | **Decided** | Differs from the Spec 02/05 sketch; the code prevails. |
+| DR9 | `FilterOrigin` = a **public 3-value enum** (`Filter`/`Search`/`Scope`) passed to `FilterCompiler.Compile(node, origin, view)`. Not a field on `FilterLeaf`; no `Trusted` value (trusted scope goes through `IViewScope`, not validated). | **Decided** | §8.3. `ViewQueryRequest`/`FilterLeaf` stay as in §8 (without `Origin`/`IncludeUnfilteredCount`). |
+| DR10 | `app.MapView(string viewName)` (by name) + `app.MapVistaViews()` (generic, resolve by name at request time). `MapView<TView>()` deferred (needs source-gen type→name resolution). | **Decided** | §5.6. |
+
+### 13.2 Follow-up decisions (D94+)
+
+Cross-cutting decisions from the architecture review (operations posture, observability, versioning). Numbered
+sequentially after D93 (Spec 05).
+
+| # | Decision | Status | Note |
+|---|-----------|--------|---------|
+| D94 | **Fail-safe auth posture.** Without an authorizer: **Development** → allow-all + warning; **non-Development** (Production/Staging/UAT/env unset) → **startup fail-closed** unless the explicit opt-in `AllowAnonymousAccess()`. The 2-level model (switch + policy) is retained. | **Decided** | §5.6. **Revises D43**. Organization-neutral: a security omission fails safe; "open" becomes an explicit reviewed decision. |
+| D95 | A `MaskField`'d field **defaults to `Filterable(false)`** (explicit opt-in if needed; ideally `Equals`-only). | **Decided** | §5.2, §7. Closes probing of the masked value. |
+| D96 | **Style A & Style B are permanent** (no deprecation of Style A). The AOT asymmetry is permanent & explicit: Style A serialization stays RUC forever; its filter/sort/paging is AOT-clean. Use-case guidance (monolith→A, modular monolith→B, microservices→free). | **Decided** | §4.5. |
+| D97 | **Cross-assembly view discovery** (Style B in sub-projects, assemblies attached in main) promoted from an Open Question (Spec 03 §17 #4) to a **mandatory Pillar 3 requirement**. | **Decided** | A consequence of the D96 use-case (modular monolith). |
+| D98 | **No DynData compatibility layer.** Manual migration; DynData ergonomics preserved via Style A; the migration guide is the primary tool. | **Decided** | §12.5. **Revises D20**. |
+| D99 | **Wire versioning via URL**: `/api/views` = latest alias (dev only, not for production clients), `/api/v{n}/views` = pinned (production). The version = the contract envelope (wire/`ViewMetadata`/`FilterNode`), not per-view. Coexistence across versions is allowed by design; v1.0 ships v1 + the alias. | **Decided** | §15 #1, `11-versioning-and-deprecation.md`. **Closes Open Question §15 #1**. |
+| D100 | **Vendor-neutral observability**: instrument via OpenTelemetry-native (`ActivitySource`/`Meter`/`ILogger`), with no APM dependency at all; enrich auto-instrumented spans with View semantics; operational status (e.g. the D94 authorizer) via standard health checks. Opt-in & zero-cost when not enabled. | **Decided** | `10-operations-and-observability.md`. |
+| D101 | **One `RouteRoot` source.** Currently duplicated in `IVistaBuilder` (EF) & `IVistaEndpointBuilder` (AspNetCore). Unified into a single Core option that both layers read. | **Decided (implementation follows)** | A public-code refactor; see the execution note. |
+
+> **D101 execution note.** Unifying `RouteRoot` touches the public API of two packages and needs
+> careful design (EF embeds the route into `ViewMetadata.Route`; AspNetCore owns the live route). Recorded as a
+> decision + a separate refactor task — **not yet** executed in this documentation session.
 
 ## 14. Error Model & Concurrency
 
 ### 14.1 Error contract — RFC 7807 Problem Details
 
-Semua endpoint Vista mengembalikan `application/problem+json` untuk error, dengan `type` di-namespace di bawah `https://a2n.dev/vista/errors/`. Contoh klasifikasi:
+All Vista endpoints return `application/problem+json` for errors, with `type` namespaced under `https://a2n.dev/vista/errors/`. Example classification:
 
-| Kondisi | HTTP | `type` |
+| Condition | HTTP | `type` |
 |--------|------|--------|
-| Filter ke field yang bukan `Filterable` | 400 | `.../filter-field-not-allowed` |
-| Operator filter di luar `AllowedOperators` | 400 | `.../filter-operator-not-allowed` |
-| Sort ke field yang bukan `Sortable` | 400 | `.../sort-field-not-allowed` |
-| Validasi `TCrud` gagal | 400 | `.../validation` (per-field detail) |
-| Tidak ter-otorisasi | 401 | `.../unauthorized` |
-| Authorize policy gagal | 403 | `.../forbidden` |
+| Filter on a field that is not `Filterable` | 400 | `.../filter-field-not-allowed` |
+| Filter operator outside `AllowedOperators` | 400 | `.../filter-operator-not-allowed` |
+| Sort on a field that is not `Sortable` | 400 | `.../sort-field-not-allowed` |
+| `TCrud` validation failed | 400 | `.../validation` (per-field detail) |
+| Not authenticated | 401 | `.../unauthorized` |
+| Authorize policy failed | 403 | `.../forbidden` |
 | Not found (CRUD by key) | 404 | `.../not-found` |
-| `If-Match` token salah / hilang | 412 | `.../precondition-failed` |
-| Konflik concurrency saat `SaveChanges` | 409 | `.../concurrency-conflict` |
-| Hard limit page size / export rows tercapai | 413 | `.../payload-too-large` |
-| Error tak terduga | 500 | `.../unexpected` |
+| `If-Match` token wrong / missing | 412 | `.../precondition-failed` |
+| Concurrency conflict on `SaveChanges` | 409 | `.../concurrency-conflict` |
+| Page size / export rows hard limit reached | 413 | `.../payload-too-large` |
+| Unexpected error | 500 | `.../unexpected` |
 
-Setiap response menyertakan `extensions` machine-readable: nama field yang ditolak, operator yang tidak diizinkan, allowed list, dst. Detail bentuk JSON di Spec 05.
+Each response includes machine-readable `extensions`: the rejected field name, the disallowed operator, the allowed list, etc. JSON shape detail in Spec 05.
 
 ### 14.2 Concurrency control (write path)
 
-- View dengan `WithConcurrencyToken(field)` menambahkan token ke response read (`GET /{key}` dan `query`) sebagai field DTO atau header `ETag` (default: header).
-- Klien WAJIB mengirim `If-Match: <token>` saat `PUT` / `DELETE`.
-- Endpoint mapper (Spec 05): tidak ada header → 412; header tidak match nilai DB saat `SaveChanges` → 409.
-- Token boleh berupa `byte[] RowVersion` (SQL Server `rowversion`), `xmin` (PostgreSQL), atau kolom `DateTime LastModifiedAt` (database tanpa native rowversion). Encoding ke string ETag: base64url untuk `byte[]`, ISO-8601 untuk `DateTime`.
+- A View with `WithConcurrencyToken(field)` adds the token to read responses (`GET /{key}` and `query`) as a DTO field or an `ETag` header (default: header).
+- The client MUST send `If-Match: <token>` on `PUT` / `DELETE`.
+- The endpoint mapper (Spec 05): no header → 412; header does not match the DB value on `SaveChanges` → 409.
+- The token may be `byte[] RowVersion` (SQL Server `rowversion`), `xmin` (PostgreSQL), or a `DateTime LastModifiedAt` column (databases without a native rowversion). Encoding to the ETag string: base64url for `byte[]`, ISO-8601 for `DateTime`.
 
 ### 14.3 Distinct-values endpoint (stub)
 
-Endpoint `GET /api/views/{viewName}/distinct/{field}?prefix=&take=50` direservasi untuk dukungan AG Grid set filter, MudBlazor SelectFilter, PrimeNG MultiSelect, dst. **Out of v1.0**, tapi route dan validasi (`field ∈ Filterable`, hard cap `take ≤ 1000`) ditetapkan sekarang supaya v1.x tidak breaking. Implementasi penuh: Spec 04 atau spec terpisah.
+The endpoint `GET /api/views/{viewName}/distinct/{field}?prefix=&take=50` is reserved for supporting AG Grid set filter, MudBlazor SelectFilter, PrimeNG MultiSelect, etc. **Out of v1.0**, but the route and validation (`field ∈ Filterable`, hard cap `take ≤ 1000`) are defined now so v1.x is non-breaking. Full implementation: Spec 04 or a separate spec.
 
 ## 15. Open Questions
 
-1. **Versioning route**: apakah `Route("/api/views/customers")` perlu konvensi `v1`? Kandidat: prefix global `services.AddVista(v => v.RouteRoot("/api/v1/views"))`. Defer ke Spec 05.
-2. **Sparse `SelectFields` di `ViewQueryRequest`** (Section 8): kapan adapter boleh men-set ini? Spec saat ini tidak menjelaskan trade-off vs proyeksi compile-time `From<TSource>`. Kandidat: `SelectFields` adalah **subset** dari field di `TQuery`, tidak boleh menambah; source-gen menghasilkan accessor delegate per kombinasi.
-3. **`From<TSource>` resolusi DI tanpa explicit factory** (D11): apakah cukup konvensi `services.GetRequiredService<DbContext>().Set<TSource>()`? Spec saat ini punya `FromQuery<TSource>(...)` sebagai escape hatch. Putuskan default sebelum implementasi `IViewExecutor`.
-4. **`MapWritable` exhaustiveness** — **Decided: default ignore** (lihat Decision Log D25). Source-gen menghasilkan diagnostic info-level (`VISTA0010`) untuk field di `TCrud` yang tidak di-map. Opt-in strict via attribute `[VistaWritable(strict: true)]` di kelas `TCrud`.
-5. **Bentuk concurrency token di response read**: header `ETag` (HTTP-idiomatic) vs field di DTO (klien JS lebih gampang). Kandidat default: header dengan opsi expose ke field via `WithConcurrencyToken(..., exposeAs: "RowVersion")`.
+1. **Route versioning**: **Resolved (D99)** — the wire is versioned via URL: `/api/views` = the "latest" alias
+   (for dev/exploration, **do not use from production clients**), `/api/v{n}/views` = pinned (mandatory for
+   production). The version = the version of the *contract envelope* (wire/`ViewMetadata`/`FilterNode`), not per-view. Detail
+   in `11-versioning-and-deprecation.md`.
+2. **Sparse `SelectFields` in `ViewQueryRequest`** (Section 8): when may the adapter set this? The current spec does not explain the trade-off vs the compile-time projection `From<TSource>`. Candidate: `SelectFields` is a **subset** of the fields in `TQuery`, cannot add; source-gen produces an accessor delegate per combination.
+3. **`From<TSource>` DI resolution without an explicit factory** (D11): **Resolved** — the convention
+   `DbContext.Set<TSource>()`, an explicit factory (`FromQuery`/the `AddView` delegate) wins. Applied
+   in `SplitViewExecutionPlan` (EF layer). See Decision Log D11.
+4. **`MapWritable` exhaustiveness** — **Decided: default ignore** (see Decision Log D25). Source-gen produces an info-level diagnostic (`VISTA0010`) for `TCrud` fields that are not mapped. Opt-in strict via the attribute `[VistaWritable(strict: true)]` on the `TCrud` class.
+5. **Shape of the concurrency token in the read response**: an `ETag` header (HTTP-idiomatic) vs a DTO field (easier for a JS client). Candidate default: the header, with the option to expose to a field via `WithConcurrencyToken(..., exposeAs: "RowVersion")`.
 
 ## 16. Next Spec Documents
 
-Setelah spec ini stabil:
+After this spec stabilizes:
 
-- `02-filter-and-query.md` — detail expression builder, provider-aware filter, sanitization, validasi operator whitelist.
-- `03-source-generator.md` — kontrak codegen (input: `ViewMetadata`, output: registration + serialization context + OpenAPI).
-- `04-adapter-contract.md` — `IViewAdapter<TRequest, TResponse>` (Pilar 2), termasuk adapter DataTables & QueryBuilder yang menjadi target migrasi DynData. Referensi perilaku nyata DynData (kontrak `metadataQB`/`datatable`, 3 jalur filter, payload `jsonQB`): [`../reference/dyndata-datatables-observed.md`](../reference/dyndata-datatables-observed.md).
-- `05-aspnetcore-mapping.md` — `MapView<TView>()`, route konvensi, error model, response shape.
-- `06-typescript-client.md` — bentuk codegen DTO + filter API di TS.
-- `07-export.md` — detail `IViewExporter`, format default, streaming, `LiteXlsxViewExporter` migration dari DynData.
-- `08-migration-from-dyndata.md` — extended migration guide dengan contoh konkret per fitur.
+- `02-filter-and-query.md` — expression builder detail, provider-aware filter, sanitization, operator whitelist validation.
+- `03-source-generator.md` — codegen contract (input: `ViewMetadata`, output: registration + serialization context + OpenAPI).
+- `04-adapter-contract.md` — `IViewAdapter<TRequest, TResponse>` (Pillar 2), including the DataTables & QueryBuilder adapters that are DynData migration targets. Reference for DynData's real behavior (the `metadataQB`/`datatable` contract, the 3 filter paths, the `jsonQB` payload): [`../reference/dyndata-datatables-observed.md`](../reference/dyndata-datatables-observed.md).
+- `05-aspnetcore-mapping.md` — `MapVistaViews()`/`MapView(string)`, route conventions, error model, response shape.
+- `06-typescript-client.md` — the codegen shape of DTOs + the filter API in TS.
+- `07-export.md` — `IViewExporter` detail, default formats, streaming, `LiteXlsxViewExporter` migration from DynData.
+- `08-migration-from-dyndata.md` — extended migration guide with concrete per-feature examples. **The primary migration tool (D98)** because there is no compat layer.
+- `10-operations-and-observability.md` — the vendor-neutral observability contract, health checks, startup validation (D100, D94).
+- `11-versioning-and-deprecation.md` — the public contract surface, package vs wire version scheme, deprecation policy (D96–D99).
