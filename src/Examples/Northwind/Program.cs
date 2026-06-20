@@ -5,11 +5,35 @@ using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
-// SQLite read-only Northwind sample, seeded at startup so List/Detail return data.
-builder.Services.AddDbContext<NorthwindDbContext>(options =>
-    options.UseSqlite("Data Source=northwind-sample.db"));
+// Real Microsoft Northwind sample database (SQLite). It is shipped zipped under ../DB and must be
+// extracted before first run; we never recreate or seed it, so it stays the single source of truth.
+const string DbRelativePath = "../DB/northwind.db";
+var dbFullPath = Path.GetFullPath(DbRelativePath);
 
-// Vista core wiring (EF layer): register the Gaya A central template. RouteRoot defaults to /api/views.
+if (!File.Exists(dbFullPath))
+{
+    Console.Error.WriteLine(
+        $"""
+        Northwind database not found at: {dbFullPath}
+
+        Extract the bundled "Northwind SQLite.zip" so the database file exists, for example:
+          1. Open the folder next to the project: src/Examples/DB
+          2. Extract "Northwind SQLite.zip" into that folder
+          3. Make sure the extracted file is named "northwind.db" (rename it if needed)
+
+        Then run this example again from the project directory:
+          dotnet run --project src/Examples/Northwind
+        """);
+    Environment.ExitCode = 1;
+    return;
+}
+
+// Read-only SQLite connection against the extracted database file.
+builder.Services.AddDbContext<NorthwindDbContext>(options =>
+    options.UseSqlite($"Data Source={DbRelativePath}"));
+
+// Vista core wiring (EF layer): register the Gaya A central template. The global route root is owned by
+// the AspNetCore layer (Decision Log D101); views are exposed under {RouteRoot}/{viewName}.
 builder.Services.AddVista(vista =>
     vista.RegisterTemplate<NorthwindViews, NorthwindDbContext>());
 
@@ -20,12 +44,7 @@ builder.Services.AddVistaEndpoints();
 
 var app = builder.Build();
 
-// Create + seed the database.
-using (var scope = app.Services.CreateScope())
-{
-    var db = scope.ServiceProvider.GetRequiredService<NorthwindDbContext>();
-    NorthwindSeeder.EnsureSeeded(db);
-}
+// No seeding: the extracted Northwind database is the source of truth (read-only sample).
 
 // RFC 7807 error mapping, then the generic view endpoints under {root}/{viewName}.
 app.UseVistaExceptionHandling();

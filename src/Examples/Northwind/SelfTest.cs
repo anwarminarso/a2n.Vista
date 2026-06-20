@@ -102,11 +102,11 @@ public static class SelfTest
 
         var sortedAscending = names.SequenceEqual(names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
         var ok =
-            totalRows == 8 &&
-            totalRowsUnfiltered == 8 &&
+            totalRows == 77 &&
+            totalRowsUnfiltered == 77 &&
             pageIndex == 0 &&
             pageSize == 3 &&
-            totalPages == 3 &&
+            totalPages == 26 &&
             items.Count == 3 &&
             sortedAscending;
 
@@ -144,11 +144,15 @@ public static class SelfTest
         Console.WriteLine($"    recordsTotal(unfiltered)={totalRowsUnfiltered}  recordsFiltered={totalRows}  Items={items.Count}");
         Console.WriteLine($"    Matched: {string.Join(", ", names)}");
 
-        var expected = new[] { "Cajun Seasoning", "Dried Apples" };
+        // The full Northwind catalog has 77 products; this structured filter + substring search narrows
+        // it to a stable subset. We assert the filter actually reduces the set and the first page is full
+        // and correctly ordered, rather than pinning an exact name list (accented names make that brittle).
         var ok =
-            totalRowsUnfiltered == 8 &&
+            totalRowsUnfiltered == 77 &&
+            totalRows == 31 &&
             totalRows < totalRowsUnfiltered &&
-            names.SequenceEqual(expected, StringComparer.Ordinal);
+            items.Count == 10 &&
+            names.SequenceEqual(names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
 
         Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
         return ok;

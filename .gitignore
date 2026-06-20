@@ -63,3 +63,5 @@ pnpm-debug.log*
 .cursor/
 .kiro/
 .playwright-mcp/
+
+northwind.db
