@@ -1,0 +1,15 @@
+using System;
+using System.Collections.Generic;
+
+namespace a2n.Vista.Examples.Northwind.Entities;
+
+/// <summary>
+/// Keyless projection backing the Northwind <c>"Products Above Average Price"</c> view: products whose
+/// unit price exceeds the catalog average.
+/// </summary>
+public partial class ProductsAboveAveragePrice
+{
+    public string ProductName { get; set; } = string.Empty;
+
+    public double? UnitPrice { get; set; }
+}

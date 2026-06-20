@@ -4,12 +4,11 @@ using System.Collections.Generic;
 namespace a2n.Vista.Examples.Northwind.Entities;
 
 /// <summary>
-/// A company that supplies products. Maps to the Northwind <c>Suppliers</c> table; source of the
-/// <c>SupplierName</c> column projected by the <c>vProductCategory</c> view.
+/// A customer that places orders. Maps to the Northwind <c>Customers</c> table.
 /// </summary>
-public partial class Supplier
+public partial class Customer
 {
-    public int SupplierId { get; set; }
+    public string CustomerId { get; set; } = string.Empty;
 
     public string CompanyName { get; set; } = string.Empty;
 
@@ -31,9 +30,11 @@ public partial class Supplier
 
     public string Fax { get; set; } = string.Empty;
 
-    public string HomePage { get; set; } = string.Empty;
+    // [Newtonsoft.Json.JsonIgnore]
+    // [System.Text.Json.Serialization.JsonIgnore]
+    public virtual ICollection<Order> Orders { get; set; } = new List<Order>();
 
     // [Newtonsoft.Json.JsonIgnore]
     // [System.Text.Json.Serialization.JsonIgnore]
-    public virtual ICollection<Product> Products { get; set; } = new List<Product>();
+    public virtual ICollection<CustomerDemographic> CustomerTypes { get; set; } = new List<CustomerDemographic>();
 }

@@ -1,36 +1,44 @@
+using System;
+using System.Collections.Generic;
+
 namespace a2n.Vista.Examples.Northwind.Entities;
 
 /// <summary>
-/// A product (a trimmed-down Northwind <c>Products</c> row). This is the root source entity for the
-/// <c>vProductCategory</c> view; the view projects it joined with its <see cref="Category"/> and
-/// <see cref="Supplier"/>.
+/// A product offered for sale. Maps to the Northwind <c>Products</c> table and is the root source
+/// entity for the <c>vProductCategory</c> view (joined with <see cref="Category"/> and
+/// <see cref="Supplier"/>).
 /// </summary>
-public class Product
+public partial class Product
 {
-    /// <summary>Primary key. Surfaced (hidden) in the view so Detail-by-key can resolve a row.</summary>
     public int ProductId { get; set; }
 
-    /// <summary>The product's display name.</summary>
-    public string ProductName { get; set; } = "";
+    public string ProductName { get; set; } = string.Empty;
 
-    /// <summary>The unit price, or <see langword="null"/> when not priced.</summary>
-    public decimal? UnitPrice { get; set; }
+    public int? SupplierId { get; set; }
 
-    /// <summary>The number of units currently in stock.</summary>
-    public short UnitsInStock { get; set; }
+    public int? CategoryId { get; set; }
 
-    /// <summary>Whether the product has been discontinued.</summary>
-    public bool Discontinued { get; set; }
+    public string QuantityPerUnit { get; set; } = string.Empty;
 
-    /// <summary>Foreign key to the owning <see cref="Category"/>.</summary>
-    public int CategoryId { get; set; }
+    public double? UnitPrice { get; set; }
 
-    /// <summary>The owning category navigation.</summary>
-    public Category Category { get; set; } = null!;
+    public int? UnitsInStock { get; set; }
 
-    /// <summary>Foreign key to the providing <see cref="Supplier"/>.</summary>
-    public int SupplierId { get; set; }
+    public int? UnitsOnOrder { get; set; }
 
-    /// <summary>The providing supplier navigation.</summary>
-    public Supplier Supplier { get; set; } = null!;
+    public int? ReorderLevel { get; set; }
+
+    public string Discontinued { get; set; } = string.Empty;
+
+    // [Newtonsoft.Json.JsonIgnore]
+    // [System.Text.Json.Serialization.JsonIgnore]
+    public virtual Category Category { get; set; } = null!;
+
+    // [Newtonsoft.Json.JsonIgnore]
+    // [System.Text.Json.Serialization.JsonIgnore]
+    public virtual ICollection<OrderDetail> OrderDetails { get; set; } = new List<OrderDetail>();
+
+    // [Newtonsoft.Json.JsonIgnore]
+    // [System.Text.Json.Serialization.JsonIgnore]
+    public virtual Supplier Supplier { get; set; } = null!;
 }
