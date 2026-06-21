@@ -1170,13 +1170,15 @@ sequentially after D93 (Spec 05).
 | D96 | **Style A & Style B are permanent** (no deprecation of Style A). The AOT asymmetry is permanent & explicit: Style A serialization stays RUC forever; its filter/sort/paging is AOT-clean. Use-case guidance (monolith→A, modular monolith→B, microservices→free). | **Decided** | §4.5. |
 | D97 | **Cross-assembly view discovery** (Style B in sub-projects, assemblies attached in main) promoted from an Open Question (Spec 03 §17 #4) to a **mandatory Pillar 3 requirement**. | **Decided** | A consequence of the D96 use-case (modular monolith). |
 | D98 | **No DynData compatibility layer.** Manual migration; DynData ergonomics preserved via Style A; the migration guide is the primary tool. | **Decided** | §12.5. **Revises D20**. |
-| D99 | **Wire versioning via URL**: `/api/views` = latest alias (dev only, not for production clients), `/api/v{n}/views` = pinned (production). The version = the contract envelope (wire/`ViewMetadata`/`FilterNode`), not per-view. Coexistence across versions is allowed by design; v1.0 ships v1 + the alias. | **Decided** | §15 #1, `11-versioning-and-deprecation.md`. **Closes Open Question §15 #1**. |
+| D99 | **Wire versioning deferred (backlog).** No version-prefixed routes this release; unversioned requests serve the latest (and only) version; a `CurrentWireVersion` seam exists so versioning is additive later, with route groups (D103) as the intended vehicle. | **Decided: deferred** | §15 #1, `11-versioning-and-deprecation.md`. **Closes Open Question §15 #1** (resolved as deferred). |
 | D100 | **Vendor-neutral observability**: instrument via OpenTelemetry-native (`ActivitySource`/`Meter`/`ILogger`), with no APM dependency at all; enrich auto-instrumented spans with View semantics; operational status (e.g. the D94 authorizer) via standard health checks. Opt-in & zero-cost when not enabled. | **Decided** | `10-operations-and-observability.md`. |
-| D101 | **One `RouteRoot` source.** Currently duplicated in `IVistaBuilder` (EF) & `IVistaEndpointBuilder` (AspNetCore). Unified into a single Core option that both layers read. | **Decided (implementation follows)** | A public-code refactor; see the execution note. |
+| D101 | **One route source = registration (model R).** A view's full route is composed at registration (`RouteGroup` prefix or the default root `/api/views`) and baked into `ViewMetadata.Route`; the AspNetCore layer is a dumb mapper that maps each view at its `ViewMetadata.Route`. The AspNetCore-owned `RouteRoot` setter was removed, resolving the EF/AspNetCore duplication. | **Done** | `VistaBuilder` composes the route; `VistaEndpointRouteBuilderExtensions` maps from the registry. |
+| D103 | **Route groups + one view = one endpoint.** `RouteGroup(prefix, g => { ... })` scoping on the EF builder (with a default root and `RegisterAssembly` for modular registration, the latter `[RequiresUnreferencedCode]`); nested groups combine prefixes; view names are globally unique; a view maps to exactly one endpoint (registering the same view in two groups fails fast). | **Done** | §4.5 use-case (internal vs external). `IVistaBuilder.RouteGroup`/`RegisterAssembly`. |
 
-> **D101 execution note.** Unifying `RouteRoot` touches the public API of two packages and needs
-> careful design (EF embeds the route into `ViewMetadata.Route`; AspNetCore owns the live route). Recorded as a
-> decision + a separate refactor task — **not yet** executed in this documentation session.
+> **D101 implementation note.** Resolved via model R (route-at-registration): the EF `VistaBuilder`
+> composes the full route into `ViewMetadata.Route` (default root or `RouteGroup` prefix), and the
+> AspNetCore mapper reads it verbatim. The AspNetCore `RouteRoot` setter was removed. Implemented and
+> verified (`pilar-1-hardening`, Task 3) across net8/9/10.
 
 ## 14. Error Model & Concurrency
 

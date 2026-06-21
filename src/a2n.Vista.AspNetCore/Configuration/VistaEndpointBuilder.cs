@@ -24,19 +24,18 @@ internal sealed class VistaEndpointBuilder : IVistaEndpointBuilder
     }
 
     /// <inheritdoc />
-    public IVistaEndpointBuilder RouteRoot(string root)
-    {
-        ArgumentException.ThrowIfNullOrWhiteSpace(root);
-        _options.RouteRoot = root;
-        return this;
-    }
-
-    /// <inheritdoc />
     public IVistaEndpointBuilder UseAuthorizer<T>() where T : class, IViewAuthorizer
     {
         // Scoped so the authorizer may depend on request-scoped services (see IVistaEndpointBuilder).
         _services.TryAddScoped<IViewAuthorizer, T>();
         _options.AuthorizerType = typeof(T);
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IVistaEndpointBuilder AllowAnonymousAccess()
+    {
+        _options.AllowAnonymous = true;
         return this;
     }
 }

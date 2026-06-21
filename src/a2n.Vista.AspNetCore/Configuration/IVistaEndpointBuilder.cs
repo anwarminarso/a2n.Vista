@@ -4,8 +4,10 @@ namespace a2n.Vista.AspNetCore.Configuration;
 
 /// <summary>
 /// The fluent configuration surface for Vista's AspNetCore HTTP layer, returned by
-/// <c>AddVistaEndpoints</c>. It owns the two cross-cutting, lint-of-style settings from §5.6: the
-/// global route root (Decision Log D44) and the single one-door authorizer (Decision Log D43).
+/// <c>AddVistaEndpoints</c>. It owns the HTTP-side cross-cutting settings: the single one-door
+/// authorizer (Decision Log D43) and the explicit anonymous-access opt-in (Decision Log D94). The
+/// route root is no longer configured here — a view's route is composed at registration (the EF
+/// layer's <c>RouteGroup</c>/default root) and recorded in <c>ViewMetadata.Route</c> (D101/D103).
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,15 +25,6 @@ namespace a2n.Vista.AspNetCore.Configuration;
 public interface IVistaEndpointBuilder
 {
     /// <summary>
-    /// Sets the global route root that prefixes every view's live endpoints (<c>{root}/{viewName}</c>,
-    /// §5.6/D44). Defaults to <see cref="VistaEndpointOptions.DefaultRouteRoot"/> (<c>/api/views</c>).
-    /// </summary>
-    /// <param name="root">The route root, for example <c>/api/views</c>.</param>
-    /// <returns>This builder, for chaining.</returns>
-    /// <exception cref="ArgumentException"><paramref name="root"/> is <see langword="null"/> or whitespace.</exception>
-    IVistaEndpointBuilder RouteRoot(string root);
-
-    /// <summary>
     /// Registers <typeparamref name="T"/> as the single one-door authorizer (§5.6/D43). When configured,
     /// <see cref="IViewAuthorizer.IsAllowedAsync"/> gates every request and a <see langword="false"/>
     /// result maps to HTTP 403 (R7.1). When this is never called, access defaults to allow (R7.2) and the
@@ -46,4 +39,17 @@ public interface IVistaEndpointBuilder
     /// (<c>ViewRequestExecutor</c>).
     /// </remarks>
     IVistaEndpointBuilder UseAuthorizer<T>() where T : class, IViewAuthorizer;
+
+    /// <summary>
+    /// Explicitly opts into anonymous (no-authorizer) access — serving all views publicly. This is the
+    /// deliberate, reviewed way to run open in any environment (D94). Without it, a missing authorizer
+    /// is allowed in Development (with a warning) but **fails host startup** in non-Development
+    /// environments, so a forgotten authorizer cannot silently expose views in production.
+    /// </summary>
+    /// <returns>This builder, for chaining.</returns>
+    /// <remarks>
+    /// Use this only when public access is intended (e.g. an internal back-office or a public read-only
+    /// catalog). It does not register an authorizer; it records that open access is a conscious choice.
+    /// </remarks>
+    IVistaEndpointBuilder AllowAnonymousAccess();
 }

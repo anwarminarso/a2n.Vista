@@ -9,6 +9,8 @@ using a2n.Vista.Contracts;
 using a2n.Vista.Ports;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.FileProviders;
+using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -115,16 +117,15 @@ public sealed class AuthorizationTests
     }
 
     /// <summary>
-    /// R7.3: with no authorizer (<see cref="VistaEndpointOptions.HasAuthorizer"/> is
-    /// <see langword="false"/>), the startup validator logs exactly one <see cref="LogLevel.Warning"/>
-    /// describing the publicly-accessible posture.
+    /// R1.2 (D94): no authorizer in **Development** → access defaults to allow and the validator logs
+    /// exactly one <see cref="LogLevel.Warning"/> describing the publicly-accessible posture.
     /// </summary>
     [Test]
-    public async Task Startup_Without_Authorizer_Logs_Warning()
+    public async Task Startup_NoAuthorizer_Development_Warns()
     {
         var options = new VistaEndpointOptions(); // AuthorizerType null => HasAuthorizer false.
         var logger = new RecordingLogger<VistaStartupValidator>();
-        var validator = new VistaStartupValidator(options, logger);
+        var validator = new VistaStartupValidator(options, new TestHostEnvironment("Development"), logger);
 
         await validator.StartAsync(CancellationToken.None);
 
@@ -135,10 +136,56 @@ public sealed class AuthorizationTests
     }
 
     /// <summary>
-    /// R7.3 (inverse): with an authorizer registered (built through the public
-    /// <c>AddVistaEndpoints(b =&gt; b.UseAuthorizer&lt;T&gt;())</c> path so
-    /// <see cref="VistaEndpointOptions.HasAuthorizer"/> is <see langword="true"/>), the startup
-    /// validator logs nothing.
+    /// R1.3 (D94): no authorizer in a **non-Development** environment without an explicit opt-in →
+    /// startup **fails** with an actionable <see cref="InvalidOperationException"/>.
+    /// </summary>
+    [Test]
+    public async Task Startup_NoAuthorizer_NonDevelopment_FailsClosed()
+    {
+        var options = new VistaEndpointOptions();
+        var logger = new RecordingLogger<VistaStartupValidator>();
+        var validator = new VistaStartupValidator(options, new TestHostEnvironment("Production"), logger);
+
+        InvalidOperationException? caught = null;
+        try
+        {
+            await validator.StartAsync(CancellationToken.None);
+        }
+        catch (InvalidOperationException ex)
+        {
+            caught = ex;
+        }
+
+        await Assert.That(caught).IsNotNull();
+        await Assert.That(caught!.Message).Contains("AllowAnonymousAccess");
+    }
+
+    /// <summary>
+    /// R1.4 (D94): no authorizer in a **non-Development** environment WITH an explicit
+    /// <c>AllowAnonymousAccess()</c> opt-in → startup succeeds and logs a single warning recording the
+    /// deliberate open posture.
+    /// </summary>
+    [Test]
+    public async Task Startup_NoAuthorizer_NonDevelopment_ExplicitOptIn_Warns()
+    {
+        var services = new ServiceCollection();
+        services.AddVistaEndpoints(b => b.AllowAnonymousAccess());
+        using var provider = services.BuildServiceProvider();
+        var options = provider.GetRequiredService<VistaEndpointOptions>();
+        await Assert.That(options.AllowAnonymous).IsTrue();
+
+        var logger = new RecordingLogger<VistaStartupValidator>();
+        var validator = new VistaStartupValidator(options, new TestHostEnvironment("Production"), logger);
+
+        await validator.StartAsync(CancellationToken.None);
+
+        var warnings = logger.Entries.Where(e => e.Level == LogLevel.Warning).ToArray();
+        await Assert.That(warnings.Length).IsEqualTo(1);
+        await Assert.That(warnings[0].Message).Contains("explicit opt-in");
+    }
+
+    /// <summary>
+    /// R1.1 (inverse): with an authorizer registered, the validator is a no-op in any environment.
     /// </summary>
     [Test]
     public async Task Startup_With_Authorizer_Logs_Nothing()
@@ -152,11 +199,22 @@ public sealed class AuthorizationTests
         await Assert.That(options.HasAuthorizer).IsTrue();
 
         var logger = new RecordingLogger<VistaStartupValidator>();
-        var validator = new VistaStartupValidator(options, logger);
+        var validator = new VistaStartupValidator(options, new TestHostEnvironment("Production"), logger);
 
         await validator.StartAsync(CancellationToken.None);
 
         await Assert.That(logger.Entries.Count).IsEqualTo(0);
+    }
+
+    /// <summary>A minimal <see cref="IHostEnvironment"/> test double; only <see cref="EnvironmentName"/> matters here.</summary>
+    private sealed class TestHostEnvironment : IHostEnvironment
+    {
+        public TestHostEnvironment(string environmentName) => EnvironmentName = environmentName;
+
+        public string EnvironmentName { get; set; }
+        public string ApplicationName { get; set; } = "a2n.Vista.Tests";
+        public string ContentRootPath { get; set; } = AppContext.BaseDirectory;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     /// <summary>

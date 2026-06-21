@@ -8,8 +8,11 @@ namespace a2n.Vista.Metadata;
 /// </summary>
 /// <param name="Name">The unique view name used for registration and routing.</param>
 /// <param name="Route">
-/// The view's relative route segment (the view name). The global route root is owned solely by the
-/// AspNetCore layer (Decision Log D101); the live route is <c>{root}/{Route}</c> (§5.6).
+/// The full route at which the view is served, composed at registration from the route group prefix
+/// (or the default root <c>/api/views</c>) plus the view name — e.g. <c>/api/views/customers</c> or
+/// <c>/internal/orders</c> (Decision Log D101/D103). The AspNetCore mapper maps the view at this route
+/// verbatim. Core authoring builders emit the bare name here; the registration layer composes the
+/// final full route.
 /// </param>
 /// <param name="QueryType">The CLR type of the projected (read) row.</param>
 /// <param name="CrudType">

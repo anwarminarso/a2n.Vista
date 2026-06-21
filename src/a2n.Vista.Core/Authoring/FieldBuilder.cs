@@ -36,10 +36,18 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     private bool _isSortable = true;
     private bool _isSearchable = true;
     private bool _isScopable;
+    private bool _filterableSet;
+    private bool _searchableSet;
     private FilterOperator _allowedOperators = DefaultOperatorsFor(typeof(TProp));
 
     /// <inheritdoc />
     public bool IsPrimaryKey => _isPrimaryKey;
+
+    /// <inheritdoc />
+    public bool FilterableExplicitlySet => _filterableSet;
+
+    /// <inheritdoc />
+    public bool SearchableExplicitlySet => _searchableSet;
 
     /// <inheritdoc />
     public string? FormatString => _format;
@@ -78,6 +86,7 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     public IFieldBuilder<TProp> Filterable(bool allowed = true)
     {
         _isFilterable = allowed;
+        _filterableSet = true;
         return this;
     }
 
@@ -92,6 +101,7 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     public IFieldBuilder<TProp> Searchable(bool allowed = true)
     {
         _isSearchable = allowed;
+        _searchableSet = true;
         return this;
     }
 
@@ -99,8 +109,10 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     public IFieldBuilder<TProp> Operators(FilterOperator operators)
     {
         // Setting an operator whitelist implies the field is filterable (§5.5);
-        // a later explicit Filterable(false) still wins.
+        // a later explicit Filterable(false) still wins. It also counts as an explicit
+        // filterable opt-in that overrides the masked default (D95).
         _allowedOperators = operators;
+        _filterableSet = true;
         return this;
     }
 

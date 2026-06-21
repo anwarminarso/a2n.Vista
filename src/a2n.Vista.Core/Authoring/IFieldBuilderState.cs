@@ -18,6 +18,18 @@ internal interface IFieldBuilderState
     /// <summary>Whether the field was marked as the view's primary key.</summary>
     bool IsPrimaryKey { get; }
 
+    /// <summary>
+    /// Whether <c>Filterable(...)</c> or <c>Operators(...)</c> was explicitly called. A masked field
+    /// defaults to non-filterable (D95); an explicit opt-in here overrides that default (R2.2).
+    /// </summary>
+    bool FilterableExplicitlySet { get; }
+
+    /// <summary>
+    /// Whether <c>Searchable(...)</c> was explicitly called. A masked string field defaults to
+    /// non-searchable (D95, same probing vector); an explicit opt-in here overrides that default.
+    /// </summary>
+    bool SearchableExplicitlySet { get; }
+
     /// <summary>The display/format string hint, or <see langword="null"/> when none was set.</summary>
     string? FormatString { get; }
 

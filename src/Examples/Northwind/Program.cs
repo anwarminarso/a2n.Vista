@@ -32,15 +32,17 @@ if (!File.Exists(dbFullPath))
 builder.Services.AddDbContext<NorthwindDbContext>(options =>
     options.UseSqlite($"Data Source={DbRelativePath}"));
 
-// Vista core wiring (EF layer): register the Gaya A central template. The global route root is owned by
-// the AspNetCore layer (Decision Log D101); views are exposed under {RouteRoot}/{viewName}.
+// Vista core wiring (EF layer): register the Gaya A central template. A view's route is composed at
+// registration (default root /api/views, or via RouteGroup(...)) and recorded in ViewMetadata.Route
+// (Decision Log D101/D103); views are exposed under {root}/{viewName}.
 builder.Services.AddVista(vista =>
     vista.RegisterTemplate<NorthwindViews, NorthwindDbContext>());
 
-// Vista HTTP layer. No UseAuthorizer<T>() here on purpose: the spec marks the authorizer optional, and
-// leaving it off demonstrates the fail-open startup warning ("all views publicly accessible", R7.3)
-// while keeping the app fully functional (default allow, R7.2).
-builder.Services.AddVistaEndpoints();
+// Vista HTTP layer. This public read-only sample runs without an authorizer; in a non-Development
+// environment that is a fail-closed startup error unless open access is opted into explicitly (D94),
+// so we call AllowAnonymousAccess() to make the open posture a deliberate, documented choice. A real
+// app gates access via UseAuthorizer<T>() instead.
+builder.Services.AddVistaEndpoints(v => v.AllowAnonymousAccess());
 
 var app = builder.Build();
 

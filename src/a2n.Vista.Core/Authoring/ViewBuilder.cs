@@ -223,6 +223,19 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
             if (_maskedFields.Contains(name))
             {
                 field = field with { IsMaskable = true };
+
+                // D95: a masked field defaults to non-probeable, so a client cannot reconstruct the
+                // original value by probing filter/search responses. An explicit Filterable/Operators
+                // (or Searchable) opt-in on the field overrides this default (R2.2).
+                if (state is null || !state.FilterableExplicitlySet)
+                {
+                    field = field with { IsFilterable = false };
+                }
+
+                if (IsStringType(type) && (state is null || !state.SearchableExplicitlySet))
+                {
+                    field = field with { IsSearchable = false };
+                }
             }
 
             fields.Add(field);

@@ -94,4 +94,39 @@ public interface IVistaBuilder
     [RequiresUnreferencedCode("Gaya B registration introspects the view type at runtime to build its metadata; use the source generator path for AOT.")]
     IVistaBuilder Register<TView>(IViewExecutionPlan plan)
         where TView : class, new();
+
+    /// <summary>
+    /// Opens a route group: every view registered inside <paramref name="configure"/> is mounted under
+    /// <paramref name="prefix"/> (its full route becomes <c>{prefix}/{viewName}</c>), instead of the
+    /// default root (<c>/api/views</c>). Groups let an application separate endpoints — e.g. internal vs
+    /// external — and let a module own its own prefix (Decision Log D103). Groups may nest; an inner
+    /// prefix is appended to the outer one. Registration is the single source of a view's route
+    /// (Decision Log D101): the resolved full route is recorded in
+    /// <see cref="a2n.Vista.Metadata.ViewMetadata.Route"/> and the AspNetCore layer maps it verbatim.
+    /// </summary>
+    /// <param name="prefix">The route prefix for the group, for example <c>/internal</c> or <c>/api/external</c>.</param>
+    /// <param name="configure">A callback that registers the group's views on this same builder.</param>
+    /// <returns>This builder, for chaining.</returns>
+    /// <exception cref="ArgumentException"><paramref name="prefix"/> is <see langword="null"/> or whitespace.</exception>
+    /// <exception cref="ArgumentNullException"><paramref name="configure"/> is <see langword="null"/>.</exception>
+    /// <remarks>
+    /// A view name is globally unique (Requirement R1.3) and a view is consumed by exactly one endpoint
+    /// (R3.5): registering the same view in two groups fails fast with a duplicate-name error.
+    /// </remarks>
+    IVistaBuilder RouteGroup(string prefix, Action<IVistaBuilder> configure);
+
+    /// <summary>
+    /// Discovers and registers every Gaya B view type (deriving from <see cref="View{TQuery}"/> /
+    /// <see cref="View{TQuery, TCrud}"/>, non-abstract, with a public parameterless constructor) in
+    /// <paramref name="assembly"/>, honoring the current route group. Each view is registered
+    /// metadata-only (like <see cref="Register{TView}()"/>); pair with a source-generated plan to make
+    /// them executable. Intended for the modular-monolith case where a sub-project's assembly is
+    /// attached under a group prefix.
+    /// </summary>
+    /// <param name="assembly">The assembly to scan for view types.</param>
+    /// <returns>This builder, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="assembly"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">Two discovered views resolve to the same name (R1.3).</exception>
+    [RequiresUnreferencedCode("Assembly scanning enumerates all types via reflection and introspects each view type's metadata; use explicit Register<TView> or the source generator for AOT.")]
+    IVistaBuilder RegisterAssembly(System.Reflection.Assembly assembly);
 }
