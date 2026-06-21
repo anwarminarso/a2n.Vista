@@ -56,11 +56,6 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
     /// zero, <see cref="CreateScopedQueryable"/> fails closed because those <c>TSource</c> predicates
     /// cannot be applied pre-projection through the combined delegate.
     /// </param>
-    /// <param name="keyFieldName">
-    /// The primary-key field name, when known; otherwise <see langword="null"/>. Gaya A does not
-    /// currently surface the primary key, so this is typically <see langword="null"/> and the executor
-    /// falls back to its name convention.
-    /// </param>
     /// <exception cref="ArgumentException"><paramref name="viewName"/> is <see langword="null"/> or whitespace.</exception>
     /// <exception cref="ArgumentNullException">
     /// <paramref name="rowType"/> or <paramref name="projectedFactory"/> is <see langword="null"/>.
@@ -69,8 +64,7 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
         string viewName,
         Type rowType,
         Func<DbContext, IServiceProvider, IQueryable> projectedFactory,
-        int authoredRowFilterCount = 0,
-        string? keyFieldName = null)
+        int authoredRowFilterCount = 0)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
         ArgumentNullException.ThrowIfNull(rowType);
@@ -80,7 +74,6 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
         RowType = rowType;
         _projectedFactory = projectedFactory;
         _authoredRowFilterCount = authoredRowFilterCount < 0 ? 0 : authoredRowFilterCount;
-        KeyFieldName = keyFieldName;
     }
 
     /// <inheritdoc />
@@ -88,9 +81,6 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
 
     /// <inheritdoc />
     public Type RowType { get; }
-
-    /// <inheritdoc />
-    public string? KeyFieldName { get; }
 
     /// <inheritdoc />
     [RequiresUnreferencedCode("View execution composes source/scope/projection from captured expressions at runtime; use the source generator path for AOT.")]

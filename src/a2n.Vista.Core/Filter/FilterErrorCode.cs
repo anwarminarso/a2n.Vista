@@ -30,6 +30,12 @@ public enum FilterErrorCode
 
     /// <summary>The supplied value could not be coerced to the field's CLR type, or has the wrong shape.</summary>
     InvalidValue,
+
+    /// <summary>
+    /// The request exceeds a complexity hard limit (filter depth, leaf count, string length, or
+    /// <c>In</c> value count); a denial-of-service guard (Decision Log D108, §8.2/§8.3).
+    /// </summary>
+    RequestTooComplex,
 }
 
 /// <summary>
@@ -53,6 +59,9 @@ public static class FilterErrorCodes
     /// <summary>Wire code for <see cref="FilterErrorCode.InvalidValue"/>.</summary>
     public const string InvalidValue = "filter-invalid-value";
 
+    /// <summary>Wire code for <see cref="FilterErrorCode.RequestTooComplex"/>.</summary>
+    public const string RequestTooComplex = "filter-too-complex";
+
     /// <summary>
     /// Maps a <see cref="FilterErrorCode"/> to its stable wire code.
     /// </summary>
@@ -65,6 +74,7 @@ public static class FilterErrorCodes
         FilterErrorCode.OperatorNotAllowed => OperatorNotAllowed,
         FilterErrorCode.ScopeNotAllowed => ScopeNotAllowed,
         FilterErrorCode.InvalidValue => InvalidValue,
+        FilterErrorCode.RequestTooComplex => RequestTooComplex,
         _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown filter error code."),
     };
 }

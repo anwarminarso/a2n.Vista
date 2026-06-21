@@ -156,8 +156,22 @@ internal sealed class VistaBuilder : IVistaBuilder
     /// route composed from the active group prefix (or the default root) and the view name. Registration
     /// is the single source of a view's route (D101/D103).
     /// </summary>
-    private ViewMetadata WithComposedRoute(ViewMetadata metadata) =>
-        metadata with { Route = $"{_currentPrefix ?? DefaultRouteRoot}/{metadata.Name}" };
+    private ViewMetadata WithComposedRoute(ViewMetadata metadata)
+    {
+        // Fail-fast (Decision Log D106): a registered view must declare a key so deterministic paging and
+        // Detail-by-key can resolve. Keys come from .PrimaryKey() marks or an explicit Key(...) override
+        // (Decision Log D104/D105). EF-model auto-derivation is not available at registration time (no
+        // DbContext yet), so an explicit declaration is required.
+        if (metadata.KeyFields.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"View '{metadata.Name}' has no key fields, so deterministic paging and Detail-by-key " +
+                "cannot resolve. Mark a projected field with .PrimaryKey() or declare the key explicitly " +
+                "with .Key(...) (Decision Log D104/D106).");
+        }
+
+        return metadata with { Route = $"{_currentPrefix ?? DefaultRouteRoot}/{metadata.Name}" };
+    }
 
     /// <summary>
     /// Combines an outer group prefix with an inner one. A top-level group ignores the default root and

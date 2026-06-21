@@ -47,18 +47,13 @@ public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
     /// The authored, server-trusted, deferred pre-projection row filters over <typeparamref name="TSource"/>
     /// (§5.2, Decision Log D28), in declaration order; <see langword="null"/> for none.
     /// </param>
-    /// <param name="keyFieldName">
-    /// The primary-key field name on <typeparamref name="TRow"/>, when known; otherwise
-    /// <see langword="null"/> (the executor then falls back to its name convention).
-    /// </param>
     /// <exception cref="ArgumentException"><paramref name="viewName"/> is <see langword="null"/> or whitespace.</exception>
     /// <exception cref="ArgumentNullException"><paramref name="projection"/> is <see langword="null"/>.</exception>
     public SplitViewExecutionPlan(
         string viewName,
         Expression<Func<TSource, TRow>> projection,
         Func<IServiceProvider, IQueryable<TSource>>? sourceFactory = null,
-        IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>>? authoredRowFilters = null,
-        string? keyFieldName = null)
+        IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>>? authoredRowFilters = null)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
         ArgumentNullException.ThrowIfNull(projection);
@@ -66,7 +61,6 @@ public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
         ViewName = viewName;
         _projection = projection;
         _authoredRowFilters = authoredRowFilters ?? [];
-        KeyFieldName = keyFieldName;
 
         // D11: default to the DbContext.Set<TSource>() convention; an explicit factory (FromQuery) wins.
         _sourceFactory = sourceFactory is null
@@ -79,9 +73,6 @@ public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
 
     /// <inheritdoc />
     public Type RowType => typeof(TRow);
-
-    /// <inheritdoc />
-    public string? KeyFieldName { get; }
 
     /// <inheritdoc />
     [RequiresUnreferencedCode("View execution composes source/scope/projection from captured expressions at runtime; use the source generator path for AOT.")]

@@ -60,9 +60,26 @@ public interface IViewBuilder<TQuery> : IViewBuilderCore
         Expression<Func<TQuery, TProp>> field,
         Action<IFieldBuilder<TProp>> configure);
 
+    /// <summary>
+    /// Explicitly declares the view's key fields, overriding the default derived from the fields marked
+    /// <see cref="IFieldBuilder{TProp}.PrimaryKey"/> (Decision Log D104). Use this for views over joins,
+    /// unions, or other views where the key cannot be inferred (Decision Log D105). The order given is
+    /// the order used for the deterministic paging tiebreaker; every named field must be projected.
+    /// </summary>
+    /// <param name="fields">The key field selectors, in key order (for example <c>x =&gt; x.OrderId, x =&gt; x.ProductId</c>).</param>
+    /// <returns>The same builder, for fluent chaining.</returns>
+    IViewBuilder<TQuery> Key(params Expression<Func<TQuery, object?>>[] fields);
+
+    /// <summary>
+    /// Explicitly declares the view's key fields by name, overriding the default derived from the
+    /// primary-key marks (Decision Log D104/D105). Every named field must be projected.
+    /// </summary>
+    /// <param name="fieldNames">The key field names, in key order.</param>
+    /// <returns>The same builder, for fluent chaining.</returns>
+    IViewBuilder<TQuery> Key(params string[] fieldNames);
+
     /// <inheritdoc cref="IViewBuilderCore.MaxPageSize"/>
     new IViewBuilder<TQuery> MaxPageSize(int rows);
-
     /// <inheritdoc cref="IViewBuilderCore.MaxExportRows"/>
     new IViewBuilder<TQuery> MaxExportRows(int rows);
 

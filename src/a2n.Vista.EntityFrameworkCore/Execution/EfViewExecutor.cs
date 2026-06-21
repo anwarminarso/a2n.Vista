@@ -8,6 +8,7 @@ using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using a2n.Vista.Results;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace a2n.Vista.EntityFrameworkCore.Execution;
 
@@ -126,7 +127,7 @@ public class EfViewExecutor : IViewExecutor
     /// provider since it does not translate <c>EF.Functions.Like</c>.
     /// </remarks>
     public EfViewExecutor(DbContext dbContext, IServiceProvider services, IViewExecutionPlanRegistry planRegistry)
-        : this(dbContext, services, planRegistry, new ProviderAwareFilterCompiler())
+        : this(dbContext, services, planRegistry, new FilterCompiler(services.GetService<IQueryDialect>()))
     {
     }
 
@@ -220,12 +221,11 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(scope);
 
-        // Detail = List projection filtered by primary key, with the server-trusted scope still applied
-        // (Decision Log D49, §4.6). Reuse the same resolution seam as List.
+        // Detail = List projection filtered by the view's key, with the server-trusted scope still
+        // applied (Decision Log D49, §4.6). Reuse the same resolution seam as List.
         var scoped = ResolveScopedQueryable<TRow>(view, scope);
 
-        var keyField = ResolveKeyField<TRow>(view);
-        var predicate = BuildKeyEquality<TRow>(keyField, key);
+        var predicate = BuildKeyPredicate<TRow>(view, key);
 
         return await FirstOrDefaultAsync(scoped.Where(predicate), cancellationToken).ConfigureAwait(false);
     }
@@ -388,22 +388,54 @@ public class EfViewExecutor : IViewExecutor
     [RequiresUnreferencedCode("Sorting builds key selectors and closed Queryable generics from metadata at runtime; use the source generator path for AOT.")]
     private static IQueryable<TRow> ApplySort<TRow>(IQueryable<TRow> source, IReadOnlyList<SortSpec> sort, ViewMetadata view)
     {
-        if (sort is null || sort.Count == 0)
+        // Build the combined ordering: the client sort (validated sortable) followed by the view's
+        // KeyFields as the deterministic tiebreaker — appended ascending, skipping any already used as a
+        // sort key. An empty client sort therefore orders by KeyFields ascending (Decision Log D106, §11).
+        var steps = new List<(FieldMetadata Field, bool Descending)>();
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+
+        if (sort is not null)
         {
+            foreach (var spec in sort)
+            {
+                var field = ResolveSortableField(view, spec.Field);
+                if (seen.Add(field.Name))
+                {
+                    steps.Add((field, spec.Descending));
+                }
+            }
+        }
+
+        foreach (var keyName in view.KeyFields)
+        {
+            if (!seen.Add(keyName))
+            {
+                continue;
+            }
+
+            var keyField = FindField(view, keyName)
+                ?? throw new InvalidOperationException(
+                    $"View '{view.Name}' declares key field '{keyName}', which is not part of the projection.");
+            steps.Add((keyField, false));
+        }
+
+        if (steps.Count == 0)
+        {
+            // No client sort and no key fields. Deterministic paging cannot be guaranteed; registration
+            // fail-fast (Decision Log D106) prevents this for registered views, so this is only reachable
+            // for hand-built metadata in tests.
             return source;
         }
 
         IOrderedQueryable<TRow>? ordered = null;
-        for (var i = 0; i < sort.Count; i++)
+        for (var i = 0; i < steps.Count; i++)
         {
-            var spec = sort[i];
-            var field = ResolveSortableField(view, spec.Field);
-
+            var (field, descending) = steps[i];
             var parameter = Expression.Parameter(typeof(TRow), "x");
             Expression member = Expression.Property(parameter, field.Name);
             var keySelector = Expression.Lambda(member, parameter);
 
-            var openMethod = (i == 0, spec.Descending) switch
+            var openMethod = (i == 0, descending) switch
             {
                 (true, false) => OrderByMethod,
                 (true, true) => OrderByDescendingMethod,
@@ -455,125 +487,93 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <summary>
-    /// Resolves the primary-key field used by Detail-by-key.
+    /// Builds the Detail-by-key predicate for the view's <see cref="ViewMetadata.KeyFields"/>
+    /// (Decision Log D104/D109): the conjunction of <c>x.&lt;keyField&gt; == coerce(value)</c> over each
+    /// key field, resolving values <b>by field name</b> (order-independent). This is a server-side key
+    /// lookup, not a client filter, so it bypasses the tri-whitelist (a key field may be opted out of
+    /// client filtering yet must still resolve Detail).
     /// </summary>
-    /// <remarks>
-    /// <para>
-    /// <b>Resolution order (Task 9.2).</b> First, the view's <see cref="IViewExecutionPlan.KeyFieldName"/>
-    /// is consulted: when the authoring style captured the primary key (the §4.1-aligned
-    /// <see cref="SplitViewExecutionPlan{TSource, TRow}"/> can carry it), the executor trusts it directly.
-    /// This is the robust path and avoids the fragile name guessing below.
-    /// </para>
-    /// <para>
-    /// <b>Known metadata gap (flagged for follow-up).</b> The authoring layer captures the primary key
-    /// (<c>IFieldBuilder.PrimaryKey()</c> / <c>IFieldBuilderState.IsPrimaryKey</c>) but it is used only
-    /// to validate write/detail facets at build time — it is <em>not</em> propagated into
-    /// <see cref="FieldMetadata"/> or <see cref="ViewMetadata"/>. As a result, the Gaya A
-    /// (central-template) path cannot supply <see cref="IViewExecutionPlan.KeyFieldName"/> today, and the
-    /// executor must fall back to a convention for those views. <c>ViewMetadata</c>/<c>FieldMetadata</c>
-    /// should carry the PK field name (for example a <c>FieldMetadata.IsPrimaryKey</c> flag or
-    /// <c>ViewMetadata.KeyField</c>); once it does, both authoring styles can populate the plan's
-    /// <see cref="IViewExecutionPlan.KeyFieldName"/> and this convention can be removed.
-    /// </para>
-    /// <para>
-    /// Convention fallback, in order: a field named <c>Id</c>; then a field named
-    /// <c>&lt;QueryType.Name&gt;Id</c> (for example <c>ProductId</c> when the row type is <c>Product</c>);
-    /// otherwise the first projected field.
-    /// </para>
-    /// </remarks>
     /// <typeparam name="TRow">The projected (read) row type of the view.</typeparam>
     /// <param name="view">The metadata of the view.</param>
-    /// <returns>The field treated as the primary key.</returns>
-    /// <exception cref="InvalidOperationException">The view declares no projected fields.</exception>
-    protected virtual FieldMetadata ResolveKeyField<TRow>(ViewMetadata view)
+    /// <param name="key">The key: a scalar (single key) or a name→value map (composite key).</param>
+    /// <returns>The conjunction predicate identifying the row.</returns>
+    /// <exception cref="InvalidOperationException">The view declares no key fields.</exception>
+    /// <exception cref="FilterValidationException">The key shape is wrong or a value cannot be coerced.</exception>
+    private static Expression<Func<TRow, bool>> BuildKeyPredicate<TRow>(ViewMetadata view, object key)
     {
-        if (view.Fields.Count == 0)
+        if (view.KeyFields.Count == 0)
         {
             throw new InvalidOperationException(
-                $"View '{view.Name}' has no projected fields, so Detail-by-key cannot resolve a primary key.");
+                $"View '{view.Name}' has no key fields, so Detail-by-key cannot resolve a row. Declare a " +
+                "primary key with .PrimaryKey() or Key(...).");
         }
 
-        // 1. Trust the execution plan's captured PK when available (the robust, authoring-driven path).
-        var planKeyName = _planRegistry?.Get(view.Name)?.KeyFieldName;
-        if (planKeyName is not null)
+        var values = NormalizeKey(view, key);
+
+        var parameter = Expression.Parameter(typeof(TRow), "x");
+        Expression? body = null;
+        foreach (var keyName in view.KeyFields)
         {
-            var planKey = FindField(view, planKeyName);
-            if (planKey is not null)
+            var field = FindField(view, keyName)
+                ?? throw new InvalidOperationException(
+                    $"View '{view.Name}' declares key field '{keyName}', which is not part of the projection.");
+
+            var member = Expression.Property(parameter, field.Name);
+            var memberType = member.Type;
+            var underlying = Nullable.GetUnderlyingType(memberType) ?? memberType;
+
+            var coerced = FilterCompiler.CoerceValue(values[keyName], underlying, field.Name);
+            Expression constant = Expression.Constant(coerced, underlying);
+            if (constant.Type != memberType)
             {
-                return planKey;
+                constant = Expression.Convert(constant, memberType);
             }
+
+            var equality = Expression.Equal(member, constant);
+            body = body is null ? equality : Expression.AndAlso(body, equality);
         }
 
-        // 2. Convention fallback (used while the PK is not surfaced into metadata; see remarks).
-        var byId = FindField(view, "Id");
-        if (byId is not null)
-        {
-            return byId;
-        }
-
-        var byTypeId = FindField(view, $"{typeof(TRow).Name}Id");
-        if (byTypeId is not null)
-        {
-            return byTypeId;
-        }
-
-        return view.Fields[0];
+        return Expression.Lambda<Func<TRow, bool>>(body!, parameter);
     }
 
     /// <summary>
-    /// Builds an equality predicate <c>x =&gt; x.&lt;keyField&gt; == key</c>, coercing
-    /// <paramref name="key"/> to the field's CLR type. This is a server-side key lookup, not a client
-    /// filter, so it intentionally bypasses the tri-whitelist (the PK may be opted out of client
-    /// filtering yet must still resolve Detail).
+    /// Normalizes the <see cref="object"/> key into a name→value map keyed by <see cref="ViewMetadata.KeyFields"/>:
+    /// a scalar is accepted only for a single-field key; a composite key must arrive as an
+    /// <see cref="IReadOnlyDictionary{TKey, TValue}"/> providing exactly the key fields by name
+    /// (Decision Log D109).
     /// </summary>
-    private static Expression<Func<TRow, bool>> BuildKeyEquality<TRow>(FieldMetadata keyField, object key)
+    private static IReadOnlyDictionary<string, object?> NormalizeKey(ViewMetadata view, object key)
     {
-        var parameter = Expression.Parameter(typeof(TRow), "x");
-        var member = Expression.Property(parameter, keyField.Name);
-        var memberType = member.Type;
-        var underlying = Nullable.GetUnderlyingType(memberType) ?? memberType;
+        var keyFields = view.KeyFields;
 
-        var coerced = CoerceKey(key, underlying, keyField.Name);
-        Expression constant = Expression.Constant(coerced, underlying);
-        if (constant.Type != memberType)
+        if (key is IReadOnlyDictionary<string, object?> map)
         {
-            constant = Expression.Convert(constant, memberType);
-        }
-
-        var body = Expression.Equal(member, constant);
-        return Expression.Lambda<Func<TRow, bool>>(body, parameter);
-    }
-
-    private static object CoerceKey(object key, Type underlying, string fieldName)
-    {
-        if (underlying.IsInstanceOfType(key))
-        {
-            return key;
-        }
-
-        try
-        {
-            if (underlying.IsEnum)
+            var result = new Dictionary<string, object?>(keyFields.Count, StringComparer.Ordinal);
+            foreach (var name in keyFields)
             {
-                return key is string enumText
-                    ? Enum.Parse(underlying, enumText, ignoreCase: true)
-                    : Enum.ToObject(underlying, key);
+                if (!map.TryGetValue(name, out var value))
+                {
+                    throw new FilterValidationException(
+                        FilterErrorCode.InvalidValue,
+                        $"The key for view '{view.Name}' is missing the field '{name}'.",
+                        name);
+                }
+
+                result[name] = value;
             }
 
-            if (underlying == typeof(Guid))
-            {
-                return key is string guidText ? Guid.Parse(guidText) : key;
-            }
+            return result;
+        }
 
-            return Convert.ChangeType(key, underlying, CultureInfo.InvariantCulture);
-        }
-        catch (Exception ex) when (ex is FormatException or InvalidCastException or OverflowException or ArgumentException)
+        if (keyFields.Count != 1)
         {
-            throw new ArgumentException(
-                $"The key value '{key}' could not be converted to type '{underlying.Name}' for field '{fieldName}'.",
-                nameof(key),
-                ex);
+            throw new FilterValidationException(
+                FilterErrorCode.InvalidValue,
+                $"View '{view.Name}' has a composite key ({keyFields.Count} fields); supply a key object " +
+                "with a member per key field, not a scalar value.");
         }
+
+        return new Dictionary<string, object?>(1, StringComparer.Ordinal) { [keyFields[0]] = key };
     }
 
     private static NotSupportedException WriteNotSupported(string operation) =>

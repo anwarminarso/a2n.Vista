@@ -41,4 +41,14 @@ public sealed record ViewMetadata(
     IReadOnlyList<FieldMetadata> Fields,
     AuthorizationRequirement? Authorization,
     HardLimits Limits,
-    bool IsReadOnly);
+    bool IsReadOnly)
+{
+    /// <summary>
+    /// The ordered list of projected field names that uniquely identify a row <b>of this view</b>
+    /// (single-element for a simple key, multi-element for a composite key). This is the view-level
+    /// source of truth for deterministic paging tiebreakers and Detail-by-key; it defaults from the
+    /// fields marked <see cref="FieldMetadata.IsPrimaryKey"/> and may be overridden during authoring
+    /// (Decision Log D104). Empty only transiently before the registration fail-fast (Decision Log D106).
+    /// </summary>
+    public IReadOnlyList<string> KeyFields { get; init; } = [];
+}

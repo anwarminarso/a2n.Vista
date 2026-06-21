@@ -51,18 +51,6 @@ public interface IViewExecutionPlan
     Type RowType { get; }
 
     /// <summary>
-    /// The name of the primary-key field on the projected row, when authoring captured it; otherwise
-    /// <see langword="null"/>. When present, <see cref="EfViewExecutor"/> uses it for Detail-by-key
-    /// resolution in preference to its name convention (closing the PK metadata gap flagged by Task 9.1).
-    /// </summary>
-    /// <remarks>
-    /// This is <see langword="null"/> for views whose authoring style does not yet surface the primary
-    /// key to the EF layer (notably Gaya A central-template views — see <see cref="ViewExecutionPlan"/>),
-    /// in which case the executor falls back to its documented name convention.
-    /// </remarks>
-    string? KeyFieldName { get; }
-
-    /// <summary>
     /// Builds the scoped, projected queryable for one request: obtains the base queryable (the
     /// <c>DbContext.Set&lt;TSource&gt;()</c> convention, D11, unless an explicit source factory was
     /// supplied), AND-s in the authored row filters and the per-request server-trusted predicates from

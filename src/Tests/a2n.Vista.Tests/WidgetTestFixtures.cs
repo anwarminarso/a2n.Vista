@@ -2,6 +2,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq;
 using a2n.Vista.Contracts;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Filter;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using Microsoft.Data.Sqlite;
@@ -64,15 +65,15 @@ internal sealed class WidgetContext : DbContext
 /// single source-resolution seam (<see cref="ResolveScopedQueryable{TRow}"/>) to return a pre-projected,
 /// SQLite-backed <see cref="IQueryable{T}"/> of <see cref="WidgetRow"/>. This keeps the test focused and
 /// deterministic while still exercising the real List/paging/cancellation logic, the
-/// <see cref="ProviderAwareFilterCompiler"/> (SQLite <c>LIKE</c>), and EF's async pipeline.
+/// <see cref="DefaultQueryDialect"/> (SQLite <c>LIKE</c>), and EF's async pipeline.
 /// </summary>
 internal sealed class WidgetTestExecutor : EfViewExecutor
 {
     private readonly IQueryable<WidgetRow> _widgets;
 
-    // Use the provider-aware compiler so the filtered-totals test exercises real SQLite LIKE translation.
+    // Use the default dialect so the filtered-totals test exercises real SQLite LIKE translation.
     public WidgetTestExecutor(IQueryable<WidgetRow> widgets)
-        : base(new ProviderAwareFilterCompiler()) =>
+        : base(new FilterCompiler(new DefaultQueryDialect())) =>
         _widgets = widgets;
 
     /// <inheritdoc />
@@ -183,7 +184,10 @@ internal sealed class WidgetTestHarness : IDisposable
             Fields: fields,
             Authorization: null,
             Limits: new HardLimits(maxPageSize, HardLimits.DefaultMaxExportRows),
-            IsReadOnly: true);
+            IsReadOnly: true)
+        {
+            KeyFields = [nameof(WidgetRow.Id)],
+        };
     }
 
     public void Dispose()

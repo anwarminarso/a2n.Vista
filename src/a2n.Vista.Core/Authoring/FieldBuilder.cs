@@ -141,7 +141,8 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
             isHidden: _isHidden,
             isWritable: false,
             isMaskable: false,
-            allowedOperators: _allowedOperators);
+            allowedOperators: _allowedOperators,
+            isPrimaryKey: _isPrimaryKey);
     }
 
     /// <summary>

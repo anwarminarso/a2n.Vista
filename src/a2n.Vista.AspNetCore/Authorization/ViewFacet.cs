@@ -26,6 +26,12 @@ public enum ViewFacet
     /// <summary>Read of a single row by primary key. Maps to <c>GET {root}/{viewName}/{key}</c>.</summary>
     Detail,
 
+    /// <summary>
+    /// Read of the view's <see cref="a2n.Vista.Metadata.ViewMetadata"/> shape (fields, key, limits).
+    /// Maps to <c>GET {root}/{viewName}/metadata</c> (Decision Log D110).
+    /// </summary>
+    Metadata,
+
     /// <summary>Bulk read intended for export. Separated from <see cref="List"/> as a higher-risk read.</summary>
     Export,
 

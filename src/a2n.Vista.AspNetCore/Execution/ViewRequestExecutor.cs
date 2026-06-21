@@ -125,6 +125,45 @@ public sealed class ViewRequestExecutor
     }
 
     /// <summary>
+    /// Executes the Metadata facet: authorizes, then returns the view's serializable metadata
+    /// (Decision Log D110). Metadata is authorized like any other facet (no implicit anonymous).
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered view name.</param>
+    /// <returns>The serializable <see cref="VistaMetadataResponse"/>.</returns>
+    public async Task<VistaMetadataResponse> MetadataAsync(HttpContext http, string viewName)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+
+        var (view, _, _) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Metadata).ConfigureAwait(false);
+        return VistaMetadataResponse.From(view);
+    }
+
+    /// <summary>
+    /// Executes the Export facet: authorizes (as the higher-risk <see cref="ViewFacet.Export"/>), shapes
+    /// the server-trusted scope, then runs the List pipeline bounded by the view's
+    /// <see cref="a2n.Vista.Metadata.HardLimits.MaxExportRows"/> (Decision Log D110).
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered view name.</param>
+    /// <param name="request">The neutral query (filter/sort) to export.</param>
+    /// <returns>The boxed <see cref="a2n.Vista.Ports.ViewListResult{TRow}"/> for the view's row type.</returns>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    public async Task<object> ExportAsync(HttpContext http, string viewName, ViewQueryRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
+
+        var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
+        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, [view, exportRequest, scope, http.RequestAborted])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
+    }
+
+    /// <summary>
     /// Runs the shared one-door pipeline: resolve metadata, gate via the authorizer, and build the
     /// server-trusted scope. Returns the pieces the facet methods need to invoke the executor.
     /// </summary>

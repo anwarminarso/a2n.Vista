@@ -53,6 +53,28 @@ public class FilterCompiler
         typeof(Enumerable).GetMethods(BindingFlags.Public | BindingFlags.Static)
             .Single(m => m.Name == nameof(Enumerable.Contains) && m.GetParameters().Length == 2);
 
+    private readonly IQueryDialect? _dialect;
+
+    /// <summary>
+    /// Initializes a <see cref="FilterCompiler"/> with no dialect: text operators use the in-memory
+    /// <see cref="StringComparison.OrdinalIgnoreCase"/> path (the test/InMemory path).
+    /// </summary>
+    public FilterCompiler()
+    {
+    }
+
+    /// <summary>
+    /// Initializes a <see cref="FilterCompiler"/> with an optional provider dialect (Decision Log D107).
+    /// When supplied, text operators (<c>Contains</c>/<c>StartsWith</c>/<c>EndsWith</c>) delegate to
+    /// <see cref="IQueryDialect.BuildStringMatch"/> (provider-correct SQL <c>LIKE</c>/<c>ILIKE</c> with
+    /// wildcard escaping); when <see langword="null"/>, the in-memory ordinal path is used.
+    /// </summary>
+    /// <param name="dialect">The provider dialect, or <see langword="null"/> for the in-memory path.</param>
+    public FilterCompiler(IQueryDialect? dialect)
+    {
+        _dialect = dialect;
+    }
+
     /// <summary>
     /// Compiles <paramref name="node"/> into a predicate over <typeparamref name="T"/>, validating
     /// every leaf against the whitelist for <paramref name="origin"/> before building.
@@ -69,6 +91,8 @@ public class FilterCompiler
     {
         ArgumentNullException.ThrowIfNull(node);
         ArgumentNullException.ThrowIfNull(view);
+
+        EnforceLimits(node, view.Limits);
 
         var fields = BuildFieldLookup(view.Fields);
         var parameter = Expression.Parameter(typeof(T), "x");
@@ -263,7 +287,9 @@ public class FilterCompiler
     /// <param name="leaf">The originating leaf, for diagnostics.</param>
     /// <returns>A boolean expression evaluating the substring match.</returns>
     protected virtual Expression BuildContains(Expression member, Expression value, FilterLeaf leaf) =>
-        BuildStringCall(member, value, StringContainsMethod);
+        _dialect is not null
+            ? _dialect.BuildStringMatch(member, RawString(leaf, value), StringMatchKind.Contains)
+            : BuildStringCall(member, value, StringContainsMethod);
 
     /// <summary>
     /// Builds a prefix-match predicate. Overridable for provider-correct translation; the base uses
@@ -274,7 +300,9 @@ public class FilterCompiler
     /// <param name="leaf">The originating leaf, for diagnostics.</param>
     /// <returns>A boolean expression evaluating the prefix match.</returns>
     protected virtual Expression BuildStartsWith(Expression member, Expression value, FilterLeaf leaf) =>
-        BuildStringCall(member, value, StringStartsWithMethod);
+        _dialect is not null
+            ? _dialect.BuildStringMatch(member, RawString(leaf, value), StringMatchKind.StartsWith)
+            : BuildStringCall(member, value, StringStartsWithMethod);
 
     /// <summary>
     /// Builds a suffix-match predicate. Overridable for provider-correct translation; the base uses
@@ -285,7 +313,24 @@ public class FilterCompiler
     /// <param name="leaf">The originating leaf, for diagnostics.</param>
     /// <returns>A boolean expression evaluating the suffix match.</returns>
     protected virtual Expression BuildEndsWith(Expression member, Expression value, FilterLeaf leaf) =>
-        BuildStringCall(member, value, StringEndsWithMethod);
+        _dialect is not null
+            ? _dialect.BuildStringMatch(member, RawString(leaf, value), StringMatchKind.EndsWith)
+            : BuildStringCall(member, value, StringEndsWithMethod);
+
+    /// <summary>
+    /// Reads the raw search string for the dialect path, from the leaf value (validated as a string by
+    /// the caller) or, failing that, the constant expression the base supplies.
+    /// </summary>
+    private static string RawString(FilterLeaf leaf, Expression value) => leaf.Value switch
+    {
+        string s => s,
+        _ when value is ConstantExpression { Value: string c } => c,
+        _ => throw new FilterValidationException(
+            FilterErrorCode.InvalidValue,
+            $"Operator '{leaf.Op}' on field '{leaf.Field}' requires a string value.",
+            leaf.Field,
+            leaf.Op),
+    };
 
     private static Expression BuildStringCall(Expression member, Expression value, MethodInfo method)
     {
@@ -472,4 +517,114 @@ public class FilterCompiler
 
     private static bool IsSingleOperator(FilterOperator op) =>
         op != FilterOperator.None && (op & (op - 1)) == 0;
+
+    /// <summary>
+    /// Coerces a raw filter/key value to the target field's CLR type, exposed to the EF layer so
+    /// Detail-by-key segment coercion uses the same single code path (Decision Log D109). Mirrors the
+    /// per-leaf coercion used by the filter operators.
+    /// </summary>
+    /// <param name="value">The raw value (string/number/etc.) to coerce.</param>
+    /// <param name="targetType">The target CLR type (the field's <see cref="FieldMetadata.ClrType"/>).</param>
+    /// <param name="fieldName">The field name, for diagnostics.</param>
+    /// <returns>The coerced value.</returns>
+    /// <exception cref="FilterValidationException">The value cannot be coerced to <paramref name="targetType"/>.</exception>
+    internal static object? CoerceValue(object? value, Type targetType, string fieldName)
+    {
+        ArgumentNullException.ThrowIfNull(targetType);
+        var underlying = Nullable.GetUnderlyingType(targetType) ?? targetType;
+        var leaf = new FilterLeaf(fieldName, FilterOperator.Equals, value);
+        return Coerce(value, underlying, targetType, leaf);
+    }
+
+    /// <summary>
+    /// Enforces the per-view complexity hard limits (Decision Log D108, §8.2/§8.3) before any expression
+    /// is built: filter nesting depth, total leaf count, single string-value length, and <c>In</c> value
+    /// count. A breach is reported as <see cref="FilterErrorCode.RequestTooComplex"/> (HTTP 400).
+    /// </summary>
+    private static void EnforceLimits(FilterNode node, HardLimits limits)
+    {
+        var leafCount = 0;
+        Walk(node, 1);
+
+        void Walk(FilterNode current, int depth)
+        {
+            if (depth > limits.MaxFilterDepth)
+            {
+                throw new FilterValidationException(
+                    FilterErrorCode.RequestTooComplex,
+                    $"Filter nesting depth exceeds the maximum of {limits.MaxFilterDepth}.");
+            }
+
+            switch (current)
+            {
+                case FilterLeaf leaf:
+                    if (++leafCount > limits.MaxFilterLeaves)
+                    {
+                        throw new FilterValidationException(
+                            FilterErrorCode.RequestTooComplex,
+                            $"Filter leaf count exceeds the maximum of {limits.MaxFilterLeaves}.");
+                    }
+
+                    EnforceValueLimits(leaf, limits);
+                    break;
+
+                case FilterAnd and:
+                    foreach (var child in and.Children)
+                    {
+                        Walk(child, depth + 1);
+                    }
+
+                    break;
+
+                case FilterOr or:
+                    foreach (var child in or.Children)
+                    {
+                        Walk(child, depth + 1);
+                    }
+
+                    break;
+
+                case FilterNot not:
+                    Walk(not.Child, depth + 1);
+                    break;
+            }
+        }
+    }
+
+    private static void EnforceValueLimits(FilterLeaf leaf, HardLimits limits)
+    {
+        if (leaf.Value is string s && s.Length > limits.MaxFilterStringLength)
+        {
+            throw new FilterValidationException(
+                FilterErrorCode.RequestTooComplex,
+                $"Filter string value on field '{leaf.Field}' exceeds the maximum length of {limits.MaxFilterStringLength}.",
+                leaf.Field,
+                leaf.Op);
+        }
+
+        if (leaf.Op == FilterOperator.In && leaf.Value is IEnumerable enumerable and not string)
+        {
+            var count = 0;
+            foreach (var item in enumerable)
+            {
+                if (++count > limits.MaxInValues)
+                {
+                    throw new FilterValidationException(
+                        FilterErrorCode.RequestTooComplex,
+                        $"The 'In' operator on field '{leaf.Field}' exceeds the maximum of {limits.MaxInValues} values.",
+                        leaf.Field,
+                        leaf.Op);
+                }
+
+                if (item is string itemString && itemString.Length > limits.MaxFilterStringLength)
+                {
+                    throw new FilterValidationException(
+                        FilterErrorCode.RequestTooComplex,
+                        $"An 'In' string value on field '{leaf.Field}' exceeds the maximum length of {limits.MaxFilterStringLength}.",
+                        leaf.Field,
+                        leaf.Op);
+                }
+            }
+        }
+    }
 }

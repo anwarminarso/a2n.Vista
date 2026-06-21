@@ -1,5 +1,6 @@
 using a2n.Vista.EntityFrameworkCore;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Filter;
 using a2n.Vista.Ports;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -57,6 +58,11 @@ public static class VistaServiceCollectionExtensions
         var registry = GetOrAddSingletonInstance<IViewRegistry>(services, static () => new ViewRegistry());
         var planRegistry = GetOrAddSingletonInstance<IViewExecutionPlanRegistry>(services, static () => new ViewExecutionPlanRegistry());
         var contextAccessor = GetOrAddSingletonInstance(services, static () => new VistaDbContextAccessor());
+
+        // Default provider dialect (Decision Log D107): SQL-standard LIKE with wildcard escaping. A
+        // provider package (for example a2n.Vista.EntityFrameworkCore.Npgsql via AddVistaNpgsql())
+        // replaces this with a provider-specific dialect (ILIKE) before the executor resolves it.
+        services.TryAddSingleton<IQueryDialect, DefaultQueryDialect>();
 
         // Scoped executor: resolves the request-scoped DbContext (captured concrete type, or the base).
         services.TryAddScoped<IViewExecutor>(static sp =>

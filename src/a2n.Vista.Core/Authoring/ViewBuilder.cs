@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using a2n.Vista.Contracts;
@@ -40,6 +41,7 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     private Type? _sourceType;
     private LambdaExpression? _projection;
     private object? _sourceFactory;
+    private List<string>? _explicitKeyFields;
 
     /// <summary>The configured view name, or <see langword="null"/> when <c>Named</c> was not called.</summary>
     internal string? ViewName => _viewName;
@@ -162,6 +164,39 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
         return this;
     }
 
+    /// <inheritdoc />
+    public IViewBuilder<TQuery> Key(params Expression<Func<TQuery, object?>>[] fields)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        if (fields.Length == 0)
+        {
+            throw new ArgumentException("At least one key field is required.", nameof(fields));
+        }
+
+        var names = new List<string>(fields.Length);
+        foreach (var field in fields)
+        {
+            ArgumentNullException.ThrowIfNull(field);
+            names.Add(GetMemberName(field));
+        }
+
+        _explicitKeyFields = names;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IViewBuilder<TQuery> Key(params string[] fieldNames)
+    {
+        ArgumentNullException.ThrowIfNull(fieldNames);
+        if (fieldNames.Length == 0)
+        {
+            throw new ArgumentException("At least one key field is required.", nameof(fieldNames));
+        }
+
+        _explicitKeyFields = [.. fieldNames];
+        return this;
+    }
+
     IViewBuilderCore IViewBuilderCore.Named(string viewName) => Named(viewName);
 
     IViewBuilderCore IViewBuilderCore.MaxPageSize(int rows) => MaxPageSize(rows);
@@ -243,6 +278,8 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
 
         ValidateWriteFacet(_viewName, hasPrimaryKey);
 
+        var keyFields = ResolveKeyFields(_viewName, fields);
+
         var limits = new HardLimits(
             _maxPageSize ?? HardLimits.DefaultMaxPageSize,
             _maxExportRows ?? HardLimits.DefaultMaxExportRows);
@@ -256,7 +293,46 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
             Fields: fields,
             Authorization: null,
             Limits: limits,
-            IsReadOnly: IsReadOnlyView());
+            IsReadOnly: IsReadOnlyView())
+        {
+            KeyFields = keyFields,
+        };
+    }
+
+    /// <summary>
+    /// Resolves the view's key fields (Decision Log D104): an explicit <see cref="Key(string[])"/>
+    /// declaration wins; otherwise the fields marked <see cref="FieldMetadata.IsPrimaryKey"/> (in
+    /// projection order) are used. May be empty here for a single-table view that relies on EF-model
+    /// derivation at registration (Decision Log D105); the registration layer fails fast if it stays
+    /// empty (Decision Log D106).
+    /// </summary>
+    private List<string> ResolveKeyFields(string viewName, IReadOnlyList<FieldMetadata> fields)
+    {
+        if (_explicitKeyFields is { Count: > 0 })
+        {
+            foreach (var keyName in _explicitKeyFields)
+            {
+                if (!fields.Any(f => string.Equals(f.Name, keyName, StringComparison.Ordinal)))
+                {
+                    throw new InvalidOperationException(
+                        $"View '{viewName}' declares key field '{keyName}', which is not part of the " +
+                        "projection. A key field must be a projected field (it may be Hidden).");
+                }
+            }
+
+            return [.. _explicitKeyFields];
+        }
+
+        var derived = new List<string>();
+        foreach (var field in fields)
+        {
+            if (field.IsPrimaryKey)
+            {
+                derived.Add(field.Name);
+            }
+        }
+
+        return derived;
     }
 
     /// <summary>The write contract type, or <see langword="null"/> for a read-only view.</summary>

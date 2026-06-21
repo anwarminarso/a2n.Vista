@@ -16,10 +16,9 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
     {
         // Anonymous projection joining Product → Category/Supplier via navigations.
         //
-        // ProductId is intentionally the FIRST projected field: Gaya A does not surface the primary key
-        // into metadata yet, so Detail-by-key falls back to a name convention that ends at "first
-        // projected field". Keeping ProductId first means Detail by ProductId resolves correctly even
-        // though the field is Hidden (R12.2).
+        // ProductId is marked .PrimaryKey() so it is surfaced into ViewMetadata.KeyFields (Decision Log
+        // D104); Detail-by-key and deterministic paging resolve from that key even though the column is
+        // Hidden from transport (R12.2).
         views.AddView("vProductCategory", (db, sp) =>
                 from p in db.Products
                 select new
@@ -43,5 +42,23 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
             .Field(x => x.CategoryId, f => f.Hidden())
             .Field(x => x.SupplierId, f => f.Hidden());
         // No WithCrud(...) → read-only resource (List + Detail by ProductId).
+
+        // Composite-key view (Decision Log D104/D109): Order Details is keyed by (OrderId, ProductId).
+        // Both key columns are marked .PrimaryKey(), so ViewMetadata.KeyFields = [OrderId, ProductId]
+        // (in declaration order) and Detail-by-key resolves a row by the composite key.
+        views.AddView("vOrderDetail", (db, sp) =>
+                from d in db.OrderDetails
+                select new
+                {
+                    d.OrderId,
+                    d.ProductId,
+                    ProductName = d.Product!.ProductName,
+                    d.UnitPrice,
+                    d.Quantity,
+                    d.Discount,
+                })
+            .Field(x => x.OrderId, f => f.PrimaryKey())
+            .Field(x => x.ProductId, f => f.PrimaryKey());
+        // No WithCrud(...) → read-only resource (List + composite-key Detail).
     }
 }

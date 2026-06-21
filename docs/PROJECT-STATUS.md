@@ -1,7 +1,7 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-06-21
+> Last updated: 2026-06-21 (query-engine-hardening engine work landed; HTTP-surface redesign specced)
 > Purpose: a single, authoritative snapshot of *where the project is*, *what was decided*, and *what
 > is next*, so a new chat/work session can continue without re-litigating settled decisions ("no
 > dispute"). When this document and the code disagree, **the code is the source of truth**; reconcile
@@ -32,8 +32,10 @@ repo at `d:\GitHub\DynData`, **do not modify**; see `.kiro/steering/readonly-ext
 Three pillars (see `ROADMAP.md`):
 - **Pillar 1 — Core View engine** (View concept, neutral query/filter contract, EF execution, ASP.NET
   endpoints). **Implemented.**
-- **Pillar 2 — Adapters + neutral query engine** (server half = query engine, partially built; client
-  half = grid adapters, **not built**).
+- **Pillar 2 — Adapters + neutral query engine** (server half = query engine, **built & hardened**:
+  PK-in-metadata, deterministic paging, DoS guards, `IQueryDialect` port, composite keys — see §2.4;
+  HTTP surface is now action-style POST + `GET metadata` — see §2.5; client half = grid adapters,
+  **not built**).
 - **Pillar 3 — Source generator** (AOT-clean codegen). **Not built**; Pillar 1 uses a reflection path
   marked `[RequiresUnreferencedCode]`.
 
@@ -44,8 +46,11 @@ Packages / layering (Decision D48, enforced):
 - `a2n.Vista.Core` — EF-free & HTTP-free. Contracts, metadata, authoring builders, ports
   (`IViewExecutor`, `IViewScope`, `IViewRegistry`), `FilterCompiler`.
 - `a2n.Vista.EntityFrameworkCore` — implements `IViewExecutor` (`EfViewExecutor`), registration
-  (`AddVista`/`IVistaBuilder`), provider-aware filter.
-- `a2n.Vista.AspNetCore` — HTTP: endpoint mapping, `IViewAuthorizer`, error model. **No EF reference.**
+  (`AddVista`/`IVistaBuilder`), the default `IQueryDialect` (`DefaultQueryDialect`).
+- `a2n.Vista.EntityFrameworkCore.Npgsql` — optional PostgreSQL dialect (`NpgsqlQueryDialect`, ILIKE) via
+  `AddVistaNpgsql()`; keeps the Npgsql dependency out of Core/EF.
+- `a2n.Vista.AspNetCore` — HTTP: action-style endpoint mapping, JSON envelopes + polymorphic
+  `FilterNode` converter, `IViewAuthorizer`, error model. **No EF reference.**
 - EF and AspNetCore do **not** reference each other; they meet at Core ports.
 
 ---
@@ -67,10 +72,65 @@ auth; Northwind example.
 - **D99** wire-version seam (deferred).
 
 ### 2.3 Verification status (as of last update)
-- Full solution build green on **net8.0 / net9.0 / net10.0**.
-- Test suite: **53 tests, 0 failed** on all three TFMs.
-- Northwind example **selftest PASS** (List paging, filter+search, Detail by-key). Example targets
-  **net8.0 only**.
+- Full solution build green on **net8.0 / net9.0 / net10.0** (incl. `a2n.Vista.EntityFrameworkCore.Npgsql`).
+- Test suite green on all three TFMs (existing suite + `QueryEngineHardeningTests` + `HttpSurfaceTests`).
+- Northwind example **selftest PASS**: List paging, filter+search, Detail by single key, **and composite
+  Detail (OrderId+ProductId) via a name→value map**. Example targets **net8.0 only**.
+
+### 2.4 `query-engine-hardening` (engine work landed; spec `.kiro/specs/query-engine-hardening`)
+Implemented and tested (D104–D109):
+- **D104** view key model surfaced: `FieldMetadata.IsPrimaryKey` + `ViewMetadata.KeyFields` (ordered,
+  composite-capable), both added as **`init` properties** (records stay immutable). `.PrimaryKey()`
+  now propagates into metadata; a view-level `Key(...)` override exists on both authoring styles.
+- **D106** deterministic paging: `EfViewExecutor.ApplySort` appends `KeyFields` as the ordered
+  tiebreaker; empty sort orders by `KeyFields`. Registration **fail-fast** when a view has no key; the
+  old `Id`/`{Type}Id`/first-field name convention is **removed**. `IViewExecutionPlan.KeyFieldName`
+  removed (metadata is the single source).
+- **D107** `IQueryDialect` port (Core) + `FilterCompiler(IQueryDialect?)`; `DefaultQueryDialect` (EF,
+  `LIKE`+ESCAPE) registered by `AddVista`; **`ProviderAwareFilterCompiler` retired**;
+  `a2n.Vista.EntityFrameworkCore.Npgsql` (`NpgsqlQueryDialect` ILIKE) + `AddVistaNpgsql()`.
+- **D108** DoS guards enforced in `FilterCompiler` from `HardLimits` (`MaxFilterDepth/Leaves/StringLength/
+  MaxInValues`), new `FilterErrorCode.RequestTooComplex` (wire `filter-too-complex`).
+- **D109** composite Detail-by-key at the executor: `DetailAsync(object key)` unchanged; the executor
+  normalizes a scalar or `IReadOnlyDictionary<string,object?>` (by-name) against `KeyFields`. Key
+  coercion reuses `FilterCompiler.CoerceValue` (internal).
+
+**Deferred / not done in this pass (tracked):**
+- **D105 single-source PK auto-derivation** — NOT implemented. The EF model is not available at
+  `AddVista` registration time, so a key must currently be declared explicitly (`.PrimaryKey()` /
+  `Key(...)`); registration fails fast otherwise. Auto-derivation needs a startup/model hook (e.g. an
+  `IHostedService` that reads `DbContext.Model`) — follow-up.
+- **D107 startup provider guard** — NOT implemented (dialect/`ProviderName` vs `Database.ProviderName`
+  mismatch warn/throw). Needs a hosted service in the EF package — follow-up.
+
+(The Northwind composite-key example view was added with `http-surface-redesign` — see §2.5.)
+
+### 2.5 `http-surface-redesign` (landed; spec `.kiro/specs/http-surface-redesign`)
+Action-style endpoints implemented (**D110**, **supersedes DR3**), build green net8/9/10, tests pass,
+Northwind selftest PASS (incl. composite-key Detail):
+- Endpoints: `POST {route}/list`, `POST {route}/detail`, `GET {route}/metadata`,
+  `POST {route}/export`, `POST {route}/{create|update|delete}` (write actions only for writable views).
+  Implemented in `VistaEndpointRouteBuilderExtensions` (action-style mapper); `VistaQueryStringParser`
+  **retired**.
+- Key & query in JSON body: polymorphic `FilterNodeJsonConverter` (STJ), `VistaJson` options,
+  `VistaKeyReader` (scalar | name→value map), request envelopes (`VistaListRequestBody` etc.),
+  serializable `VistaMetadataResponse`. Global `search` folded into the filter tree over searchable
+  string fields (`VistaSearchMerge`).
+- Glue: `ViewRequestExecutor.MetadataAsync` + `ExportAsync`; List/Detail fed from the body; one-door
+  auth + D94 posture unchanged; new `VistaInvalidRequestException` → 400.
+- Northwind: composite-key `vOrderDetail` view (keyed by `OrderId`+`ProductId`); selftest exercises
+  composite Detail via a name→value map.
+
+**Deferred within this spec (tracked):**
+- Full HTTP endpoint **integration test** (TestServer) — covered at unit level instead (converter, key
+  reader, search merge, metadata DTO, glue `MetadataAsync`).
+- **Export pipeline** beyond row-streaming + `MaxExportRows` (CSV/XLSX formatting) — follow-up.
+- Metadata cache headers (`ETag`/`Cache-Control`) — follow-up.
+- `docs/spec/05-aspnetcore-mapping.md` prose rewrite — the authoritative decision is captured in this
+  §2.5 + §5 for now.
+
+### 2.6 Remaining query-engine follow-ups (unchanged)
+See §2.4 "Deferred": D105 single-source PK auto-derivation, D107 startup provider guard.
 
 ---
 
@@ -79,11 +139,14 @@ auth; Northwind example.
 Under `docs/spec/` (all **English** after the 2026-06-20 migration; see §4 language policy):
 - `01-view.md` — **foundation**; View concept, public contract, full Decision Log (D1–D50, §13.1
   DR1–DR10, §13.2 D94–D103). Status: IMPLEMENTED, reconciled with code.
-- `02-filter-and-query.md` — query engine (Pillar 2 server half). Status: PARTIALLY IMPLEMENTED;
-  reconciliation banners present. See §6 for remaining gaps.
+- `02-filter-and-query.md` — query engine (Pillar 2 server half). Status: IMPLEMENTED & **hardened**
+  (D104–D109 via `query-engine-hardening`); **prose lags the code** for §10 (dialect port) — the code is
+  authoritative (see §2.4/§6).
 - `03-source-generator.md` — Pillar 3. Status: **DESIGN INTENT (frozen; not a contract until built)**.
 - `04-adapter-contract.md` — Pillar 2 adapters. Status: **DESIGN INTENT (frozen)**.
-- `05-aspnetcore-mapping.md` — HTTP composition. Status: PARTIALLY IMPLEMENTED; reconciled.
+- `05-aspnetcore-mapping.md` — HTTP composition. Status: IMPLEMENTED as the **action-style surface**
+  (D110 via `http-surface-redesign`, supersedes DR3); **prose lags the code** — the code + §2.5 are
+  authoritative.
 - `10-operations-and-observability.md` — vendor-neutral observability + health + startup validation.
   Status: DESIGN INTENT (not built).
 - `11-versioning-and-deprecation.md` — public surfaces, versioning scheme, deprecation policy.
@@ -201,51 +264,40 @@ These record where the code intentionally differs from the early spec sketches. 
 | D82–D93 | `05-aspnetcore-mapping.md` §12 | HTTP. **D82 (`IViewWriter`) overridden by DR8.** |
 | D94–D103 | `01-view.md` §13.2 (+ docs 10/11) | Cross-cutting (this session). |
 | DR1–DR10 | `01-view.md` §13.1 | Pillar 1 code reconciliation. |
-| **D104+** | **next free** | Use for new decisions. |
+| D104–D109 | `query-engine-hardening` spec / `02` §16 + `01` §5.4 | Engine hardening (key model, PK derivation, deterministic paging, `IQueryDialect` port, DoS guards, composite key). **D107 supersedes the old §6.3 P2 doc-only recommendation.** |
+| D110 | `http-surface-redesign` spec / `05` | Action-style POST endpoints + `GET .../metadata`; **supersedes DR3**. |
+| **D111+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
 
 ---
 
-## 6. Next work: Spec 02 (Filter & Query Engine) — gap analysis & plan
+## 6. Engine + HTTP hardening — status (was: Spec 02 gap analysis)
 
-The engine **core is built and works** (proven by the Northwind selftest). Remaining Spec 02 work is
-**hardening/correctness**, verified by reading `FilterCompiler.cs` and `EfViewExecutor.cs`.
+The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**. Snapshot:
 
-### 6.1 Real gaps (code-verified)
-| Gap | Spec ref | Risk | Detail |
-|---|---|---|---|
-| Non-deterministic paging | §11 / D56 | **High (correctness)** | `EfViewExecutor.ApplySort` adds **no PK tiebreaker** and **no default PK order** when sort is empty → `Skip/Take` can duplicate/skip rows across pages. |
-| PK not surfaced into metadata | §11 | **Prereq** | `PrimaryKey()` is used only for build-time validation; it is **not** on `FieldMetadata`/`ViewMetadata`. `EfViewExecutor.ResolveKeyField` flags this and falls back to a name convention. Surfacing the PK is a **prerequisite** for the tiebreaker above and robust Detail-by-key. |
-| No `In` cap | §8.2 | DoS | `MaxInValues` (1000) not enforced in `FilterCompiler.BuildIn`. |
-| No complexity guards | §8.3 / D61 | DoS | `MaxFilterDepth`(16)/`MaxFilterLeaves`(128)/`MaxFilterStringLength`(4096) not enforced. |
-| Masking not applied at runtime | §13 | security/correctness | `MaskField` is captured by the builder but `EfViewExecutor` never applies the masker on materialization. Practically dormant today (Style B not executable per DR5; Style A has no `MaskField`). |
-| `IQueryDialect` port vs code | §10.1/§10.3 | architecture | Spec designs an `IQueryDialect` port + a separate Npgsql package; code uses a `ProviderAwareFilterCompiler` subclass. Doc-vs-code divergence. |
-| ILIKE wildcard escaping | §10.4 | injection-adjacent | Verify `ProviderAwareFilterCompiler` escapes `%`/`_`/`\` on the raw ILIKE pattern path. |
-| Per-channel Search/Scope enforcement | §7 | coupling | `EfViewExecutor` compiles the whole tree as `FilterOrigin.Filter`. Search/Scope channels exist in `FilterCompiler` but are not exercised end-to-end. |
+### 6.1 Closed (implemented, tested, green)
+| Gap | Decision | How it was closed |
+|---|---|---|
+| Non-deterministic paging | D106 | `EfViewExecutor.ApplySort` appends `KeyFields` as the ordered tiebreaker; empty sort orders by `KeyFields`. |
+| PK not surfaced into metadata | D104 | `FieldMetadata.IsPrimaryKey` + `ViewMetadata.KeyFields` (init props); `.PrimaryKey()`/`Key(...)` populate them; registration fail-fast when absent; name convention removed. |
+| No `In` cap / no complexity guards | D108 | `FilterCompiler` enforces `MaxInValues`/`MaxFilterDepth`/`MaxFilterLeaves`/`MaxFilterStringLength` from `HardLimits`; `FilterErrorCode.RequestTooComplex`. |
+| `IQueryDialect` port vs code | D107 | Built the port: Core `IQueryDialect`; `DefaultQueryDialect` (EF, LIKE) + `NpgsqlQueryDialect` (new `a2n.Vista.EntityFrameworkCore.Npgsql`, ILIKE); `ProviderAwareFilterCompiler` retired. |
+| ILIKE wildcard escaping | D107 | Escaping owned by the dialect (`% _ \`), verified. |
+| Composite Detail-by-key | D109 | Executor normalizes a scalar or name→value map against `KeyFields`. |
+| HTTP surface (action style) | D110 | `POST list/detail/export/create/update/delete` + `GET metadata`; key/query in JSON body; supersedes DR3. |
 
-### 6.2 Couplings / sequencing
-1. **PK-in-metadata is a prerequisite** for deterministic paging (and improves Detail-by-key). Do first.
-   Shape: add `FieldMetadata.IsPrimaryKey` (or `ViewMetadata.KeyField`); authoring + plan populate it.
-2. **Per-channel enforcement is coupled to adapters (Spec 04)** because of **DR9** (no per-leaf
-   `Origin`): the executor gets one merged tree. Channel separation must be done by the adapter
-   (compile sub-trees with distinct origins, then AND), or via a contract change. **Defer to Spec 04.**
-3. **Masking runtime** is coupled to "Style B executable" (DR5) / adding `MaskField` to Style A. **Defer.**
-
-### 6.3 Proposed plan: a new Kiro spec `query-engine-hardening` (engine-only)
-Priority (risk-first):
-- **P1** PK-in-metadata + deterministic paging (PK tiebreaker, default order by PK).
-- **P1** DoS guards: `MaxFilterDepth`/`MaxFilterLeaves`/`MaxFilterStringLength` + `MaxInValues`.
-- **P2** Verify/fix ILIKE wildcard escaping.
-- **P2** Reconcile `IQueryDialect`: **recommended** to update Spec 02 §10 to match
-  `ProviderAwareFilterCompiler` (cheaper); refactor to the port only if real multi-provider need arises.
-
-Deferred from this spec: per-channel Search/Scope enforcement (→ Spec 04 adapters), masking runtime
-(→ Style B executable / Style A `MaskField`).
-
-> Open questions to confirm at kickoff: (1) `FieldMetadata.IsPrimaryKey` vs `ViewMetadata.KeyField`;
-> (2) `IQueryDialect` doc-update vs port refactor; (3) confirm per-channel + masking are deferred.
+### 6.2 Still open (follow-ups)
+- **D105 single-source PK auto-derivation** — not implemented (the EF model is unavailable at `AddVista`;
+  needs a startup/model hook). Explicit `.PrimaryKey()`/`Key(...)` is required meanwhile (fail-fast).
+- **D107 startup provider guard** — not implemented (dialect `ProviderName` vs `Database.ProviderName`).
+- **Per-channel Search/Scope enforcement** — still deferred to Spec 04 adapters (DR9: one merged tree).
+  Global search is folded into the filter tree by the AspNetCore layer (`VistaSearchMerge`) for now.
+- **Masking runtime** — still deferred (coupled to Style B executable / Style A `MaskField`).
+- **Export formatting** (CSV/XLSX), **metadata cache headers**, **full HTTP TestServer integration test**.
+- **Doc prose**: `docs/spec/02` §10 (dialect port) and `docs/spec/05` (action surface) prose not yet
+  rewritten; authoritative decisions captured here (§2.4/§2.5/§5) and in the two Kiro specs.
 
 ---
 
@@ -266,6 +318,14 @@ Deferred from this spec: per-channel Search/Scope enforcement (→ Spec 04 adapt
 - **`RouteRoot` global default override** — model R uses a fixed default `/api/views` for ungrouped
   views; to change it globally, wrap registrations in a `RouteGroup`. Add an ergonomic override only if
   demanded.
+- **D105 single-source PK auto-derivation** — derive `KeyFields` from `DbContext.Model` at startup for
+  single-source views (needs a startup/model hook); explicit keys required until then.
+- **D107 startup provider guard** — warn/throw on dialect vs `Database.ProviderName` mismatch.
+- **Export pipeline** — CSV/XLSX formatting + streaming beyond `MaxExportRows` row-bounding.
+- **HTTP TestServer integration test** — end-to-end exercise of the action endpoints (currently
+  unit-level coverage of the converter/key-reader/search-merge/metadata/glue).
+- **Doc prose** — rewrite `docs/spec/02` §10 (dialect port) and `docs/spec/05` (action surface) to match
+  code; decisions are authoritative in §2.4/§2.5/§5 and the two Kiro specs meanwhile.
 
 ---
 
@@ -299,13 +359,21 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
 - Metadata: `src/a2n.Vista.Core/Metadata/` (`ViewMetadata`, `FieldMetadata`, `HardLimits`).
 - Authoring: `src/a2n.Vista.Core/Authoring/` (`View<>`, `ViewTemplate<>`, `IViewBuilder*`,
   `IFieldBuilder`/`FieldBuilder`/`IFieldBuilderState`, `ViewBuilder`).
-- Filter engine: `src/a2n.Vista.Core/Filter/FilterCompiler.cs`.
+- Filter engine: `src/a2n.Vista.Core/Filter/FilterCompiler.cs`; dialect port `Filter/IQueryDialect.cs`.
 - Ports: `src/a2n.Vista.Core/Ports/` (`IViewExecutor`, `IViewScope`, `IViewRegistry`, `ViewListResult`).
 - EF execution + registration: `src/a2n.Vista.EntityFrameworkCore/` (`Execution/EfViewExecutor.cs`,
-  `Execution/ProviderAwareFilterCompiler.cs`, `DependencyInjection/IVistaBuilder.cs` + `VistaBuilder.cs`).
-- AspNetCore: `src/a2n.Vista.AspNetCore/` (`Routing/VistaEndpointRouteBuilderExtensions.cs`,
-  `Authorization/IViewAuthorizer.cs`, `Configuration/VistaEndpoint*`, `Hosting/VistaStartupValidator.cs`).
-- Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs`, `SelfTest.cs`).
+  `Execution/DefaultQueryDialect.cs`, `DependencyInjection/IVistaBuilder.cs` + `VistaBuilder.cs`,
+  `DependencyInjection/VistaServiceCollectionExtensions.cs`). `ProviderAwareFilterCompiler` was retired.
+- Npgsql dialect: `src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/` (`NpgsqlQueryDialect.cs`,
+  `VistaNpgsqlServiceCollectionExtensions.cs` → `AddVistaNpgsql()`).
+- AspNetCore: `src/a2n.Vista.AspNetCore/` (`Routing/VistaEndpointRouteBuilderExtensions.cs` — action-style
+  mapper; `Serialization/FilterNodeJsonConverter.cs`, `VistaJson.cs`, `VistaKeyReader.cs`;
+  `Execution/VistaRequestEnvelopes.cs`, `VistaMetadataResponse.cs`, `VistaSearchMerge.cs`,
+  `VistaInvalidRequestException.cs`, `ViewRequestExecutor.cs`; `Authorization/IViewAuthorizer.cs` +
+  `ViewFacet.cs`; `Configuration/VistaEndpoint*`, `Hosting/VistaStartupValidator.cs`,
+  `Diagnostics/VistaProblemResults.cs`).
+- Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
+  `vOrderDetail`, `SelfTest.cs`).
 - Tests: `src/Tests/a2n.Vista.Tests/` (`AuthorizationTests`, `MaskingTests`, `RouteGroupTests`,
   `WireVersionTests`, `EnforcementTests`, `DefaultAllowTests`, `PagingTests`, `TypingInvariantTests`,
-  `WidgetTestFixtures`).
+  `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`).

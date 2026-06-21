@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.EntityFrameworkCore.Npgsql</RootNamespace>
+    <AssemblyName>a2n.Vista.EntityFrameworkCore.Npgsql</AssemblyName>
+    <PackageId>a2n.Vista.EntityFrameworkCore.Npgsql</PackageId>
+    <Description>Vista PostgreSQL (Npgsql) query dialect: case-insensitive search via ILIKE.</Description>
+    <PackageTags>vista;a2n;efcore;postgresql;npgsql</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+  </ItemGroup>
+
+</Project>

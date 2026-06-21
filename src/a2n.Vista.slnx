@@ -4,6 +4,7 @@
     <Project Path="a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj" />
     <Project Path="a2n.Vista.SourceGenerators/a2n.Vista.SourceGenerators.csproj" />
     <Project Path="a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj" />
+    <Project Path="Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj" />
     <Project Path="a2n.Vista.Newtonsoft/a2n.Vista.Newtonsoft.csproj" />
   </Folder>
   <Folder Name="/10 Adapters/">

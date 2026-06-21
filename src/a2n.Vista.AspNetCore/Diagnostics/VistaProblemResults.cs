@@ -104,6 +104,18 @@ internal static class VistaProblemResults
                     });
                 return true;
 
+            case VistaInvalidRequestException invalid:
+                result = HttpResults.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "Invalid request",
+                    type: TypePrefix + "invalid-request",
+                    detail: invalid.Message,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["code"] = "invalid-request",
+                    });
+                return true;
+
             default:
                 result = null;
                 return false;

@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Linq.Expressions;
 using System.Reflection;
 using a2n.Vista.Metadata;
@@ -51,6 +52,7 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     private int? _maxPageSize;
     private int? _maxExportRows;
     private ICrudFacetDefinitionSource? _crud;
+    private List<string>? _explicitKeyFields;
 
     internal ReadViewBuilder(string name, Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
     {
@@ -116,6 +118,39 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     }
 
     /// <inheritdoc />
+    public IReadViewBuilder<TRow> Key(params Expression<Func<TRow, object?>>[] fields)
+    {
+        ArgumentNullException.ThrowIfNull(fields);
+        if (fields.Length == 0)
+        {
+            throw new ArgumentException("At least one key field is required.", nameof(fields));
+        }
+
+        var names = new List<string>(fields.Length);
+        foreach (var field in fields)
+        {
+            ArgumentNullException.ThrowIfNull(field);
+            names.Add(CentralTemplateExpressions.GetMemberName(field));
+        }
+
+        _explicitKeyFields = names;
+        return this;
+    }
+
+    /// <inheritdoc />
+    public IReadViewBuilder<TRow> Key(params string[] fieldNames)
+    {
+        ArgumentNullException.ThrowIfNull(fieldNames);
+        if (fieldNames.Length == 0)
+        {
+            throw new ArgumentException("At least one key field is required.", nameof(fieldNames));
+        }
+
+        _explicitKeyFields = [.. fieldNames];
+        return this;
+    }
+
+    /// <inheritdoc />
     [RequiresUnreferencedCode(ReadViewBuilder.ReflectionMessage)]
     public TemplateViewDefinition<TDbContext> Build()
     {
@@ -126,24 +161,64 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
         // facet is present the view is writable and the metadata carries the CRUD types.
         var isReadOnly = crudDefinition is null;
 
+        var fields = BuildFields();
+
         var metadata = new ViewMetadata(
             Name: _name,
             Route: _name,
             QueryType: typeof(TRow),
             CrudType: crudDefinition?.CrudType,
             CrudEntityType: crudDefinition?.EntityType,
-            Fields: BuildFields(),
+            Fields: fields,
             Authorization: null,
             Limits: new HardLimits(
                 _maxPageSize ?? HardLimits.DefaultMaxPageSize,
                 _maxExportRows ?? HardLimits.DefaultMaxExportRows),
-            IsReadOnly: isReadOnly);
+            IsReadOnly: isReadOnly)
+        {
+            KeyFields = ResolveKeyFields(fields),
+        };
 
         // Erase TRow to the non-generic IQueryable so the EF layer can consume the projection without
         // naming an anonymous type (Decision Log D11). IQueryable<TRow> is an IQueryable.
         Func<TDbContext, IServiceProvider, IQueryable> queryFactory = (db, services) => _query(db, services);
 
         return new TemplateViewDefinition<TDbContext>(metadata, queryFactory, _rowFilters, crudDefinition);
+    }
+
+    /// <summary>
+    /// Resolves the view's key fields (Decision Log D104): an explicit <c>Key(...)</c> wins; otherwise
+    /// the fields marked <see cref="FieldMetadata.IsPrimaryKey"/> (in projection order). May be empty
+    /// for a single-table view that relies on EF-model derivation at registration (D105); registration
+    /// fails fast if it stays empty (D106).
+    /// </summary>
+    private List<string> ResolveKeyFields(IReadOnlyList<FieldMetadata> fields)
+    {
+        if (_explicitKeyFields is { Count: > 0 })
+        {
+            foreach (var keyName in _explicitKeyFields)
+            {
+                if (!fields.Any(f => string.Equals(f.Name, keyName, StringComparison.Ordinal)))
+                {
+                    throw new InvalidOperationException(
+                        $"View '{_name}' declares key field '{keyName}', which is not part of the " +
+                        "projection. A key field must be a projected field (it may be Hidden).");
+                }
+            }
+
+            return [.. _explicitKeyFields];
+        }
+
+        var derived = new List<string>();
+        foreach (var field in fields)
+        {
+            if (field.IsPrimaryKey)
+            {
+                derived.Add(field.Name);
+            }
+        }
+
+        return derived;
     }
 
     /// <summary>

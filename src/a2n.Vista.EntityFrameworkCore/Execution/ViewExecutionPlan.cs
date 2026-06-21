@@ -29,17 +29,15 @@ public static class ViewExecutionPlan
     /// <c>DbContext.Set&lt;TSource&gt;()</c> convention (D11).
     /// </param>
     /// <param name="authoredRowFilters">The authored pre-projection row filters; <see langword="null"/> for none.</param>
-    /// <param name="keyFieldName">The primary-key field name, when known.</param>
     /// <returns>A ready-to-register execution plan.</returns>
     public static IViewExecutionPlan Split<TSource, TRow>(
         string viewName,
         Expression<Func<TSource, TRow>> projection,
         Func<IServiceProvider, IQueryable<TSource>>? sourceFactory = null,
-        IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>>? authoredRowFilters = null,
-        string? keyFieldName = null)
+        IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>>? authoredRowFilters = null)
         where TSource : class
         where TRow : class =>
-        new SplitViewExecutionPlan<TSource, TRow>(viewName, projection, sourceFactory, authoredRowFilters, keyFieldName);
+        new SplitViewExecutionPlan<TSource, TRow>(viewName, projection, sourceFactory, authoredRowFilters);
 
     /// <summary>
     /// Builds a <see cref="ProjectedViewExecutionPlan"/> from a Gaya A (central-template) view
@@ -55,10 +53,9 @@ public static class ViewExecutionPlan
     /// <returns>A ready-to-register execution plan.</returns>
     /// <exception cref="ArgumentNullException"><paramref name="definition"/> is <see langword="null"/>.</exception>
     /// <remarks>
-    /// The primary key is not surfaced by Gaya A authoring, so the plan's
-    /// <see cref="IViewExecutionPlan.KeyFieldName"/> is <see langword="null"/> and the executor falls
-    /// back to its name convention for Detail-by-key. See the PK gap flagged on
-    /// <see cref="ProjectedViewExecutionPlan"/>.
+    /// The view's key fields are surfaced through <see cref="ViewMetadata.KeyFields"/> (Decision Log
+    /// D104); Gaya A views derive them from <c>.PrimaryKey()</c> marks at authoring time, or rely on
+    /// single-source EF-model derivation at registration (Decision Log D105).
     /// </remarks>
     [RequiresUnreferencedCode("Gaya A execution erases the source type behind the projection and composes the query at runtime; use the source generator path for AOT.")]
     public static IViewExecutionPlan FromTemplateDefinition<TDbContext>(TemplateViewDefinition<TDbContext> definition)
@@ -85,7 +82,6 @@ public static class ViewExecutionPlan
             metadata.Name,
             metadata.QueryType,
             ProjectedFactory,
-            authoredRowFilterCount: definition.RowFilters.Count,
-            keyFieldName: null);
+            authoredRowFilterCount: definition.RowFilters.Count);
     }
 }

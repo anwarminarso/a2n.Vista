@@ -55,6 +55,24 @@ public interface IReadViewBuilder<TRow>
         Action<IFieldBuilder<TProp>> configure);
 
     /// <summary>
+    /// Explicitly declares the view's key fields, overriding the default derived from the fields marked
+    /// <see cref="IFieldBuilder{TProp}.PrimaryKey"/> (Decision Log D104). Use for views over joins,
+    /// unions, or other views where the key cannot be inferred (Decision Log D105). The order is the
+    /// paging-tiebreaker order; every named field must be projected.
+    /// </summary>
+    /// <param name="fields">The key field selectors, in key order.</param>
+    /// <returns>The same builder, for fluent chaining.</returns>
+    IReadViewBuilder<TRow> Key(params Expression<Func<TRow, object?>>[] fields);
+
+    /// <summary>
+    /// Explicitly declares the view's key fields by name (Decision Log D104/D105). Every named field
+    /// must be projected.
+    /// </summary>
+    /// <param name="fieldNames">The key field names, in key order.</param>
+    /// <returns>The same builder, for fluent chaining.</returns>
+    IReadViewBuilder<TRow> Key(params string[] fieldNames);
+
+    /// <summary>
     /// Adds a server-trusted, pre-projection row filter over the EF source entity
     /// <typeparamref name="TSource"/> (row-level security, §5.2, Decision Log D28). The predicate is
     /// produced lazily from the request <see cref="IServiceProvider"/> and AND-ed into the query; it is

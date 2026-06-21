@@ -68,6 +68,12 @@ public static class SelfTest
         allPassed &= await FilterSortSearchCheckAsync(view, executor, viewScope);
         allPassed &= await DetailCheckAsync(view, executor, viewScope);
 
+        var orderDetailView = registry.Get("vOrderDetail");
+        if (orderDetailView is not null)
+        {
+            allPassed &= await CompositeDetailCheckAsync(orderDetailView, executor, viewScope);
+        }
+
         Console.WriteLine();
         Console.WriteLine(allPassed ? "RESULT: PASS" : "RESULT: FAIL");
         return allPassed;
@@ -183,6 +189,32 @@ public static class SelfTest
 
         var ok = resolvedId == productId && name == "Chai";
         Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>D109 — Detail resolves a row by a composite key (OrderId, ProductId) via a name→value map.</summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> CompositeDetailCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var key = new Dictionary<string, object?> { ["OrderId"] = 10248, ["ProductId"] = 11 };
+
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, new object?[] { view, key, scope, CancellationToken.None })!;
+        await task.ConfigureAwait(false);
+        var row = task.GetType().GetProperty(nameof(Task<object>.Result))!.GetValue(task);
+
+        Console.WriteLine("[4] Composite Detail by (OrderId=10248, ProductId=11) — KeyFields=" +
+            $"[{string.Join(", ", view.KeyFields)}]");
+        if (row is null)
+        {
+            Console.WriteLine("    -> FAIL: no row returned");
+            return false;
+        }
+
+        var orderId = Convert.ToInt32(Prop(row, "OrderId")!, CultureInfo.InvariantCulture);
+        var productId = Convert.ToInt32(Prop(row, "ProductId")!, CultureInfo.InvariantCulture);
+        var ok = orderId == 10248 && productId == 11;
+        Console.WriteLine($"    Row: OrderId={orderId}  ProductId={productId}  -> {(ok ? "PASS" : "FAIL")}");
         return ok;
     }
 

@@ -1,7 +1,9 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Text.Json;
+using System.Threading;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.AspNetCore.Execution;
-using a2n.Vista.AspNetCore.Routing;
+using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using Microsoft.AspNetCore.Http;
@@ -28,26 +30,23 @@ namespace Microsoft.AspNetCore.Builder;
 /// view = one endpoint, R3.5).
 /// </para>
 /// <para>
-/// <b>Verb-to-facet mapping</b> (mirrors <see cref="ViewFacet"/> and §12.3), where <c>{route}</c> is the
-/// view's full <see cref="ViewMetadata.Route"/>:
+/// <b>Action-style surface (D110), where <c>{route}</c> is the view's full <see cref="ViewMetadata.Route"/>:</b>
 /// </para>
 /// <list type="bullet">
-///   <item><description><c>GET    {route}</c> → List (paging/sort from the query string, <see cref="VistaQueryStringParser"/>).</description></item>
-///   <item><description><c>GET    {route}/{key}</c> → Detail (a missing row maps to 404).</description></item>
-///   <item><description><c>POST   {route}</c> → Create (write).</description></item>
-///   <item><description><c>PUT    {route}/{key}</c> → Update (write).</description></item>
-///   <item><description><c>DELETE {route}/{key}</c> → Delete (write).</description></item>
+///   <item><description><c>POST {route}/list</c> → List (query in the JSON body).</description></item>
+///   <item><description><c>POST {route}/detail</c> → Detail (key in the JSON body; a missing row → 404).</description></item>
+///   <item><description><c>GET  {route}/metadata</c> → Metadata (cacheable).</description></item>
+///   <item><description><c>POST {route}/export</c> → Export (query in the body, bounded by MaxExportRows).</description></item>
+///   <item><description><c>POST {route}/create|update|delete</c> → write (payload in the body).</description></item>
 /// </list>
 /// <para>
-/// The Pillar 1 List mapping reads the neutral <see cref="a2n.Vista.Contracts.ViewQueryRequest"/> from the
-/// query string (GET). The §12.3 DataTables mapping (<c>POST {route}/query</c> with a request body and an
-/// <c>Accept</c>-driven response shape) is the adapter form introduced in Pillar 2; it layers on top
-/// without changing these routes.
+/// The query and key travel in the JSON request body (Decision Log D110), so composite keys and rich
+/// filter trees need no URL encoding. Bodies are (de)serialized with
+/// <see cref="a2n.Vista.AspNetCore.Serialization.VistaJson"/> (polymorphic <c>FilterNode</c> converter).
 /// </para>
 /// <para>
-/// <b>Read-only views never expose write verbs (R3.3, §4.5).</b> The write handlers resolve the target
-/// view and short-circuit with <c>404 Not Found</c> when <see cref="ViewMetadata.IsReadOnly"/> is
-/// <see langword="true"/> — the semantic equivalent of "no write endpoint was generated".
+/// <b>Read-only views expose only read actions (D38).</b> The write actions are not mapped for a
+/// read-only view; if reached anyway, the write handler returns <c>404 Not Found</c>.
 /// </para>
 /// <para>
 /// <b>Write execution in Pillar 1.</b> The EF executor's Create/Update/Delete are not implemented in
@@ -82,7 +81,7 @@ public static class VistaEndpointRouteBuilderExtensions
         var registry = endpoints.ServiceProvider.GetRequiredService<IViewRegistry>();
         foreach (var view in registry.All)
         {
-            MapSingleView(endpoints, view.Name, view.Route);
+            MapSingleView(endpoints, view);
         }
 
         return endpoints;
@@ -118,55 +117,109 @@ public static class VistaEndpointRouteBuilderExtensions
                 $"Cannot map endpoints for view '{viewName}' because no view is registered under that name. "
                 + "Register it via the EF layer's AddVista(...) before mapping.");
 
-        MapSingleView(endpoints, view.Name, view.Route);
+        MapSingleView(endpoints, view);
         return endpoints;
     }
 
     /// <summary>
-    /// Maps the five verb routes for one view at its full <paramref name="route"/>. The view-name
-    /// segment is captured (literal), so handlers use the known name without reading a route value.
+    /// Maps the action-style endpoints for one view at its full <paramref name="view"/> route
+    /// (Decision Log D110): <c>POST {route}/list|detail|export</c> + <c>GET {route}/metadata</c> for
+    /// reads, and <c>POST {route}/create|update|delete</c> for writes (write actions are not mapped for
+    /// a read-only view, D38). The key and query travel in the JSON request body.
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
-    private static void MapSingleView(IEndpointRouteBuilder endpoints, string viewName, string route)
+    private static void MapSingleView(IEndpointRouteBuilder endpoints, ViewMetadata view)
     {
-        var detailPattern = $"{route}/{{key}}";
+        var route = view.Route;
+        var name = view.Name;
 
-        // Cast each handler to Delegate so it is bound as a route handler (whose returned IResult /
-        // Task<IResult> is written to the response) rather than as a RequestDelegate (which would discard
-        // the result — see analyzer ASP0016).
-        endpoints.MapGet(route, (Delegate)((HttpContext http) => HandleListAsync(http, viewName)));
-        endpoints.MapGet(detailPattern, (Delegate)((HttpContext http) => HandleDetailAsync(http, viewName)));
-        endpoints.MapPost(route, (Delegate)((HttpContext http) => HandleWrite(http, viewName, ViewFacet.Create)));
-        endpoints.MapPut(detailPattern, (Delegate)((HttpContext http) => HandleWrite(http, viewName, ViewFacet.Update)));
-        endpoints.MapDelete(detailPattern, (Delegate)((HttpContext http) => HandleWrite(http, viewName, ViewFacet.Delete)));
+        endpoints.MapPost($"{route}/list", (Delegate)((HttpContext http) => HandleListAsync(http, view)));
+        endpoints.MapPost($"{route}/detail", (Delegate)((HttpContext http) => HandleDetailAsync(http, name)));
+        endpoints.MapGet($"{route}/metadata", (Delegate)((HttpContext http) => HandleMetadataAsync(http, name)));
+        endpoints.MapPost($"{route}/export", (Delegate)((HttpContext http) => HandleExportAsync(http, view)));
+
+        if (!view.IsReadOnly)
+        {
+            endpoints.MapPost($"{route}/create", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Create)));
+            endpoints.MapPost($"{route}/update", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Update)));
+            endpoints.MapPost($"{route}/delete", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Delete)));
+        }
     }
 
-    /// <summary>Handles the List facet: parse the query string, run the glue, serialize the paged result.</summary>
+    /// <summary>Handles <c>POST {route}/list</c>: read the query body (filter/search/sort/paging), run the glue.</summary>
     [RequiresUnreferencedCode(AotMessage)]
-    private static async Task<IResult> HandleListAsync(HttpContext http, string viewName)
+    private static async Task<IResult> HandleListAsync(HttpContext http, ViewMetadata view)
     {
-        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
-        var request = VistaQueryStringParser.Parse(http.Request);
+        var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
+        var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
 
-        var result = await executor.ListAsync(http, viewName, request).ConfigureAwait(false);
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        var result = await executor.ListAsync(http, view.Name, request).ConfigureAwait(false);
         return Results.Ok(result);
     }
 
-    /// <summary>Handles the Detail facet: resolve a single row by key; a missing row maps to 404.</summary>
+    /// <summary>Handles <c>POST {route}/detail</c>: read the key from the body; a missing row maps to 404.</summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleDetailAsync(HttpContext http, string viewName)
     {
-        var key = ResolveKey(http);
-        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        var body = await ReadBodyAsync<VistaDetailRequestBody>(http).ConfigureAwait(false)
+            ?? throw new VistaInvalidRequestException("A detail request requires a JSON body with a 'key'.");
+        var key = VistaKeyReader.Read(body.Key);
 
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
         var row = await executor.DetailAsync(http, viewName, key).ConfigureAwait(false);
         return row is null ? Results.NotFound() : Results.Ok(row);
     }
 
+    /// <summary>Handles <c>GET {route}/metadata</c>: authorize, then return the serializable metadata.</summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleMetadataAsync(HttpContext http, string viewName)
+    {
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        var metadata = await executor.MetadataAsync(http, viewName).ConfigureAwait(false);
+        return Results.Ok(metadata);
+    }
+
+    /// <summary>Handles <c>POST {route}/export</c>: read the query body, run the export (bounded by MaxExportRows).</summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleExportAsync(HttpContext http, ViewMetadata view)
+    {
+        var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
+        var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
+
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        var result = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
+        return Results.Ok(result);
+    }
+
     /// <summary>
-    /// Handles the write verbs (Create/Update/Delete). Enforces R3.3 (read-only views expose no write
-    /// endpoint → 404) and returns 501 for writable views because write execution is not implemented in
-    /// Pillar 1 (DR7).
+    /// Reads and deserializes the JSON request body using <see cref="VistaJson.Options"/>. Returns
+    /// <see langword="null"/> for an empty body. Malformed JSON surfaces as a
+    /// <see cref="VistaInvalidRequestException"/> (mapped to 400).
+    /// </summary>
+    private static async Task<T?> ReadBodyAsync<T>(HttpContext http)
+        where T : class
+    {
+        if (http.Request.ContentLength is 0)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await JsonSerializer.DeserializeAsync<T>(
+                http.Request.Body, VistaJson.Options, http.RequestAborted).ConfigureAwait(false);
+        }
+        catch (JsonException ex)
+        {
+            throw new VistaInvalidRequestException($"The request body is not valid JSON: {ex.Message}");
+        }
+    }
+
+    /// <summary>
+    /// Handles the write actions (Create/Update/Delete). Enforces D38 (read-only views expose no write
+    /// action — though such views are not even mapped) and returns 501 for writable views because write
+    /// execution is not implemented in Pillar 1 (DR7).
     /// </summary>
     private static IResult HandleWrite(HttpContext http, string viewName, ViewFacet facet)
     {
@@ -180,7 +233,6 @@ public static class VistaEndpointRouteBuilderExtensions
 
         if (view.IsReadOnly)
         {
-            // R3.3: a read-only view never exposes a write endpoint.
             return Results.NotFound();
         }
 
@@ -190,12 +242,4 @@ public static class VistaEndpointRouteBuilderExtensions
             detail: $"The '{facet}' facet of view '{viewName}' is not available in Pillar 1. "
                 + "Write execution (compiled TCrud-to-entity mapping, concurrency, SaveChanges) lands in a later milestone.");
     }
-
-    /// <summary>
-    /// Reads the <c>{key}</c> route value as a string. The executor converts it to the primary-key field's
-    /// CLR type, so the endpoint stays type-agnostic.
-    /// </summary>
-    private static string ResolveKey(HttpContext http) =>
-        http.Request.RouteValues["key"] as string
-            ?? throw new InvalidOperationException("The 'key' route value was not present on a Vista detail/write endpoint.");
 }

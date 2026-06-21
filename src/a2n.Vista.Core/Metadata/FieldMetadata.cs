@@ -56,6 +56,14 @@ public sealed record FieldMetadata(
     FilterOperator AllowedOperators)
 {
     /// <summary>
+    /// Whether this field is (part of) the underlying entity/table primary key. This is the
+    /// <b>entity-level</b> truth, surfaced from authoring (<c>.PrimaryKey()</c>) or single-source
+    /// EF-model derivation; <see cref="ViewMetadata.KeyFields"/> is the <b>view-level</b> key that
+    /// defaults from the fields marked here. Defaults to <see langword="false"/> (Decision Log D104).
+    /// </summary>
+    public bool IsPrimaryKey { get; init; }
+
+    /// <summary>
     /// Creates a <see cref="FieldMetadata"/>, auto-deriving the display label from
     /// <paramref name="name"/> when <paramref name="label"/> is not supplied.
     /// </summary>
@@ -73,6 +81,7 @@ public sealed record FieldMetadata(
     /// <param name="isWritable">Whether the field can be written by clients.</param>
     /// <param name="isMaskable">Whether the field value is masked in read responses.</param>
     /// <param name="allowedOperators">The filter operators allowed on this field.</param>
+    /// <param name="isPrimaryKey">Whether the field is (part of) the entity primary key (Decision Log D104).</param>
     /// <returns>A new <see cref="FieldMetadata"/> instance.</returns>
     public static FieldMetadata Create(
         string name,
@@ -85,7 +94,8 @@ public sealed record FieldMetadata(
         bool isHidden = false,
         bool isWritable = false,
         bool isMaskable = false,
-        FilterOperator allowedOperators = FilterOperator.None) =>
+        FilterOperator allowedOperators = FilterOperator.None,
+        bool isPrimaryKey = false) =>
         new(
             name,
             label ?? LabelHelper.ToTitleCase(name),
@@ -97,5 +107,8 @@ public sealed record FieldMetadata(
             isHidden,
             isWritable,
             isMaskable,
-            allowedOperators);
+            allowedOperators)
+        {
+            IsPrimaryKey = isPrimaryKey,
+        };
 }

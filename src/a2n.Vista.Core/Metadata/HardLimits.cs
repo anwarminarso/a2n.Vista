@@ -23,6 +23,42 @@ public sealed record HardLimits(int MaxPageSize, int MaxExportRows)
     /// <summary>Absolute export cap that cannot be bypassed by per-view configuration (§11.2).</summary>
     public const int AbsoluteMaxExportRows = 1_000_000;
 
+    /// <summary>Default maximum filter-tree nesting depth (Decision Log D108, §8.3, D61).</summary>
+    public const int DefaultMaxFilterDepth = 16;
+
+    /// <summary>Default maximum number of filter leaves in one request (Decision Log D108, §8.3).</summary>
+    public const int DefaultMaxFilterLeaves = 128;
+
+    /// <summary>Default maximum length of a single client-supplied filter string value (Decision Log D108, §8.3).</summary>
+    public const int DefaultMaxFilterStringLength = 4096;
+
+    /// <summary>Default maximum number of values an <c>In</c> operator may carry (Decision Log D108, §8.2).</summary>
+    public const int DefaultMaxInValues = 1000;
+
+    /// <summary>
+    /// Maximum filter-tree nesting depth a client request may carry; exceeding it is a 400
+    /// (Decision Log D108). Defaults to <see cref="DefaultMaxFilterDepth"/>.
+    /// </summary>
+    public int MaxFilterDepth { get; init; } = DefaultMaxFilterDepth;
+
+    /// <summary>
+    /// Maximum number of filter leaves a client request may carry; exceeding it is a 400
+    /// (Decision Log D108). Defaults to <see cref="DefaultMaxFilterLeaves"/>.
+    /// </summary>
+    public int MaxFilterLeaves { get; init; } = DefaultMaxFilterLeaves;
+
+    /// <summary>
+    /// Maximum length of a single client-supplied filter string value; exceeding it is a 400
+    /// (Decision Log D108). Defaults to <see cref="DefaultMaxFilterStringLength"/>.
+    /// </summary>
+    public int MaxFilterStringLength { get; init; } = DefaultMaxFilterStringLength;
+
+    /// <summary>
+    /// Maximum number of values an <c>In</c> operator may carry; exceeding it is a 400
+    /// (Decision Log D108). Defaults to <see cref="DefaultMaxInValues"/>.
+    /// </summary>
+    public int MaxInValues { get; init; } = DefaultMaxInValues;
+
     /// <summary>The default hard limits applied to a view that does not customize them.</summary>
     public static HardLimits Default { get; } = new(DefaultMaxPageSize, DefaultMaxExportRows);
 }
