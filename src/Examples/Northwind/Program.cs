@@ -1,7 +1,7 @@
 using a2n.Vista.Examples.Northwind;
-using a2n.Vista.Examples.Northwind.Data;
 using a2n.Vista.Examples.Northwind.Views;
 using Microsoft.EntityFrameworkCore;
+using Northwind.DataAccess;
 
 var builder = WebApplication.CreateBuilder(args);
 

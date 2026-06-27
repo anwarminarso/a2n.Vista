@@ -22,6 +22,7 @@
     <Project Path="a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj" />
   </Folder>
   <Folder Name="/30 Examples/">
+    <Project Path="Examples/Northwind.DataAccess/Northwind.DataAccess.csproj" />
     <Project Path="Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" />
   </Folder>
   <Folder Name="/99 Tests/">

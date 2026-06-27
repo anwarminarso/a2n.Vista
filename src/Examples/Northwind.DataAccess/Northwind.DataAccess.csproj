@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Standalone EF Core model for the public Microsoft Northwind sample database. This library is
+    intentionally decoupled from a2n.Vista: it references only Microsoft.EntityFrameworkCore and can be
+    consumed by any sample/project (a2n or otherwise). The a2n.Vista Northwind example is one consumer.
+  -->
+  <PropertyGroup>
+    <!-- Multi-target so consumers on any supported TFM can reference the model. Inherits the
+         repo-wide net8.0;net9.0;net10.0 set from Directory.Build.props. -->
+    <RootNamespace>Northwind.DataAccess</RootNamespace>
+    <AssemblyName>Northwind.DataAccess</AssemblyName>
+
+    <!-- Sample model library, not published as a package. -->
+    <IsPackable>false</IsPackable>
+    <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The only dependency: EF Core relational (brings EF Core core transitively, plus the
+         relational mapping API — ToTable/ToView/HasColumnName/etc. used in OnModelCreating). The
+         concrete database provider (SQLite, Npgsql, ...) is chosen by the consumer, keeping this
+         model provider-agnostic. -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" />
+  </ItemGroup>
+
+</Project>

@@ -1,5 +1,5 @@
 using a2n.Vista.Authoring;
-using a2n.Vista.Examples.Northwind.Data;
+using Northwind.DataAccess;
 
 namespace a2n.Vista.Examples.Northwind.Views;
 

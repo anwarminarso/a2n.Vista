@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace a2n.Vista.Examples.Northwind.Entities;
+namespace Northwind.DataAccess;
 
 /// <summary>
 /// A sales region. Maps to the Northwind <c>Region</c> table.

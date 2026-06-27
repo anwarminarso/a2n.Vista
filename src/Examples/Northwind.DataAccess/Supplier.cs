@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace a2n.Vista.Examples.Northwind.Entities;
+namespace Northwind.DataAccess;
 
 /// <summary>
 /// A company that supplies products. Maps to the Northwind <c>Suppliers</c> table; source of the

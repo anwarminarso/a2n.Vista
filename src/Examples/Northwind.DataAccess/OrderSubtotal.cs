@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace a2n.Vista.Examples.Northwind.Entities;
+namespace Northwind.DataAccess;
 
 /// <summary>
 /// Keyless projection backing the Northwind <c>"Order Subtotals"</c> view: the extended-price subtotal

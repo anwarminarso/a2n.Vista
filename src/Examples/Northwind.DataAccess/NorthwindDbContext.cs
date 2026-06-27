@@ -1,7 +1,6 @@
-using a2n.Vista.Examples.Northwind.Entities;
 using Microsoft.EntityFrameworkCore;
 
-namespace a2n.Vista.Examples.Northwind.Data;
+namespace Northwind.DataAccess;
 
 /// <summary>
 /// The application's EF Core context for the Northwind sample. Backed by SQLite (a local file) and

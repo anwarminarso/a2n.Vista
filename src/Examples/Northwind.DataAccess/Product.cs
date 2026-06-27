@@ -1,7 +1,7 @@
 using System;
 using System.Collections.Generic;
 
-namespace a2n.Vista.Examples.Northwind.Entities;
+namespace Northwind.DataAccess;
 
 /// <summary>
 /// A product offered for sale. Maps to the Northwind <c>Products</c> table and is the root source
