@@ -2,6 +2,7 @@ using a2n.Vista.AspNetCore.Configuration;
 using a2n.Vista.AspNetCore.Diagnostics;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Hosting;
+using a2n.Vista.Export;
 using Microsoft.AspNetCore.Diagnostics;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.DependencyInjection.Extensions;
@@ -66,6 +67,12 @@ public static class VistaEndpointServiceCollectionExtensions
         // dormant when neither is wired up. TryAddEnumerable keeps repeat calls idempotent.
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IExceptionHandler, VistaExceptionHandler>());
+
+        // D115 — built-in export writers (CSV + XLSX). Registered via TryAddEnumerable so repeat calls
+        // do not duplicate them; a custom AddVistaExportWriter<T>() registered afterwards overrides a
+        // built-in by sharing its Format (the endpoint resolves the last writer per format).
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IViewExportWriter, CsvViewExportWriter>());
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IViewExportWriter, XlsxViewExportWriter>());
 
         configure?.Invoke(new VistaEndpointBuilder(services, options));
 

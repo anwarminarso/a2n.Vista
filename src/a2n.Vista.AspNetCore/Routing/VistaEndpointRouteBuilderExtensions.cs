@@ -8,6 +8,7 @@ using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.AspNetCore.Configuration;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Serialization;
+using a2n.Vista.Export;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using Microsoft.AspNetCore.Http;
@@ -157,6 +158,21 @@ public static class VistaEndpointRouteBuilderExtensions
                 (Delegate)((HttpContext http) => HandleAdapterAsync(http, view, captured)));
         }
 
+        // Metadata schema adapters (Decision Log D116): each registered schema adapter with a route suffix
+        // gets a GET endpoint at GET {route}/{suffix} (for example QueryBuilder → GET {route}/querybuilder).
+        foreach (var schemaAdapter in endpoints.ServiceProvider.GetServices<IViewMetadataAdapter>())
+        {
+            if (string.IsNullOrEmpty(schemaAdapter.RouteSuffix))
+            {
+                continue;
+            }
+
+            var capturedSchema = schemaAdapter;
+            endpoints.MapGet(
+                $"{route}/{capturedSchema.RouteSuffix}",
+                (Delegate)((HttpContext http) => HandleSchemaAsync(http, view, capturedSchema)));
+        }
+
         if (!view.IsReadOnly)
         {
             endpoints.MapPost($"{route}/create", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Create)));
@@ -227,6 +243,23 @@ public static class VistaEndpointRouteBuilderExtensions
     }
 
     /// <summary>
+    /// Handles <c>GET {route}/{schemaAdapter.RouteSuffix}</c>: authorize (Metadata facet), then emit the
+    /// grid-specific metadata schema verbatim (Decision Log D116).
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleSchemaAsync(HttpContext http, ViewMetadata view, IViewMetadataAdapter adapter)
+    {
+        // Authorize like the metadata facet before disclosing the schema (no implicit anonymous).
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        _ = await executor.MetadataAsync(http, view.Name).ConfigureAwait(false);
+
+        var schema = adapter.BuildSchema(view);
+        // Dictionary-based schema → keys serialize verbatim (DynData-compatible casing).
+        var json = JsonSerializer.Serialize(schema, schema.GetType(), VistaJson.Options);
+        return Results.Content(json, "application/json");
+    }
+
+    /// <summary>
     /// Handles <c>POST {route}/{adapter.RouteSuffix}</c>: build the neutral <see cref="AdapterRequest"/>
     /// from the request, run the adapter's Bind → ToQuery → (one-door List) → ToResponse pipeline, and
     /// serialize the grid-specific response (Decision Log D112). A bind failure surfaces as
@@ -252,16 +285,55 @@ public static class VistaEndpointRouteBuilderExtensions
         return Results.Content(json, "application/json");
     }
 
-    /// <summary>Handles <c>POST {route}/export</c>: read the query body, run the export (bounded by MaxExportRows).</summary>
+    /// <summary>
+    /// Handles <c>POST {route}/export</c>: read the query body, then either format a file (when a
+    /// <c>format</c> is supplied and a writer is registered, D115) or return the JSON
+    /// <see cref="ViewListResult{TRow}"/> (backward compatible when no format).
+    /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleExportAsync(HttpContext http, ViewMetadata view)
     {
         var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
         var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
-
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
-        var result = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
-        return Results.Ok(result);
+
+        if (string.IsNullOrWhiteSpace(body.Format))
+        {
+            // No format → preserve the JSON ViewListResult behavior.
+            var jsonResult = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
+            return Results.Ok(jsonResult);
+        }
+
+        var writer = ResolveExportWriter(http, body.Format)
+            ?? throw new VistaInvalidRequestException(
+                $"Export format '{body.Format}' is not supported. Register a writer via AddVistaExportWriter<T>() "
+                + "or use a built-in format (csv, xlsx).");
+
+        var (resolvedView, rows) = await executor.ExportRowsAsync(http, view.Name, request).ConfigureAwait(false);
+
+        var buffer = new MemoryStream();
+        await writer.WriteAsync(buffer, resolvedView, rows, http.RequestAborted).ConfigureAwait(false);
+        buffer.Position = 0;
+
+        return Results.File(
+            buffer.ToArray(),
+            contentType: writer.ContentType,
+            fileDownloadName: $"{resolvedView.Name}.{writer.FileExtension}");
+    }
+
+    /// <summary>Resolves the registered <see cref="IViewExportWriter"/> for <paramref name="format"/> (case-insensitive; last wins).</summary>
+    private static IViewExportWriter? ResolveExportWriter(HttpContext http, string format)
+    {
+        IViewExportWriter? match = null;
+        foreach (var writer in http.RequestServices.GetServices<IViewExportWriter>())
+        {
+            if (string.Equals(writer.Format, format, StringComparison.OrdinalIgnoreCase))
+            {
+                match = writer; // last registration wins → custom overrides built-in
+            }
+        }
+
+        return match;
     }
 
     /// <summary>

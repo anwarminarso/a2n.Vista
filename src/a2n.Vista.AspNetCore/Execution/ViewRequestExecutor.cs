@@ -155,6 +155,36 @@ public sealed class ViewRequestExecutor
     }
 
     /// <summary>
+    /// Executes the Export facet and returns the materialized rows for a format writer (Decision Log
+    /// D115): runs the one-door pipeline (auth <see cref="ViewFacet.Export"/> + scope), bounds the page to
+    /// <see cref="a2n.Vista.Metadata.HardLimits.MaxExportRows"/>, and extracts the rows from the boxed
+    /// <see cref="ViewListResult{TRow}"/> via the reflection bridge.
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered view name.</param>
+    /// <param name="request">The neutral query (filter/search/sort/scope) to export.</param>
+    /// <returns>The view metadata and the materialized rows (bounded by <c>MaxExportRows</c>).</returns>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> and reflects over ViewListResult<TRow>; use the source generator path for AOT.")]
+    public async Task<(ViewMetadata View, IReadOnlyList<object?> Rows)> ExportRowsAsync(
+        HttpContext http,
+        string viewName,
+        ViewQueryRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
+
+        var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
+        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, [view, exportRequest, scope, http.RequestAborted])!;
+        var boxed = await AwaitResultAsync(task).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
+
+        return (view, ToAdapterResult(boxed).Rows);
+    }
+
+    /// <summary>
     /// Executes the Detail facet: authorizes, shapes the server-trusted scope, then resolves a single row by key.
     /// </summary>
     /// <param name="http">The current HTTP context (carries the user, request services, and cancellation token).</param>

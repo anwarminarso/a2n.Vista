@@ -41,6 +41,13 @@ public sealed class VistaListRequestBody
     /// <summary>Requested page size (clamped to the view's hard limit by the executor).</summary>
     public int PageSize { get; set; }
 
+    /// <summary>
+    /// Optional export format id (for example <c>"csv"</c>/<c>"xlsx"</c>) used only by the Export facet
+    /// (Decision Log D115); ignored by List. When <see langword="null"/>/empty, Export returns the JSON
+    /// <c>ViewListResult</c> (backward compatible).
+    /// </summary>
+    public string? Format { get; set; }
+
     /// <summary>Maps the body to the neutral <see cref="ViewQueryRequest"/> (without the search merge).</summary>
     public ViewQueryRequest ToBaseRequest()
     {

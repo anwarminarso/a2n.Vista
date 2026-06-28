@@ -19,13 +19,14 @@
 ```
 Pillar 1  — View engine            ██████████ 100%   done
 Pillar 2  — server half (engine)   ██████████ 100%   done & hardened
-Pillar 2  — client half (adapters) ███░░░░░░░  ~30%   DataTables landed; others queued
+Pillar 2  — client half (adapters) ████░░░░░░  ~40%   DataTables + export + QB schema landed
 Pillar 3  — source generator       ░░░░░░░░░░    0%   not started (the linchpin)
 ```
 
-Rough progress toward **v1.0 (production-ready): ~40–45%**. Foundation, the full server-half query
-engine, the HTTP action surface, and the first grid adapter are done. The heavy remaining work is the
-source generator, the write path, and the ecosystem (more adapters, TS client, OpenAPI).
+Rough progress toward **v1.0 (production-ready): ~50%**. Foundation, the full server-half query engine,
+the HTTP action surface, the first grid adapter, the export pipeline, and the QueryBuilder schema emitter
+are done. The heavy remaining work is the source generator, the write path, and the ecosystem (more
+adapters, TS client, OpenAPI).
 
 ---
 
@@ -39,10 +40,11 @@ source generator, the write path, and the ecosystem (more adapters, TS client, O
 | **M4** | HTTP action surface — `POST list/detail/export` + `GET metadata`, query/key in JSON body | `http-surface-redesign` | D110 |
 | **M5** | DataTables.NET adapter + multi-channel request (`Search`/`Scope` slots) | `datatables-adapter` | D111–D114 |
 | **M6** | Close-out — startup provider guard, opt-in metadata cache, HTTP TestServer tests, doc reconciliation, language policy | — | D107 (guard) |
+| **M7** | Export pipeline — pluggable `IViewExportWriter`, built-in CSV + XLSX (zero-dependency), developer-overridable; `POST {route}/export?format=` | `export-pipeline` | D115 |
+| **M8** | Metadata schema adapters — `IViewMetadataAdapter` + jQuery-QueryBuilder `metadataQB` emitter, `GET {route}/querybuilder` | `metadata-schema-adapters` | D116 |
 
-**Verified at M6:** solution build green on net8/9/10, 99 tests passing per TFM, Northwind self-test PASS
-(incl. the DataTables round-trip proving channel separation: `recordsTotal` counts scope, `recordsFiltered`
-counts filter/search).
+**Verified at M8:** solution build green on net8/9/10, **108 tests passing per TFM**, Northwind self-test
+PASS.
 
 ---
 
@@ -52,9 +54,7 @@ counts filter/search).
 
 | # | Milestone | Depends on | Notes |
 |---|-----------|-----------|-------|
-| **M7** 🔵 | **Export pipeline** — pluggable `IViewExportWriter`; built-in **CSV** + **XLSX** (clean re-implementation of DynData's `LiteExcelWriter`, zero-dependency); developer-overridable (e.g. ClosedXML); export endpoint resolves by `format` | — | Next up (Wave 2) |
-| **M8** | **Metadata schema adapters** — `IViewMetadataAdapter` (Core) + jQuery-QueryBuilder `metadataQB` emitter in the DataTables package; per grid component | M5 | D113 (Wave 3) |
-| **M9** 🔴 | **Source Generator (Pillar 3)** — compile-time metadata + execution plan + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Biggest leverage** |
+| **M9** 🔴 | **Source Generator (Pillar 3)** — compile-time metadata + execution plan + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Biggest leverage; next up** |
 | **M10** | **Style B executable (DR5)** — class-per-view becomes executable (not metadata-only) | M9 | Falls out of M9 |
 | **M11** | **D105 — single-source PK auto-derivation** — derive `KeyFields` from `DbContext.Model` at startup | M10 | Consumer (single-source executable views) only exists here |
 | **M12** | **Write path / CRUD (DR7)** — Create/Update/Delete, mass-assignment whitelist, concurrency, bulk ops | M10 | Currently returns 501 |
@@ -71,8 +71,8 @@ counts filter/search).
 ## 4. Mapping to release stages (from `ROADMAP.md`)
 
 ### v0.x — Foundation
-- Done: **M1–M6**, first reference adapter (**M5**).
-- Remaining: **M7** (export), **M9** (source-gen prototype), **M19** (CI).
+- Done: **M1–M8**, first reference adapter (**M5**), export (**M7**), metadata schema (**M8**).
+- Remaining: **M9** (source-gen prototype), **M19** (CI).
 
 ### v1.0 — Production-ready
 - **M11–M15** (write path, masking, D105, observability, versioning), **M17** (TS client),
@@ -90,18 +90,18 @@ The Source Generator (M9) is the linchpin that makes Style B executable, the wri
 serialization all fall into place.
 
 ```
-M7 Export ──► M8 Metadata-schema ──► M9 Source Generator 🔴
-                                          │
-                      ┌───────────────────┼────────────────────┐
-                      ▼                    ▼                    ▼
-                M10 Style B          M14 Observability     M15 Versioning
-                      │              (parallel)
-          ┌───────────┼───────────┐
-          ▼           ▼           ▼
-     M11 D105   M12 Write/CRUD  M13 Masking
-                      │
-                      ▼
-        M16 adapters · M17 TS client · M18 OpenAPI · M19 CI
+M9 Source Generator 🔴
+     │
+     ┌───────────────────┼────────────────────┐
+     ▼                    ▼                    ▼
+M10 Style B          M14 Observability     M15 Versioning
+     │              (parallel)
+ ┌───────────┼───────────┐
+ ▼           ▼           ▼
+M11 D105   M12 Write/CRUD  M13 Masking
+                 │
+                 ▼
+   M16 adapters · M17 TS client · M18 OpenAPI · M19 CI
 ```
 
 How we keep it fast, integrated, and high-quality:
@@ -118,9 +118,13 @@ How we keep it fast, integrated, and high-quality:
 
 ## 6. Where we are now
 
-**M1–M6 are complete and verified.** Next up is **M7 (export-pipeline)** — design is already settled
-(pluggable `IViewExportWriter`, built-in CSV + XLSX, developer-overridable). After M7 + M8, **M9 (source
-generator)** is the major turn that unlocks roughly half of the remaining roadmap.
+**M1–M8 are complete and verified** (build green net8/9/10, 108 tests/TFM, Northwind self-test PASS).
+Pillar 1 and the full Pillar 2 server half are done; the Pillar 2 client half now has the DataTables
+adapter, the export pipeline (CSV/XLSX, pluggable), and the QueryBuilder metadata-schema emitter.
+
+Next up is **M9 (Source Generator, Pillar 3)** — the major turn that unlocks Style B executable (M10),
+the write path (M12), masking (M13), the TS client (M17), and OpenAPI (M18), and removes the
+`[RequiresUnreferencedCode]` reflection paths.
 
 **Deferred-with-reason:** **M11 (D105)** is intentionally parked until M10 — it only benefits single-source
 *executable* views, which do not exist until Style B is executable; explicit `.PrimaryKey()`/`Key(...)`

@@ -29,4 +29,22 @@ public static class VistaAdapterServiceCollectionExtensions
         services.TryAddEnumerable(ServiceDescriptor.Singleton<IViewAdapter, TAdapter>());
         return services;
     }
+
+    /// <summary>
+    /// Registers <typeparamref name="TAdapter"/> as an <see cref="IViewMetadataAdapter"/> (Decision Log
+    /// D116). Each registered metadata adapter with a non-null <see cref="IViewMetadataAdapter.RouteSuffix"/>
+    /// is exposed at <c>GET {route}/{suffix}</c> on every mapped view, emitting its grid-specific schema.
+    /// </summary>
+    /// <typeparam name="TAdapter">The metadata adapter (for example <c>QueryBuilderSchemaAdapter</c>).</typeparam>
+    /// <param name="services">The service collection.</param>
+    /// <returns>The same <see cref="IServiceCollection"/>, for chaining.</returns>
+    /// <exception cref="ArgumentNullException"><paramref name="services"/> is <see langword="null"/>.</exception>
+    public static IServiceCollection AddVistaMetadataAdapter<TAdapter>(this IServiceCollection services)
+        where TAdapter : class, IViewMetadataAdapter
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        services.TryAddEnumerable(ServiceDescriptor.Singleton<IViewMetadataAdapter, TAdapter>());
+        return services;
+    }
 }

@@ -141,6 +141,70 @@ public sealed class HttpEndpointIntegrationTests
         await Assert.That(second.StatusCode).IsEqualTo(HttpStatusCode.NotModified);
     }
 
+    [Test]
+    public async Task Export_Csv_Returns_File()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{Route}/export", JsonContent("{\"format\":\"csv\"}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Content.Headers.ContentType!.MediaType).IsEqualTo("text/csv");
+        var text = await response.Content.ReadAsStringAsync();
+        await Assert.That(text).Contains("Name");
+    }
+
+    [Test]
+    public async Task Export_Xlsx_Returns_Spreadsheet()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{Route}/export", JsonContent("{\"format\":\"xlsx\"}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.Content.Headers.ContentType!.MediaType)
+            .IsEqualTo("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
+        var bytes = await response.Content.ReadAsByteArrayAsync();
+        await Assert.That(bytes.Length).IsGreaterThan(0);
+    }
+
+    [Test]
+    public async Task Export_Unknown_Format_Is_400()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{Route}/export", JsonContent("{\"format\":\"bogus\"}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+    }
+
+    [Test]
+    public async Task Export_No_Format_Returns_Json()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{Route}/export", JsonContent("{}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        await Assert.That(doc.RootElement.TryGetProperty("totalRowsUnfiltered", out _)).IsTrue();
+    }
+
+    [Test]
+    public async Task QueryBuilder_Schema_Endpoint_Returns_Schema()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.GetAsync($"{Route}/querybuilder");
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var root = doc.RootElement;
+        await Assert.That(root.GetProperty("viewName").GetString()).IsEqualTo("Widgets");
+        await Assert.That(root.TryGetProperty("metaData", out _)).IsTrue();
+        await Assert.That(root.TryGetProperty("queryBuilderOptions", out _)).IsTrue();
+    }
+
     private static StringContent JsonContent(string json) => new(json, System.Text.Encoding.UTF8, "application/json");
 
     /// <summary>A started in-process host + its test client, owning the in-memory SQLite connection.</summary>
@@ -181,6 +245,7 @@ public sealed class HttpEndpointIntegrationTests
                             }
                         });
                         services.AddVistaAdapter<DataTablesAdapter>();
+                        services.AddVistaMetadataAdapter<QueryBuilderSchemaAdapter>();
                     })
                     .Configure(app =>
                     {

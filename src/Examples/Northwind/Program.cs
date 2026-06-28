@@ -48,6 +48,10 @@ builder.Services.AddVistaEndpoints(v => v.AllowAnonymousAccess());
 // POST {route}/datatable for DataTables server-side requests.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdapter>();
 
+// Register the jQuery-QueryBuilder metadata-schema emitter (Decision Log D116). Each view then also
+// exposes GET {route}/querybuilder returning the metadataQB schema.
+builder.Services.AddVistaMetadataAdapter<a2n.Vista.Adapters.DataTablesNet.QueryBuilderSchemaAdapter>();
+
 var app = builder.Build();
 
 // No seeding: the extracted Northwind database is the source of truth (read-only sample).

@@ -167,9 +167,30 @@ DataTables round-trip:
   `MapSingleView` maps `POST {route}/{RouteSuffix}` per registered adapter, `AdapterBindException` → 400
   `adapter-bind-failed`. AspNetCore stays EF-free and references the adapter only through the Core port.
 
-**Deferred within this spec (tracked):** D113 QueryBuilder schema emitter (`metadataQB`) — to be built
-per grid component (planned `metadata-schema-adapters` spec); the `docs/spec/04`/`05` prose has been
-**reconciled (2026-06-27)**. (The full HTTP TestServer integration test landed — see §2.5.)
+**Deferred within this spec (tracked):** D113 QueryBuilder schema emitter (`metadataQB`) — **DONE** in
+`metadata-schema-adapters` (§2.9). (The full HTTP TestServer integration test landed — see §2.5.)
+
+### 2.8 `export-pipeline` (landed; spec `.kiro/specs/export-pipeline`)
+Pluggable export pipeline (**D115**). Build green net8/9/10, suite + Northwind selftest PASS:
+- Core `IViewExportWriter` port (`Format`/`ContentType`/`FileExtension`/`WriteAsync`) + `ExportColumns`
+  helper (non-hidden fields, read value by name, RUC).
+- Built-in **`CsvViewExportWriter`** (RFC 4180, UTF-8 BOM, CRLF) and **`XlsxViewExportWriter`** (minimal
+  valid OpenXML via `ZipArchive`, BCL-only — a clean re-impl of DynData's `LiteExcelWriter`). Both in
+  `a2n.Vista.Core/Export/`.
+- `AddVistaExportWriter<T>()` (last-per-format wins → custom overrides built-in); built-ins registered by
+  `AddVistaEndpoints`. `POST {route}/export` resolves the writer by the body `format` and streams a file
+  (`Content-Disposition`); no `format` → the JSON `ViewListResult` (backward compatible); unknown format
+  → 400. `ViewRequestExecutor.ExportRowsAsync` returns the bounded rows + metadata.
+
+### 2.9 `metadata-schema-adapters` (landed; spec `.kiro/specs/metadata-schema-adapters`)
+Per-grid metadata schema (**D116**, closes D113). Build green net8/9/10, suite + Northwind selftest PASS:
+- Core `IViewMetadataAdapter` (host-facing, type-erased: `Id`/`RouteSuffix`/`BuildSchema(ViewMetadata)`).
+- `QueryBuilderSchemaAdapter` (DataTables package) emits the DynData-compatible `metadataQB`
+  (`{ viewName, metaData[], queryBuilderOptions: { filters[] } }`; filters only for `IsFilterable` fields,
+  a `Hidden` field only when `Scopable` per D65; operators from `AllowedOperators`). Built as nested
+  dictionaries so key casing is verbatim.
+- `AddVistaMetadataAdapter<T>()`; host maps `GET {route}/{RouteSuffix}` (QueryBuilder → `/querybuilder`)
+  per adapter, authorized as the Metadata facet.
 
 ---
 
@@ -308,8 +329,10 @@ These record where the code intentionally differs from the early spec sketches. 
 | DR1–DR10 | `01-view.md` §13.1 | Pillar 1 code reconciliation. |
 | D104–D109 | `query-engine-hardening` spec / `02` §16 + `01` §5.4 | Engine hardening (key model, PK derivation, deterministic paging, `IQueryDialect` port, DoS guards, composite key). **D107 supersedes the old §6.3 P2 doc-only recommendation.** |
 | D110 | `http-surface-redesign` spec / `05` | Action-style POST endpoints + `GET .../metadata`; **supersedes DR3**. |
-| D111–D114 | `datatables-adapter` spec / `04` (+ `02` §7 for D111) | D111 multi-channel request (Search/Scope slots; closes DR9 per-channel enforcement); D112 adapter endpoint (`POST {route}/{suffix}`); D113 QueryBuilder schema emitter deferred; D114 `jsonQB` parser in the DataTablesNet package. |
-| **D115+** | **next free** | Use for new decisions. |
+| D111–D114 | `datatables-adapter` spec / `04` (+ `02` §7 for D111) | D111 multi-channel request (Search/Scope slots; closes DR9 per-channel enforcement); D112 adapter endpoint (`POST {route}/{suffix}`); D113 QueryBuilder schema emitter (**done in D116**); D114 `jsonQB` parser in the DataTablesNet package. |
+| D115 | `export-pipeline` spec / `01` §11 | Pluggable export pipeline: `IViewExportWriter` + built-in CSV/XLSX; `AddVistaExportWriter<T>()` override; format-by-request, JSON-compatible when omitted. |
+| D116 | `metadata-schema-adapters` spec / `04` §5.2/§8.2 | Per-grid metadata schema: `IViewMetadataAdapter` + QueryBuilder `metadataQB` emitter; `GET {route}/{RouteSuffix}`. Supersedes the D113 deferral. |
+| **D117+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -359,9 +382,9 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 - **Source generator (Pillar 3)** — removes the reflection (`[RequiresUnreferencedCode]`) paths; the
   AOT-clean route. Also: cross-assembly discovery (D97), `MapView<TView>()` (DR10).
 - **Observability (D100) & versioning (D99)** — designed, not built.
-- **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET landed** (`a2n.Vista.Adapters.DataTablesNet`,
-  §2.7); remaining reference adapters (AG Grid, MudBlazor, OData, …) and the QueryBuilder schema emitter
-  (D113) are follow-ups.
+- **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
+  metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
+  are follow-ups.
 - **Legacy Kiro specs in Indonesian** — **no migration needed** (`.kiro/` is git-ignored; English not
   required for unpublished tooling — see Language policy in §4).
 - **`RouteRoot` global default override** — model R uses a fixed default `/api/views` for ungrouped
@@ -371,8 +394,8 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
   milestone** (no consumer until single-source executable views exist); explicit keys + fail-fast safe meanwhile.
 - **D107 startup provider guard** — **DONE (2026-06-27)**: `VistaDialectStartupValidator` warns/throws
   on a dialect vs `Database.ProviderName` mismatch.
-- **Export pipeline** — pluggable `IViewExportWriter` (built-in CSV + XLSX, port of DynData's
-  `LiteExcelWriter`, developer-overridable) — planned `export-pipeline` spec.
+- **Export pipeline** — **DONE (2026-06-27, D115)**: pluggable `IViewExportWriter` (built-in CSV + XLSX,
+  BCL-only; developer-overridable via `AddVistaExportWriter<T>()`); `POST {route}/export` format-by-request.
 - **HTTP TestServer integration test** — **DONE (2026-06-27)**: `HttpEndpointIntegrationTests`
   (list/metadata/datatable/page-size-400/metadata-cache over an in-process `TestServer`).
 - **Metadata cache headers** — **DONE (2026-06-27)**: opt-in `EnableMetadataCaching()` (ETag/Cache-Control/304).
@@ -420,10 +443,12 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
 - Npgsql dialect: `src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/` (`NpgsqlQueryDialect.cs`,
   `VistaNpgsqlServiceCollectionExtensions.cs` → `AddVistaNpgsql()`).
 - Adapter contract (Core): `src/a2n.Vista.Core/Adapters/` (`IViewAdapter.cs` + `ViewAdapter<,>`,
-  `AdapterRequest.cs`, `AdapterListResult.cs`, `AdapterBindException.cs`).
+  `AdapterRequest.cs`, `AdapterListResult.cs`, `AdapterBindException.cs`, `IViewMetadataAdapter.cs`).
+- Export (Core): `src/a2n.Vista.Core/Export/` (`IViewExportWriter.cs`, `ExportColumns.cs`,
+  `CsvViewExportWriter.cs`, `XlsxViewExportWriter.cs`).
 - DataTables adapter: `src/Adapters/a2n.Vista.Adapters.DataTablesNet/` (`DataTablesModels.cs`,
   `DataTablesAdapter.cs`, `QueryBuilderParser.cs`, `ExternalFilterParser.cs`, `QueryBuilderModels.cs`
-  incl. `DataTablesJsonContext`).
+  incl. `DataTablesJsonContext`, `QueryBuilderSchemaAdapter.cs`).
 - AspNetCore: `src/a2n.Vista.AspNetCore/` (`Routing/VistaEndpointRouteBuilderExtensions.cs` — action-style
   mapper; `Serialization/FilterNodeJsonConverter.cs`, `VistaJson.cs`, `VistaKeyReader.cs`;
   `Execution/VistaRequestEnvelopes.cs`, `VistaMetadataResponse.cs`, `VistaSearchMerge.cs`,
@@ -431,7 +456,9 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `ViewFacet.cs`; `Configuration/VistaEndpoint*`, `Hosting/VistaStartupValidator.cs`,
   `Diagnostics/VistaProblemResults.cs`); adapter glue (`Execution/AdapterRequestFactory.cs`,
   `Execution/ViewRequestExecutor.cs` → `ListForAdapterAsync`,
-  `DependencyInjection/VistaAdapterServiceCollectionExtensions.cs` → `AddVistaAdapter<T>()`).
+  `DependencyInjection/VistaAdapterServiceCollectionExtensions.cs` → `AddVistaAdapter<T>()` +
+  `AddVistaMetadataAdapter<T>()`; `DependencyInjection/VistaExportServiceCollectionExtensions.cs` →
+  `AddVistaExportWriter<T>()`; `ViewRequestExecutor.ExportRowsAsync`).
 - Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
   `vOrderDetail`, `SelfTest.cs`).
 - Tests: `src/Tests/a2n.Vista.Tests/` (`AuthorizationTests`, `MaskingTests`, `RouteGroupTests`,
