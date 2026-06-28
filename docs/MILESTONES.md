@@ -1,7 +1,7 @@
 # a2n.Vista — Milestones & Roadmap Tracker
 
 > Status: **LIVING DOCUMENT** — update as milestones land.
-> Last updated: 2026-06-27
+> Last updated: 2026-06-28
 > Purpose: an **at-a-glance** map of every milestone from foundation to release, what is done, what
 > remains, the dependencies between them, and where we are right now. This is the readable companion to
 > the two deeper docs:
@@ -20,13 +20,14 @@
 Pillar 1  — View engine            ██████████ 100%   done
 Pillar 2  — server half (engine)   ██████████ 100%   done & hardened
 Pillar 2  — client half (adapters) ████░░░░░░  ~40%   DataTables + export + QB schema landed
-Pillar 3  — source generator       ░░░░░░░░░░    0%   not started (the linchpin)
+Pillar 3  — source generator       ██░░░░░░░░  ~15%   Phase 1 landed (shape-driven export accessors)
 ```
 
-Rough progress toward **v1.0 (production-ready): ~50%**. Foundation, the full server-half query engine,
-the HTTP action surface, the first grid adapter, the export pipeline, and the QueryBuilder schema emitter
-are done. The heavy remaining work is the source generator, the write path, and the ecosystem (more
-adapters, TS client, OpenAPI).
+Rough progress toward **v1.0 (production-ready): ~52%**. Foundation, the full server-half query engine,
+the HTTP action surface, the first grid adapter, the export pipeline, the QueryBuilder schema emitter, and
+**source-generator Phase 1** (incremental pipeline + shape-driven export accessors, AOT-clean) are done.
+The heavy remaining work is the rest of the source generator (executable plans, JSON contexts), the write
+path, and the ecosystem (more adapters, TS client, OpenAPI).
 
 ---
 
@@ -50,11 +51,11 @@ PASS.
 
 ## 3. Milestones — REMAINING (to release)
 
-🔴 = critical path (the linchpin and what it unblocks). 🔵 = ready to start now.
+🔴 = critical path (the linchpin and what it unblocks). 🟡 = in progress. 🔵 = ready to start now.
 
 | # | Milestone | Depends on | Notes |
 |---|-----------|-----------|-------|
-| **M9** 🔴 | **Source Generator (Pillar 3)** — compile-time metadata + execution plan + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Biggest leverage; next up** |
+| **M9** 🔴🟡 | **Source Generator (Pillar 3)** — compile-time accessors/metadata + execution plan + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Phase 1 landed** (`source-generator` spec, D117): incremental generator + shape-driven export accessors for typed Style B views, registered via `[ModuleInitializer]` into a Core `ViewAccessorRegistry`; export pipeline prefers them over reflection (coexistence); `VISTA0001`/`VISTA0002` diagnostics; snapshot + AOT test harness. **Remaining phases:** executable plans/`CompiledView`, member-access for filter/sort, `JsonSerializerContext`, OpenAPI, projection/`MapWritable` DSL analysis, Style A. |
 | **M10** | **Style B executable (DR5)** — class-per-view becomes executable (not metadata-only) | M9 | Falls out of M9 |
 | **M11** | **D105 — single-source PK auto-derivation** — derive `KeyFields` from `DbContext.Model` at startup | M10 | Consumer (single-source executable views) only exists here |
 | **M12** | **Write path / CRUD (DR7)** — Create/Update/Delete, mass-assignment whitelist, concurrency, bulk ops | M10 | Currently returns 501 |
@@ -71,8 +72,9 @@ PASS.
 ## 4. Mapping to release stages (from `ROADMAP.md`)
 
 ### v0.x — Foundation
-- Done: **M1–M8**, first reference adapter (**M5**), export (**M7**), metadata schema (**M8**).
-- Remaining: **M9** (source-gen prototype), **M19** (CI).
+- Done: **M1–M8**, first reference adapter (**M5**), export (**M7**), metadata schema (**M8**), and
+  **M9 source-generator Phase 1** (incremental pipeline + shape-driven export accessors).
+- Remaining: the **rest of M9** (executable plans, JSON contexts, the later phases), **M19** (CI).
 
 ### v1.0 — Production-ready
 - **M11–M15** (write path, masking, D105, observability, versioning), **M17** (TS client),
@@ -118,13 +120,19 @@ How we keep it fast, integrated, and high-quality:
 
 ## 6. Where we are now
 
-**M1–M8 are complete and verified** (build green net8/9/10, 108 tests/TFM, Northwind self-test PASS).
-Pillar 1 and the full Pillar 2 server half are done; the Pillar 2 client half now has the DataTables
-adapter, the export pipeline (CSV/XLSX, pluggable), and the QueryBuilder metadata-schema emitter.
+**M1–M8 are complete and verified** (build green net8/9/10, Northwind self-test PASS). Pillar 1 and the
+full Pillar 2 server half are done; the Pillar 2 client half now has the DataTables adapter, the export
+pipeline (CSV/XLSX, pluggable), and the QueryBuilder metadata-schema emitter.
 
-Next up is **M9 (Source Generator, Pillar 3)** — the major turn that unlocks Style B executable (M10),
-the write path (M12), masking (M13), the TS client (M17), and OpenAPI (M18), and removes the
-`[RequiresUnreferencedCode]` reflection paths.
+**M9 (Source Generator, Pillar 3) — Phase 1 has landed** (`source-generator` spec, D117): an incremental
+generator emits shape-driven field accessors for typed Style B views, registered via a `[ModuleInitializer]`
+into a Core `ViewAccessorRegistry` that the export pipeline prefers over reflection (coexistence — nothing
+broke). Verified build green net8/9/10, **122 tests/TFM** in `a2n.Vista.Tests` + **4 tests/TFM** in the new
+`a2n.Vista.SourceGenerators.Tests`, Northwind self-test (net8.0) PASS, and an AOT-probe build proving the
+generated-accessor export path is trim/AOT-clean. This is the major turn that unlocks the rest of Pillar 3
+and, in later phases, Style B executable (M10), the write path (M12), masking (M13), the TS client (M17),
+and OpenAPI (M18). **Remaining M9 phases:** executable plans/`CompiledView`, member-access for filter/sort,
+`JsonSerializerContext`, OpenAPI, projection/`MapWritable` DSL analysis, and Style A coverage.
 
 **Deferred-with-reason:** **M11 (D105)** is intentionally parked until M10 — it only benefits single-source
 *executable* views, which do not exist until Style B is executable; explicit `.PrimaryKey()`/`Key(...)`

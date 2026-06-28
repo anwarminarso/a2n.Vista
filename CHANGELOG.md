@@ -9,6 +9,18 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **SourceGenerators** — Pillar 3, Phase 1 (Decision Log D117): an incremental
+  generator (`ViewAccessorGenerator`) that recognizes typed Style B views by
+  fully-qualified name and emits shape-driven field accessors plus a
+  `[ModuleInitializer]` that registers them into a Core `ViewAccessorRegistry`.
+  The export pipeline prefers generated accessors and falls back to reflection
+  (coexistence), removing the `[RequiresUnreferencedCode]` value-read on the
+  export path for covered views. Diagnostics `VISTA0001` (non-partial Style B
+  view) and `VISTA0002` (Style B view without a public parameterless
+  constructor); help docs under `docs/diagnostics/`.
+- **Core** — `ViewAccessorRegistry` (static, thread-safe accessor store) and an
+  AOT-clean `ExportColumns.Value(viewName, row, fieldName)` overload consumed by
+  the CSV/XLSX export writers.
 - **Core** — View authoring (`View`/`ViewBuilder`/`ViewTemplate`), `ViewMetadata`,
   the filter contract, and the `IViewExecutor`/`IViewScope` ports.
 - **EntityFrameworkCore** — View execution over EF Core (List + Detail-by-key,

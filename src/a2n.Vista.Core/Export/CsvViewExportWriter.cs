@@ -1,5 +1,4 @@
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.Text;
@@ -26,7 +25,6 @@ public sealed class CsvViewExportWriter : IViewExportWriter
     public string FileExtension => "csv";
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("Reads projected row values by reflection (Style A); use the source generator path for AOT.")]
     public async Task WriteAsync(
         Stream destination,
         ViewMetadata view,
@@ -50,7 +48,7 @@ public sealed class CsvViewExportWriter : IViewExportWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             line.Clear();
-            AppendRecord(line, columns.Count, i => Format1(ExportColumns.Value(row, columns[i].Name)));
+            AppendRecord(line, columns.Count, i => Format1(ExportColumns.Value(view.Name, row, columns[i].Name)));
             await writer.WriteAsync(line.ToString().AsMemory(), cancellationToken).ConfigureAwait(false);
         }
 

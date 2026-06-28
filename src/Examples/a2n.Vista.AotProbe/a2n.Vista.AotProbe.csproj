@@ -1,0 +1,43 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    AOT verification probe for the source-generator Phase 1 export path (Spec source-generator,
+    Task 5.2, R6.3, Property 1). This is a BUILD-TIME analyzer check, not a runtime sample: the
+    project exercises ExportColumns.Value(viewName, row, field) and CsvViewExportWriter.WriteAsync —
+    the exact "generated-accessor" covered export path — and turns any trim/AOT warning into a build
+    error. A green build proves the covered path is free of IL2026 (RequiresUnreferencedCode) and
+    IL3050 (RequiresDynamicCode) warnings.
+
+    No native toolchain is required: <IsAotCompatible>true</IsAotCompatible> enables BOTH the trim
+    analyzer and the AOT analyzer, which surface IL2026/IL3050 during `dotnet build`.
+  -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <!-- Override the repo-wide multi-targeting: net8.0 only (lowest TFM, matches the Northwind constraint). -->
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks />
+    <RootNamespace>a2n.Vista.AotProbe</RootNamespace>
+    <AssemblyName>a2n.Vista.AotProbe</AssemblyName>
+    <IsPackable>false</IsPackable>
+
+    <!-- Enables EnableTrimAnalyzer + EnableAotAnalyzer (and EnableSingleFileAnalyzer) at build time. -->
+    <IsAotCompatible>true</IsAotCompatible>
+
+    <!--
+      Any trim/AOT warning on the covered path must FAIL the build. Scope warnings-as-errors to the
+      trim/AOT diagnostic codes (rather than TreatWarningsAsErrors=true) so unrelated style/nullable
+      warnings do not mask the signal we actually care about.
+        IL2026 = call to a [RequiresUnreferencedCode] member
+        IL3050 = call to a [RequiresDynamicCode] member
+        IL2091/IL2087/IL2072/IL2075/IL2070 = generic/dataflow trim warnings
+        IL3000/IL3001/IL3002/IL3003 = single-file / AOT warnings
+    -->
+    <WarningsAsErrors>$(WarningsAsErrors);IL2026;IL3050;IL2091;IL2087;IL2072;IL2075;IL2070;IL3000;IL3001;IL3002;IL3003</WarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The covered export path lives in Core: ExportColumns + ViewAccessorRegistry + CsvViewExportWriter. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>

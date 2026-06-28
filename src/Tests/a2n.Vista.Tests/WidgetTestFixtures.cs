@@ -142,8 +142,22 @@ internal sealed class WidgetTestHarness : IDisposable
     /// limit is configurable so the clamp test (R10.3) can drive it directly.
     /// </summary>
     /// <param name="maxPageSize">The view's <see cref="HardLimits.MaxPageSize"/>.</param>
-    public static ViewMetadata BuildView(int maxPageSize = HardLimits.DefaultMaxPageSize)
+    public static ViewMetadata BuildView(int maxPageSize = HardLimits.DefaultMaxPageSize) =>
+        BuildView("Widgets", maxPageSize);
+
+    /// <summary>
+    /// Builds read-only <see cref="ViewMetadata"/> over <see cref="WidgetRow"/> with a caller-supplied
+    /// <paramref name="name"/>. The field set, labels and projection order are identical regardless of the
+    /// name, so two metadata built this way differ only by their <see cref="ViewMetadata.Name"/> (and the
+    /// derived route) — which the export-parity test (R6.2) uses to isolate the value-read path: a
+    /// registered generated accessor for one name vs the reflection fallback for the other.
+    /// </summary>
+    /// <param name="name">The view's globally-unique <see cref="ViewMetadata.Name"/>.</param>
+    /// <param name="maxPageSize">The view's <see cref="HardLimits.MaxPageSize"/>.</param>
+    public static ViewMetadata BuildView(string name, int maxPageSize = HardLimits.DefaultMaxPageSize)
     {
+        ArgumentNullException.ThrowIfNull(name);
+
         var fields = new[]
         {
             FieldMetadata.Create(
@@ -176,8 +190,8 @@ internal sealed class WidgetTestHarness : IDisposable
         };
 
         return new ViewMetadata(
-            Name: "Widgets",
-            Route: "/test/Widgets",
+            Name: name,
+            Route: $"/test/{name}",
             QueryType: typeof(WidgetRow),
             CrudType: null,
             CrudEntityType: null,

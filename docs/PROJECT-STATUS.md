@@ -1,8 +1,8 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-06-27 (query-engine close-out: D107 startup provider guard landed; DataTables.NET
-> adapter + multi-channel request (D111–D114) landed)
+> Last updated: 2026-06-28 (M9 Source Generator Phase 1 landed: D117 — incremental generator +
+> shape-driven export accessors for typed Style B views, coexisting with the reflection path)
 > Purpose: a single, authoritative snapshot of *where the project is*, *what was decided*, and *what
 > is next*, so a new chat/work session can continue without re-litigating settled decisions ("no
 > dispute"). When this document and the code disagree, **the code is the source of truth**; reconcile
@@ -40,8 +40,10 @@ Three pillars (see `ROADMAP.md`):
   HTTP surface is now action-style POST + `GET metadata` — see §2.5; multi-channel Search/Scope request —
   see §2.7; client half = grid adapters, **DataTables.NET reference adapter built** — see §2.7; other
   grid adapters not built).
-- **Pillar 3 — Source generator** (AOT-clean codegen). **Not built**; Pillar 1 uses a reflection path
-  marked `[RequiresUnreferencedCode]`.
+- **Pillar 3 — Source generator** (AOT-clean codegen). **Phase 1 landed (M9, D117):** an incremental
+  generator emits shape-driven field accessors for typed Style B views, registered into a Core store the
+  export pipeline prefers over reflection (coexistence) — see §2.10. The remaining reflection paths
+  (Style A serialization, write mapping) stay `[RequiresUnreferencedCode]` until later phases.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -192,6 +194,41 @@ Per-grid metadata schema (**D116**, closes D113). Build green net8/9/10, suite +
 - `AddVistaMetadataAdapter<T>()`; host maps `GET {route}/{RouteSuffix}` (QueryBuilder → `/querybuilder`)
   per adapter, authorized as the Metadata facet.
 
+### 2.10 `source-generator` — M9 Source Generator, Phase 1 (landed; spec `.kiro/specs/source-generator`)
+Pillar 3 stood up (**D117**, phased scope). Build green net8/9/10, **122 tests/TFM** in
+`a2n.Vista.Tests` + **4 tests/TFM** in the new `a2n.Vista.SourceGenerators.Tests`, Northwind self-test
+(net8.0) PASS — the generator coexists with the existing reflection registration (nothing broke).
+
+- **Core accessor store + export seam** (`a2n.Vista.Core`): new static
+  `a2n.Vista.Metadata.ViewAccessorRegistry` — a process-wide, thread-safe, idempotent (first-wins) store
+  `viewName → { fieldName → Func<object,object?> }` (`Register` / `TryGetAccessor`). New AOT-clean
+  `ExportColumns.Value(string viewName, object? row, string fieldName)` overload that prefers a registered
+  generated accessor and falls back to the reflection read (`[RequiresUnreferencedCode]` isolated on the
+  reflection branch). `CsvViewExportWriter`/`XlsxViewExportWriter` now thread `view.Name` through that
+  overload, so the writers' value path is no longer RUC — **no `IViewExportWriter` contract change** (R3, R4).
+- **Incremental generator** (`a2n.Vista.SourceGenerators`, `netstandard2.0`, references no Vista project,
+  FQN recognition): `ViewAccessorGenerator` (`IIncrementalGenerator`) — fast syntax predicate + semantic
+  transform recognizing typed Style B views (`a2n.Vista.Authoring.View<TQuery>` / `View<TQuery,TCrud>`);
+  an equatable value model (`ViewModel` + `EquatableArray<T>` + a `LocationInfo` surrogate) for incremental
+  caching (an unrelated edit does not regenerate every view). Emits, per view, a `file static` accessor
+  map (cast + property read per public readable `TQuery` property) plus a `[ModuleInitializer]` that
+  registers it into `ViewAccessorRegistry` keyed by the view's runtime `Name` (R1, R2, R3).
+- **Diagnostics:** `VISTA0001` (error) — non-partial Style B view → skipped; `VISTA0002` (info) — Style B
+  view lacking a public parameterless ctor → skipped (the module initializer cannot instantiate it to read
+  its `Name`). Both carry the `a2n.Vista.SourceGenerators` category + a help link; analyzer release tracking
+  files added (R5).
+- **Tests / samples:** `src/Tests/a2n.Vista.SourceGenerators.Tests` (snapshot/golden via
+  `CSharpGeneratorDriver`: single-key view, CRUD view, non-partial → VISTA0001, plus an incremental
+  cache-reuse assertion); an export **parity** test in `a2n.Vista.Tests` (generated accessor vs reflection
+  → identical CSV/XLSX); `src/Examples/a2n.Vista.AotProbe` (net8, `IsAotCompatible`, IL2026/IL3050-as-errors
+  build proving the generated-accessor export path is trim/AOT-clean); `src/Examples/a2n.Vista.GeneratorSample`
+  (a real consumer assembly exercising the generator end to end, referenced by `GeneratorEndToEndTests`)
+  (R6).
+
+**Deferred to later phases (NOT done in Phase 1):** executable Style B (`IViewExecutionPlan`/`CompiledView`),
+member-access expressions for filter/sort, `JsonSerializerContext` generation, OpenAPI, projection/
+`MapWritable` DSL body analysis, and Style A (anonymous) accessor/serialization generation.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -202,7 +239,9 @@ Under `docs/spec/` (all **English** after the 2026-06-20 migration; see §4 lang
 - `02-filter-and-query.md` — query engine (Pillar 2 server half). Status: IMPLEMENTED & **hardened**
   (D104–D109 via `query-engine-hardening`); **prose lags the code** for §10 (dialect port) — the code is
   authoritative (see §2.4/§6).
-- `03-source-generator.md` — Pillar 3. Status: **DESIGN INTENT (frozen; not a contract until built)**.
+- `03-source-generator.md` — Pillar 3. Status: **DESIGN INTENT (frozen; D71–D81)** — remains the
+  authoritative intent; **Phase 1 of it has landed** (M9/D117, shape-driven export accessors — see §2.10),
+  the rest is still forward-looking.
 - `04-adapter-contract.md` — Pillar 2 adapters. Status: **DESIGN INTENT (frozen)**.
 - `05-aspnetcore-mapping.md` — HTTP composition. Status: IMPLEMENTED as the **action-style surface**
   (D110 via `http-surface-redesign`, supersedes DR3); **prose lags the code** — the code + §2.5 are
@@ -332,7 +371,8 @@ These record where the code intentionally differs from the early spec sketches. 
 | D111–D114 | `datatables-adapter` spec / `04` (+ `02` §7 for D111) | D111 multi-channel request (Search/Scope slots; closes DR9 per-channel enforcement); D112 adapter endpoint (`POST {route}/{suffix}`); D113 QueryBuilder schema emitter (**done in D116**); D114 `jsonQB` parser in the DataTablesNet package. |
 | D115 | `export-pipeline` spec / `01` §11 | Pluggable export pipeline: `IViewExportWriter` + built-in CSV/XLSX; `AddVistaExportWriter<T>()` override; format-by-request, JSON-compatible when omitted. |
 | D116 | `metadata-schema-adapters` spec / `04` §5.2/§8.2 | Per-grid metadata schema: `IViewMetadataAdapter` + QueryBuilder `metadataQB` emitter; `GET {route}/{RouteSuffix}`. Supersedes the D113 deferral. |
-| **D117+** | **next free** | Use for new decisions. |
+| D117 | `source-generator` spec / `03` §15 | **Landed (M9, Phase 1).** Phased source generator: `IIncrementalGenerator` (`netstandard2.0`, FQN recognition, no Vista project ref) recognizing typed Style B views; shape-driven read-accessor generation; `[ModuleInitializer]` registration into a Core `ViewAccessorRegistry`; export pipeline prefers generated accessors with reflection fallback (coexistence); `VISTA0001`/`VISTA0002` diagnostics; snapshot + AOT test harness. **Deferred to later phases:** executable plans/`CompiledView`, member-access for filter/sort, `JsonSerializerContext`, OpenAPI, projection/`MapWritable` DSL analysis, Style A. Builds on Spec 03 D71–D81. See §2.10. |
+| **D118+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -379,8 +419,11 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
   source/projection to EF, or a source-generated `IViewExecutionPlan`.
 - **Masking runtime** — apply `MaskField` transforms on materialization (see §6).
 - **Per-channel enforcement** — bind to Spec 04 adapters.
-- **Source generator (Pillar 3)** — removes the reflection (`[RequiresUnreferencedCode]`) paths; the
-  AOT-clean route. Also: cross-assembly discovery (D97), `MapView<TView>()` (DR10).
+- **Source generator (Pillar 3)** — **Phase 1 landed (M9/D117, 2026-06-28, §2.10):** shape-driven export
+  accessors for typed Style B views remove the export-path reflection (`[RequiresUnreferencedCode]`),
+  registered via `[ModuleInitializer]` into `ViewAccessorRegistry` (coexists with the reflection
+  fallback). Remaining phases: executable plans, member-access, `JsonSerializerContext`, OpenAPI, Style A,
+  plus cross-assembly discovery (D97) and `MapView<TView>()` (DR10).
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
@@ -431,7 +474,9 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
 
 - Contracts: `src/a2n.Vista.Core/Contracts/` (`ViewQueryRequest`, `FilterNode`, `FilterOperator`,
   `FilterOrigin`, `SortSpec`).
-- Metadata: `src/a2n.Vista.Core/Metadata/` (`ViewMetadata`, `FieldMetadata`, `HardLimits`).
+- Metadata: `src/a2n.Vista.Core/Metadata/` (`ViewMetadata`, `FieldMetadata`, `HardLimits`,
+  `ViewAccessorRegistry` — static process-wide store `viewName → { field → Func<object,object?> }` the
+  generated module initializers populate; M9/D117).
 - Authoring: `src/a2n.Vista.Core/Authoring/` (`View<>`, `ViewTemplate<>`, `IViewBuilder*`,
   `IFieldBuilder`/`FieldBuilder`/`IFieldBuilderState`, `ViewBuilder`).
 - Filter engine: `src/a2n.Vista.Core/Filter/FilterCompiler.cs`; dialect port `Filter/IQueryDialect.cs`.
@@ -444,8 +489,15 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `VistaNpgsqlServiceCollectionExtensions.cs` → `AddVistaNpgsql()`).
 - Adapter contract (Core): `src/a2n.Vista.Core/Adapters/` (`IViewAdapter.cs` + `ViewAdapter<,>`,
   `AdapterRequest.cs`, `AdapterListResult.cs`, `AdapterBindException.cs`, `IViewMetadataAdapter.cs`).
-- Export (Core): `src/a2n.Vista.Core/Export/` (`IViewExportWriter.cs`, `ExportColumns.cs`,
-  `CsvViewExportWriter.cs`, `XlsxViewExportWriter.cs`).
+- Export (Core): `src/a2n.Vista.Core/Export/` (`IViewExportWriter.cs`, `ExportColumns.cs` — incl. the
+  AOT-clean `Value(viewName, row, fieldName)` overload that prefers `ViewAccessorRegistry` and falls back
+  to the RUC reflection read; M9/D117), `CsvViewExportWriter.cs`, `XlsxViewExportWriter.cs` (both thread
+  `view.Name` through the new overload).
+- Source generator: `src/a2n.Vista.SourceGenerators/` (`netstandard2.0`, no Vista project ref):
+  `ViewAccessorGenerator.cs` (the `IIncrementalGenerator` — predicate/transform, equatable `ViewModel` +
+  `EquatableArray<T>`, accessor-map + `[ModuleInitializer]` emission), `DiagnosticDescriptors.cs`
+  (`VISTA0001` error, `VISTA0002` info), `LocationInfo.cs`, `TrackingNames.cs`, `AssemblyMarker.cs`,
+  `AnalyzerReleases.{Shipped,Unshipped}.md`.
 - DataTables adapter: `src/Adapters/a2n.Vista.Adapters.DataTablesNet/` (`DataTablesModels.cs`,
   `DataTablesAdapter.cs`, `QueryBuilderParser.cs`, `ExternalFilterParser.cs`, `QueryBuilderModels.cs`
   incl. `DataTablesJsonContext`, `QueryBuilderSchemaAdapter.cs`).
@@ -460,7 +512,13 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `AddVistaMetadataAdapter<T>()`; `DependencyInjection/VistaExportServiceCollectionExtensions.cs` →
   `AddVistaExportWriter<T>()`; `ViewRequestExecutor.ExportRowsAsync`).
 - Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
-  `vOrderDetail`, `SelfTest.cs`).
+  `vOrderDetail`, `SelfTest.cs`); `src/Examples/a2n.Vista.GeneratorSample/` (a real consumer assembly that
+  exercises the generator end to end; referenced by the test project) and `src/Examples/a2n.Vista.AotProbe/`
+  (net8, `IsAotCompatible`, IL2026/IL3050-as-errors build proving the generated-accessor export path is
+  trim/AOT-clean) — M9/D117.
 - Tests: `src/Tests/a2n.Vista.Tests/` (`AuthorizationTests`, `MaskingTests`, `RouteGroupTests`,
   `WireVersionTests`, `EnforcementTests`, `DefaultAllowTests`, `PagingTests`, `TypingInvariantTests`,
-  `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`, `DialectStartupGuardTests`).
+  `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`, `DialectStartupGuardTests`,
+  `ViewAccessorRegistryTests`, `ExportParityTests`, `GeneratorEndToEndTests`); generator snapshot/golden
+  tests in `src/Tests/a2n.Vista.SourceGenerators.Tests/` (`ViewAccessorGeneratorTests`,
+  `GeneratorTestHarness`).

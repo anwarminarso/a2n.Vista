@@ -41,6 +41,12 @@
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
+    <!--
+      End-to-end generator consumer (Spec source-generator, Task 6.1, R6.4): referencing this sample
+      loads its [ModuleInitializer]-driven accessor registration so GeneratorEndToEndTests can assert
+      the GENERATED accessors are present in ViewAccessorRegistry at runtime.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorSample\a2n.Vista.GeneratorSample.csproj" />
   </ItemGroup>
 
 </Project>

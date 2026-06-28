@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Generator-test project for a2n.Vista.SourceGenerators (Phase 1, M9, D117; requirement R6.1).
+    TUnit on Microsoft.Testing.Platform (Decision Log D7): the project compiles to an executable and
+    runs via `dotnet run` for a given target framework (not `dotnet test`).
+
+    This project drives the generator directly through CSharpGeneratorDriver over in-memory source, so
+    it references the generator BOTH as an analyzer (OutputItemType=Analyzer) AND as a normal assembly
+    (ReferenceOutputAssembly=true) so the test code can instantiate ViewAccessorGenerator. It takes NO
+    Vista Core project reference: the generator recognizes Vista base types by fully-qualified name, so
+    minimal in-memory stubs in the test compilation are sufficient (matches the generator's
+    no-Vista-reference design, Spec 03 D71).
+
+    TargetFrameworks (net8.0;net9.0;net10.0), Nullable, ImplicitUsings, and LangVersion are inherited
+    from the root Directory.Build.props.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.SourceGenerators.Tests</RootNamespace>
+    <AssemblyName>a2n.Vista.SourceGenerators.Tests</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
+    <PackageReference Include="TUnit" />
+    <!-- Needed to build a CSharpCompilation and drive CSharpGeneratorDriver from the test code. -->
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Reference the generator as an analyzer AND as a normal assembly. OutputItemType=Analyzer wires it
+      into the test project's own build (exercises the analyzer loading path);
+      ReferenceOutputAssembly=true lets the test code construct ViewAccessorGenerator to build a driver.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="true" />
+  </ItemGroup>
+
+</Project>

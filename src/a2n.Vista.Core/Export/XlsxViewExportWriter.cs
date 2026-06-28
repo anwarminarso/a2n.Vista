@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.IO;
 using System.IO.Compression;
@@ -59,7 +58,6 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         + "</Relationships>";
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("Reads projected row values by reflection (Style A); use the source generator path for AOT.")]
     public async Task WriteAsync(
         Stream destination,
         ViewMetadata view,
@@ -71,7 +69,7 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         ArgumentNullException.ThrowIfNull(rows);
 
         var columns = ExportColumns.For(view);
-        var sheet = BuildSheetXml(columns, rows, cancellationToken);
+        var sheet = BuildSheetXml(view.Name, columns, rows, cancellationToken);
 
         using (var archive = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true))
         {
@@ -83,8 +81,8 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         }
     }
 
-    [RequiresUnreferencedCode("Reads projected row values by reflection (Style A); use the source generator path for AOT.")]
     private static string BuildSheetXml(
+        string viewName,
         IReadOnlyList<ExportColumns.Column> columns,
         IReadOnlyList<object?> rows,
         CancellationToken cancellationToken)
@@ -111,7 +109,7 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
             sb.Append("<row r=\"").Append(rowNo).Append("\">");
             for (var c = 0; c < columns.Count; c++)
             {
-                var value = ExportColumns.Value(row, columns[c].Name);
+                var value = ExportColumns.Value(viewName, row, columns[c].Name);
                 AppendCell(sb, CellRef(c, rowNo), value);
             }
 

@@ -1,0 +1,37 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    End-to-end consumer of the source generator (Spec source-generator, Task 6.1, R6.4).
+
+    This is a deliberately minimal class library whose ONLY job is to be a REAL consumer assembly
+    that the generator runs over: it declares one valid, partial, typed "Style B" read-only view, so
+    the generator emits a `file static` accessor map + a [ModuleInitializer] that registers those
+    accessors into a2n.Vista.Metadata.ViewAccessorRegistry at module load. Proving this library
+    compiles (the generated code is part of THIS assembly) and that the registry is populated at
+    runtime (see a2n.Vista.Tests/GeneratorEndToEndTests) is the end-to-end coexistence proof.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so Task 6.2's "build green net8/9/10" covers the generated code on every TFM.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorSample</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorSample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The View<TQuery> base + ViewAccessorRegistry sink live in Core. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency): this is exactly
+      how a real consumer wires the generator (Spec 03 D71, design.md). OutputItemType="Analyzer"
+      runs it at compile time; ReferenceOutputAssembly="false" keeps its netstandard2.0 assembly out
+      of this library's references.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

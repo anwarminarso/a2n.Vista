@@ -22,10 +22,13 @@
     <Project Path="a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj" />
   </Folder>
   <Folder Name="/30 Examples/">
+    <Project Path="Examples/a2n.Vista.AotProbe/a2n.Vista.AotProbe.csproj" />
+    <Project Path="Examples/a2n.Vista.GeneratorSample/a2n.Vista.GeneratorSample.csproj" />
     <Project Path="Examples/Northwind.DataAccess/Northwind.DataAccess.csproj" />
     <Project Path="Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" />
   </Folder>
   <Folder Name="/99 Tests/">
     <Project Path="Tests/a2n.Vista.Tests/a2n.Vista.Tests.csproj" />
+    <Project Path="Tests/a2n.Vista.SourceGenerators.Tests/a2n.Vista.SourceGenerators.Tests.csproj" />
   </Folder>
 </Solution>
