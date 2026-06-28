@@ -4,11 +4,27 @@
 > Date: 2026-06-20 (rev: synchronized to the `pilar-1-core` implementation)
 > Scope: the `a2n.Vista.AspNetCore` package. Bridges HTTP to the neutral pipeline: endpoint mapping (`MapView<TView>()`/`MapVistaViews()`), binding `HttpContext` → `AdapterRequest` (Spec 04 §5.1), auth composition → `IViewScope` → `IViewExecutor` (Spec 02 §5), the **write/CRUD path** (create/update/delete), concurrency (`If-Match`/`ETag`), **bulk ops**, Detail by-key, export endpoint, metadata endpoint, the HTTP error model (concrete RFC 7807), and OpenAPI registration. **Not** included: View authoring (Spec 01), the read engine (Spec 02), the source generator (Spec 03), grid filter mapping (Spec 04), the EF implementation (concrete `IViewExecutor`) — that is `a2n.Vista.EntityFrameworkCore`.
 >
-> **Reconciliation note (2026-06-20).** Routing, auth (`IViewAuthorizer`), and the RFC 7807 error model
+> **Reconciliation note (2026-06-27 — action surface + adapter landed; code is authoritative).** The HTTP
+> layer is implemented; the bullets below from the 2026-06-20 note are superseded where they conflict
+> (`docs/PROJECT-STATUS.md` §2.5/§2.7):
+> - **Action-style surface (D110, supersedes DR3).** Reads are `POST {route}/list`, `POST {route}/detail`,
+>   `GET {route}/metadata`, `POST {route}/export`; writes `POST {route}/{create|update|delete}`. The query
+>   and key travel in the **JSON body** (`VistaListRequestBody`, polymorphic `FilterNodeJsonConverter`),
+>   not the query string.
+> - **Multi-channel body (D111).** `VistaListRequestBody` carries `Filter` + `Scope` sub-trees and a global
+>   `Search` string; `VistaSearchMerge` routes the global search to the `Search` slot (not folded into
+>   `Filter`).
+> - **Adapter endpoint (D112).** `POST {route}/{adapter.RouteSuffix}` (DataTables → `/datatable`), wired via
+>   `AddVistaAdapter<TAdapter>()` + `AdapterRequestFactory`.
+> - **Metadata caching (opt-in).** `GET {route}/metadata` emits `ETag`/`Cache-Control` + honors
+>   `If-None-Match` only when `AddVistaEndpoints(e => e.EnableMetadataCaching())` is set (off by default).
+> - Writes still return **501** (writable) / **404** (read-only); EF write wiring follows (DR7).
+>
+> **Earlier reconciliation note (2026-06-20).** Routing, auth (`IViewAuthorizer`), and the RFC 7807 error model
 > are already implemented in Pillar 1. Differences from the code (the code that applies, see Spec 01 §13.1):
 > - **List = `GET {root}/{viewName}`** (paging/sort via query string), Detail = `GET .../{key}`,
->   Create = `POST .../`, Update = `PUT .../{key}`, Delete = `DELETE .../{key}` (DR3). The
->   `POST .../query` (body + `Accept`) form is a Pillar 2 adapter layer.
+>   Create = `POST .../`, Update = `PUT .../{key}`, Delete = `DELETE .../{key}` (DR3). **(Superseded by
+>   D110 above.)**
 > - **No `IViewWriter`** (DR8): writes live in `IViewExecutor` (generic). In Pillar 1 the write endpoints
 >   return **501** (writable) / **404** (read-only); EF write wiring follows (DR7).
 > - Auth DI via `AddVistaEndpoints(v => v.UseAuthorizer<T>())`; view registration via EF `AddVista(...)`.

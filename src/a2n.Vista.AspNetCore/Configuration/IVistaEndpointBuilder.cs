@@ -52,4 +52,14 @@ public interface IVistaEndpointBuilder
     /// catalog). It does not register an authorizer; it records that open access is a conscious choice.
     /// </remarks>
     IVistaEndpointBuilder AllowAnonymousAccess();
+
+    /// <summary>
+    /// Enables HTTP caching for the <c>GET {route}/metadata</c> facet: responses carry an <c>ETag</c>
+    /// (a hash of the serialized metadata) and <c>Cache-Control: private, max-age=...</c>, and a matching
+    /// <c>If-None-Match</c> returns <c>304 Not Modified</c>. Off by default so metadata edits are visible
+    /// immediately during development; enable it in production to cut metadata round-trips.
+    /// </summary>
+    /// <param name="maxAgeSeconds">The <c>max-age</c> in seconds (default 60).</param>
+    /// <returns>This builder, for chaining.</returns>
+    IVistaEndpointBuilder EnableMetadataCaching(int maxAgeSeconds = 60);
 }

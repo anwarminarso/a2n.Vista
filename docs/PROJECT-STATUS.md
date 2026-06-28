@@ -1,7 +1,8 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-06-21 (query-engine-hardening engine work landed; HTTP-surface redesign specced)
+> Last updated: 2026-06-27 (query-engine close-out: D107 startup provider guard landed; DataTables.NET
+> adapter + multi-channel request (D111–D114) landed)
 > Purpose: a single, authoritative snapshot of *where the project is*, *what was decided*, and *what
 > is next*, so a new chat/work session can continue without re-litigating settled decisions ("no
 > dispute"). When this document and the code disagree, **the code is the source of truth**; reconcile
@@ -11,6 +12,8 @@
 
 ## 0. How to use this document
 
+- For an **at-a-glance milestone/roadmap tracker** (progress bars, what's done, what's next, dependency
+  graph), read **`docs/MILESTONES.md`** first — it's the readable companion to this detailed snapshot.
 - Read §1–§3 for the current state and what is implemented.
 - Read §4 (**Settled decisions — do not re-litigate**) before proposing design changes. Each entry
   cites where the full rationale lives.
@@ -34,8 +37,9 @@ Three pillars (see `ROADMAP.md`):
   endpoints). **Implemented.**
 - **Pillar 2 — Adapters + neutral query engine** (server half = query engine, **built & hardened**:
   PK-in-metadata, deterministic paging, DoS guards, `IQueryDialect` port, composite keys — see §2.4;
-  HTTP surface is now action-style POST + `GET metadata` — see §2.5; client half = grid adapters,
-  **not built**).
+  HTTP surface is now action-style POST + `GET metadata` — see §2.5; multi-channel Search/Scope request —
+  see §2.7; client half = grid adapters, **DataTables.NET reference adapter built** — see §2.7; other
+  grid adapters not built).
 - **Pillar 3 — Source generator** (AOT-clean codegen). **Not built**; Pillar 1 uses a reflection path
   marked `[RequiresUnreferencedCode]`.
 
@@ -100,8 +104,11 @@ Implemented and tested (D104–D109):
   `AddVista` registration time, so a key must currently be declared explicitly (`.PrimaryKey()` /
   `Key(...)`); registration fails fast otherwise. Auto-derivation needs a startup/model hook (e.g. an
   `IHostedService` that reads `DbContext.Model`) — follow-up.
-- **D107 startup provider guard** — NOT implemented (dialect/`ProviderName` vs `Database.ProviderName`
-  mismatch warn/throw). Needs a hosted service in the EF package — follow-up.
+- **D107 startup provider guard** — **DONE (close-out 2026-06-27).** `VistaDialectStartupValidator`
+  (EF `Hosting/`, `IHostedService` auto-registered by `AddVista`): provider-specific dialect on a
+  mismatched `DbContext.Database.ProviderName` → throw; default dialect on PostgreSQL → warn; best-effort
+  skip when no context/provider is observable. Adds `Microsoft.Extensions.Hosting.Abstractions` to the EF
+  package. Covered by `DialectStartupGuardTests`.
 
 (The Northwind composite-key example view was added with `http-surface-redesign` — see §2.5.)
 
@@ -122,15 +129,47 @@ Northwind selftest PASS (incl. composite-key Detail):
   composite Detail via a name→value map.
 
 **Deferred within this spec (tracked):**
-- Full HTTP endpoint **integration test** (TestServer) — covered at unit level instead (converter, key
-  reader, search merge, metadata DTO, glue `MetadataAsync`).
-- **Export pipeline** beyond row-streaming + `MaxExportRows` (CSV/XLSX formatting) — follow-up.
-- Metadata cache headers (`ETag`/`Cache-Control`) — follow-up.
-- `docs/spec/05-aspnetcore-mapping.md` prose rewrite — the authoritative decision is captured in this
-  §2.5 + §5 for now.
+- Full HTTP endpoint **integration test** (TestServer) — **DONE (2026-06-27)**:
+  `HttpEndpointIntegrationTests` drives list/metadata/datatable/page-size-400/metadata-cache over an
+  in-process `TestServer` with a real SQLite-backed Gaya A view.
+- **Export pipeline** beyond row-streaming + `MaxExportRows` (CSV/XLSX formatting) — in progress as the
+  `export-pipeline` spec (pluggable `IViewExportWriter`).
+- Metadata cache headers (`ETag`/`Cache-Control`) — **DONE (2026-06-27)**: opt-in via
+  `AddVistaEndpoints(e => e.EnableMetadataCaching())` (off by default; emits `ETag` + `Cache-Control`,
+  honors `If-None-Match` → 304).
+- `docs/spec/05-aspnetcore-mapping.md` prose — **reconciled (2026-06-27)** to the action surface + D111/D112.
 
-### 2.6 Remaining query-engine follow-ups (unchanged)
-See §2.4 "Deferred": D105 single-source PK auto-derivation, D107 startup provider guard.
+### 2.6 Remaining query-engine follow-ups
+See §2.4 "Deferred": **D105** single-source PK auto-derivation (the only remaining engine follow-up; the
+**D107 startup provider guard landed** in the 2026-06-27 close-out).
+
+### 2.7 `datatables-adapter` (landed; spec `.kiro/specs/datatables-adapter`)
+First Pillar 2 client-half adapter + the engine change that makes the Search/Scope channels real
+(**D111–D114**). Build green net8/9/10, full suite green (93 tests/TFM), Northwind selftest PASS incl. the
+DataTables round-trip:
+- **D111 — multi-channel request (engine).** `ViewQueryRequest` gained additive `Search`/`Scope`
+  `FilterNode?` slots; `EfViewExecutor.ListAsync` compiles each present sub-tree under its own
+  `FilterOrigin` and AND-s them. The client `Scope` sub-tree is applied to the **unfiltered baseline**, so
+  it counts toward `recordsTotal`; `Filter`+`Search` are the client filter excluded from `recordsTotal`.
+  `VistaSearchMerge` now routes global search to the `Search` slot (not folded into `Filter`);
+  `VistaListRequestBody` gained a `Scope` slot. **Closes the per-channel Search/Scope enforcement deferred
+  by `query-engine-hardening` (DR9).** Per-origin validation in `FilterCompiler.ValidateLeaf` was reused
+  unchanged.
+- **Core `IViewAdapter` contract.** `a2n.Vista.Core/Adapters/`: `IViewAdapter` (non-generic, host-facing)
+  + `ViewAdapter<TRequest,TResponse>` base, `AdapterRequest` (neutral HTTP bag), `AdapterListResult`
+  (type-erased rows + two totals), `AdapterBindException`.
+- **DataTables.NET adapter** (`a2n.Vista.Adapters.DataTablesNet`, Core-only): `DataTablesQuery`/
+  `DataTablesResponse<T>` POCOs, `DataTablesAdapter` (`Id="datatables"`, `RouteSuffix="datatable"`),
+  `QueryBuilderParser` (`jsonQB` → Filter, incl. D64), `ExternalFilterParser` (`externalFilter` → Scope),
+  source-gen `DataTablesJsonContext`.
+- **AspNetCore glue.** `AdapterRequestFactory` (HttpContext → `AdapterRequest`, query+form+JSON body),
+  `ViewRequestExecutor.ListForAdapterAsync` → `AdapterListResult`, `AddVistaAdapter<TAdapter>()`,
+  `MapSingleView` maps `POST {route}/{RouteSuffix}` per registered adapter, `AdapterBindException` → 400
+  `adapter-bind-failed`. AspNetCore stays EF-free and references the adapter only through the Core port.
+
+**Deferred within this spec (tracked):** D113 QueryBuilder schema emitter (`metadataQB`) — to be built
+per grid component (planned `metadata-schema-adapters` spec); the `docs/spec/04`/`05` prose has been
+**reconciled (2026-06-27)**. (The full HTTP TestServer integration test landed — see §2.5.)
 
 ---
 
@@ -245,11 +284,14 @@ These record where the code intentionally differs from the early spec sketches. 
   source-gen type→name resolution).
 
 ### Language policy
-- **Repository artifacts are English** (code, comments, docs, specs, commits, PRs) — per
-  `.kiro/steering/persona-and-language.md`. Chat/conversation may be Bahasa Indonesia.
+- **Published artifacts are English** (code, comments, **everything under `/docs`**, commits, PRs,
+  GitHub-visible content) — per `.kiro/steering/persona-and-language.md`. Rule of thumb: if it ships to
+  GitHub, it must be English.
+- **Git-ignored local tooling may be Bahasa Indonesia.** `.kiro/` (specs, steering, agent tools) is in
+  `.gitignore`, so English is allowed but **not** required there. The legacy
+  `.kiro/specs/{pilar-1-core,pilar-1-hardening}` Indonesian docs are therefore fine as-is — no migration
+  needed.
 - `docs/spec/*.md` were migrated to English on 2026-06-20. **New `docs/` artifacts must be English.**
-- The two `.kiro/specs/{pilar-1-core,pilar-1-hardening}` documents are still Indonesian (legacy). New
-  Kiro specs should be English. (Migrating the legacy two is optional cleanup; not done.)
 
 ---
 
@@ -266,7 +308,8 @@ These record where the code intentionally differs from the early spec sketches. 
 | DR1–DR10 | `01-view.md` §13.1 | Pillar 1 code reconciliation. |
 | D104–D109 | `query-engine-hardening` spec / `02` §16 + `01` §5.4 | Engine hardening (key model, PK derivation, deterministic paging, `IQueryDialect` port, DoS guards, composite key). **D107 supersedes the old §6.3 P2 doc-only recommendation.** |
 | D110 | `http-surface-redesign` spec / `05` | Action-style POST endpoints + `GET .../metadata`; **supersedes DR3**. |
-| **D111+** | **next free** | Use for new decisions. |
+| D111–D114 | `datatables-adapter` spec / `04` (+ `02` §7 for D111) | D111 multi-channel request (Search/Scope slots; closes DR9 per-channel enforcement); D112 adapter endpoint (`POST {route}/{suffix}`); D113 QueryBuilder schema emitter deferred; D114 `jsonQB` parser in the DataTablesNet package. |
+| **D115+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -289,11 +332,15 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 | HTTP surface (action style) | D110 | `POST list/detail/export/create/update/delete` + `GET metadata`; key/query in JSON body; supersedes DR3. |
 
 ### 6.2 Still open (follow-ups)
-- **D105 single-source PK auto-derivation** — not implemented (the EF model is unavailable at `AddVista`;
-  needs a startup/model hook). Explicit `.PrimaryKey()`/`Key(...)` is required meanwhile (fail-fast).
-- **D107 startup provider guard** — not implemented (dialect `ProviderName` vs `Database.ProviderName`).
-- **Per-channel Search/Scope enforcement** — still deferred to Spec 04 adapters (DR9: one merged tree).
-  Global search is folded into the filter tree by the AspNetCore layer (`VistaSearchMerge`) for now.
+- **D105 single-source PK auto-derivation** — **deferred to the source-generator / Style B executable
+  milestone** (2026-06-27): only single-source executable views can benefit, and none exist yet (Gaya A
+  erases the source type; Gaya B executable is DR5-deferred). Explicit `.PrimaryKey()`/`Key(...)` +
+  registration fail-fast is safe meanwhile.
+- **D107 startup provider guard** — **DONE (2026-06-27)**: `VistaDialectStartupValidator` (EF hosted
+  service) throws on a specific-dialect/provider mismatch and warns on default-dialect+PostgreSQL.
+- **Per-channel Search/Scope enforcement** — **DONE (2026-06-27, D111)**: the `datatables-adapter` spec
+  added `Search`/`Scope` sub-tree slots to `ViewQueryRequest`; the executor compiles each under its origin.
+  `VistaSearchMerge` routes global search to the `Search` slot. (Was deferred under DR9.)
 - **Masking runtime** — still deferred (coupled to Style B executable / Style A `MaskField`).
 - **Export formatting** (CSV/XLSX), **metadata cache headers**, **full HTTP TestServer integration test**.
 - **Doc prose**: `docs/spec/02` §10 (dialect port) and `docs/spec/05` (action surface) prose not yet
@@ -312,20 +359,25 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 - **Source generator (Pillar 3)** — removes the reflection (`[RequiresUnreferencedCode]`) paths; the
   AOT-clean route. Also: cross-assembly discovery (D97), `MapView<TView>()` (DR10).
 - **Observability (D100) & versioning (D99)** — designed, not built.
-- **Adapters (Spec 04, Pillar 2 client half)** — DataTables/QueryBuilder reference adapters; needed to
-  exercise Search/Scope channels and the `POST .../query` form.
-- **Legacy Kiro specs in Indonesian** — optional migration to English.
+- **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET landed** (`a2n.Vista.Adapters.DataTablesNet`,
+  §2.7); remaining reference adapters (AG Grid, MudBlazor, OData, …) and the QueryBuilder schema emitter
+  (D113) are follow-ups.
+- **Legacy Kiro specs in Indonesian** — **no migration needed** (`.kiro/` is git-ignored; English not
+  required for unpublished tooling — see Language policy in §4).
 - **`RouteRoot` global default override** — model R uses a fixed default `/api/views` for ungrouped
   views; to change it globally, wrap registrations in a `RouteGroup`. Add an ergonomic override only if
   demanded.
-- **D105 single-source PK auto-derivation** — derive `KeyFields` from `DbContext.Model` at startup for
-  single-source views (needs a startup/model hook); explicit keys required until then.
-- **D107 startup provider guard** — warn/throw on dialect vs `Database.ProviderName` mismatch.
-- **Export pipeline** — CSV/XLSX formatting + streaming beyond `MaxExportRows` row-bounding.
-- **HTTP TestServer integration test** — end-to-end exercise of the action endpoints (currently
-  unit-level coverage of the converter/key-reader/search-merge/metadata/glue).
-- **Doc prose** — rewrite `docs/spec/02` §10 (dialect port) and `docs/spec/05` (action surface) to match
-  code; decisions are authoritative in §2.4/§2.5/§5 and the two Kiro specs meanwhile.
+- **D105 single-source PK auto-derivation** — **deferred to the source-generator / Style B executable
+  milestone** (no consumer until single-source executable views exist); explicit keys + fail-fast safe meanwhile.
+- **D107 startup provider guard** — **DONE (2026-06-27)**: `VistaDialectStartupValidator` warns/throws
+  on a dialect vs `Database.ProviderName` mismatch.
+- **Export pipeline** — pluggable `IViewExportWriter` (built-in CSV + XLSX, port of DynData's
+  `LiteExcelWriter`, developer-overridable) — planned `export-pipeline` spec.
+- **HTTP TestServer integration test** — **DONE (2026-06-27)**: `HttpEndpointIntegrationTests`
+  (list/metadata/datatable/page-size-400/metadata-cache over an in-process `TestServer`).
+- **Metadata cache headers** — **DONE (2026-06-27)**: opt-in `EnableMetadataCaching()` (ETag/Cache-Control/304).
+- **Doc prose** — **reconciled (2026-06-27)**: `docs/spec/02` §10 (dialect port + D111), `04` (adapter
+  landed), `05` (action surface + D111/D112) carry up-to-date reconciliation notes; code remains authoritative.
 
 ---
 
@@ -363,17 +415,25 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
 - Ports: `src/a2n.Vista.Core/Ports/` (`IViewExecutor`, `IViewScope`, `IViewRegistry`, `ViewListResult`).
 - EF execution + registration: `src/a2n.Vista.EntityFrameworkCore/` (`Execution/EfViewExecutor.cs`,
   `Execution/DefaultQueryDialect.cs`, `DependencyInjection/IVistaBuilder.cs` + `VistaBuilder.cs`,
-  `DependencyInjection/VistaServiceCollectionExtensions.cs`). `ProviderAwareFilterCompiler` was retired.
+  `DependencyInjection/VistaServiceCollectionExtensions.cs`, `Hosting/VistaDialectStartupValidator.cs`
+  — startup provider guard). `ProviderAwareFilterCompiler` was retired.
 - Npgsql dialect: `src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/` (`NpgsqlQueryDialect.cs`,
   `VistaNpgsqlServiceCollectionExtensions.cs` → `AddVistaNpgsql()`).
+- Adapter contract (Core): `src/a2n.Vista.Core/Adapters/` (`IViewAdapter.cs` + `ViewAdapter<,>`,
+  `AdapterRequest.cs`, `AdapterListResult.cs`, `AdapterBindException.cs`).
+- DataTables adapter: `src/Adapters/a2n.Vista.Adapters.DataTablesNet/` (`DataTablesModels.cs`,
+  `DataTablesAdapter.cs`, `QueryBuilderParser.cs`, `ExternalFilterParser.cs`, `QueryBuilderModels.cs`
+  incl. `DataTablesJsonContext`).
 - AspNetCore: `src/a2n.Vista.AspNetCore/` (`Routing/VistaEndpointRouteBuilderExtensions.cs` — action-style
   mapper; `Serialization/FilterNodeJsonConverter.cs`, `VistaJson.cs`, `VistaKeyReader.cs`;
   `Execution/VistaRequestEnvelopes.cs`, `VistaMetadataResponse.cs`, `VistaSearchMerge.cs`,
   `VistaInvalidRequestException.cs`, `ViewRequestExecutor.cs`; `Authorization/IViewAuthorizer.cs` +
   `ViewFacet.cs`; `Configuration/VistaEndpoint*`, `Hosting/VistaStartupValidator.cs`,
-  `Diagnostics/VistaProblemResults.cs`).
+  `Diagnostics/VistaProblemResults.cs`); adapter glue (`Execution/AdapterRequestFactory.cs`,
+  `Execution/ViewRequestExecutor.cs` → `ListForAdapterAsync`,
+  `DependencyInjection/VistaAdapterServiceCollectionExtensions.cs` → `AddVistaAdapter<T>()`).
 - Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
   `vOrderDetail`, `SelfTest.cs`).
 - Tests: `src/Tests/a2n.Vista.Tests/` (`AuthorizationTests`, `MaskingTests`, `RouteGroupTests`,
   `WireVersionTests`, `EnforcementTests`, `DefaultAllowTests`, `PagingTests`, `TypingInvariantTests`,
-  `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`).
+  `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`, `DialectStartupGuardTests`).

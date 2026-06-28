@@ -15,8 +15,16 @@
 > - `IViewExecutor` is **generic** (`ListAsync<TRow>`/`DetailAsync<TRow>` + write), **not** the non-generic
 >   erased-to-`object` `QueryAsync(ViewQueryExecution)` (§6.3 DR8). There is no `ViewQueryExecution`.
 > - Trusted scope goes through `IViewScope` (not validated); there is no `Trusted` channel in `FilterOrigin`.
-> - Pillar 1 validates the entire tree as `FilterOrigin.Filter` in `EfViewExecutor`; the per-channel
->   `Search`/`Scope` split is the job of the Pillar 2 adapter (Spec 04).
+> - **Dialect port landed (D107, 2026-06-21).** §10's provider strategy is the `IQueryDialect` **port**
+>   (Core), with `DefaultQueryDialect` (EF, `LIKE`+ESCAPE) and `NpgsqlQueryDialect` (`ILIKE`, separate
+>   package via `AddVistaNpgsql()`); the `ProviderAwareFilterCompiler` subclass seam is **retired**. A
+>   startup provider guard warns/throws on a dialect/provider mismatch.
+> - **Per-channel request landed (D111, 2026-06-27).** `ViewQueryRequest` now carries additive
+>   `Search`/`Scope` sub-tree slots; `EfViewExecutor` compiles each present sub-tree under its own
+>   `FilterOrigin` and AND-s them (the client `Scope` counts toward the unfiltered total). This
+>   **supersedes** the earlier note that Pillar 1 validates the whole tree as `Filter`; the adapter
+>   (Spec 04) builds the three sub-trees, the engine enforces each channel's whitelist. See
+>   `docs/PROJECT-STATUS.md` §2.7.
 
 ---
 

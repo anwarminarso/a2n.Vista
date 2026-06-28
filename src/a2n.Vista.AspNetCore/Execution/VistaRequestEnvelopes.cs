@@ -26,6 +26,12 @@ public sealed class VistaListRequestBody
     /// <summary>Optional global search text (matched against the view's searchable string fields).</summary>
     public string? Search { get; set; }
 
+    /// <summary>
+    /// Optional contextual/lookup scoping sub-tree (DynData <c>externalFilter</c> equivalent), validated
+    /// under the <c>Scope</c> whitelist (Decision Log D111). <see langword="null"/> when absent.
+    /// </summary>
+    public FilterNode? Scope { get; set; }
+
     /// <summary>Ordering instructions, applied in order.</summary>
     public List<VistaSortBody>? Sort { get; set; }
 
@@ -47,7 +53,7 @@ public sealed class VistaListRequestBody
             }
         }
 
-        return new ViewQueryRequest(Filter, sort, Page, PageSize);
+        return new ViewQueryRequest(Filter, sort, Page, PageSize, SelectFields: null, Search: null, Scope: Scope);
     }
 }
 

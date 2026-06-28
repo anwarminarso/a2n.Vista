@@ -1,7 +1,11 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using System.Threading;
+using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Authorization;
+using a2n.Vista.AspNetCore.Configuration;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Metadata;
@@ -138,6 +142,21 @@ public static class VistaEndpointRouteBuilderExtensions
         endpoints.MapGet($"{route}/metadata", (Delegate)((HttpContext http) => HandleMetadataAsync(http, name)));
         endpoints.MapPost($"{route}/export", (Delegate)((HttpContext http) => HandleExportAsync(http, view)));
 
+        // Grid adapters (Decision Log D112): each registered adapter with a route suffix gets a read
+        // endpoint at POST {route}/{suffix} (for example DataTables → POST {route}/datatable).
+        foreach (var adapter in endpoints.ServiceProvider.GetServices<IViewAdapter>())
+        {
+            if (string.IsNullOrEmpty(adapter.RouteSuffix))
+            {
+                continue;
+            }
+
+            var captured = adapter;
+            endpoints.MapPost(
+                $"{route}/{captured.RouteSuffix}",
+                (Delegate)((HttpContext http) => HandleAdapterAsync(http, view, captured)));
+        }
+
         if (!view.IsReadOnly)
         {
             endpoints.MapPost($"{route}/create", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Create)));
@@ -177,7 +196,60 @@ public static class VistaEndpointRouteBuilderExtensions
     {
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
         var metadata = await executor.MetadataAsync(http, viewName).ConfigureAwait(false);
-        return Results.Ok(metadata);
+
+        var options = http.RequestServices.GetRequiredService<VistaEndpointOptions>();
+        if (!options.EnableMetadataCaching)
+        {
+            return Results.Ok(metadata);
+        }
+
+        // Metadata is stable between deploys; an ETag (hash of the serialized payload) lets clients skip
+        // re-downloading it. Off by default so edits are visible immediately during development (D110 follow-up).
+        var json = JsonSerializer.Serialize(metadata, VistaJson.Options);
+        var etag = ComputeETag(json);
+
+        http.Response.Headers.ETag = etag;
+        http.Response.Headers.CacheControl = $"private, max-age={options.MetadataCacheMaxAgeSeconds}";
+
+        if (string.Equals(http.Request.Headers.IfNoneMatch.ToString(), etag, StringComparison.Ordinal))
+        {
+            return Results.StatusCode(StatusCodes.Status304NotModified);
+        }
+
+        return Results.Content(json, "application/json");
+    }
+
+    /// <summary>Computes a strong, quoted <c>ETag</c> from the serialized metadata payload (SHA-256 hex).</summary>
+    private static string ComputeETag(string json)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(json));
+        return $"\"{Convert.ToHexString(hash)}\"";
+    }
+
+    /// <summary>
+    /// Handles <c>POST {route}/{adapter.RouteSuffix}</c>: build the neutral <see cref="AdapterRequest"/>
+    /// from the request, run the adapter's Bind → ToQuery → (one-door List) → ToResponse pipeline, and
+    /// serialize the grid-specific response (Decision Log D112). A bind failure surfaces as
+    /// <see cref="AdapterBindException"/> (mapped to 400).
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleAdapterAsync(HttpContext http, ViewMetadata view, IViewAdapter adapter)
+    {
+        var raw = await AdapterRequestFactory.CreateAsync(http, view.Name).ConfigureAwait(false);
+
+        var request = adapter.BindRequest(raw);
+        var query = adapter.ToQuery(request, view);
+
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        var result = await executor.ListForAdapterAsync(http, view.Name, query).ConfigureAwait(false);
+
+        var response = adapter.ToResponse(result, request, view);
+
+        // The response's compile-time type is erased to object here; serialize by its runtime type so the
+        // grid shape (and the projected rows) are emitted. Anonymous Style A rows ride the documented RUC
+        // serialization path (D96).
+        var json = JsonSerializer.Serialize(response, response.GetType(), VistaJson.Options);
+        return Results.Content(json, "application/json");
     }
 
     /// <summary>Handles <c>POST {route}/export</c>: read the query body, run the export (bounded by MaxExportRows).</summary>

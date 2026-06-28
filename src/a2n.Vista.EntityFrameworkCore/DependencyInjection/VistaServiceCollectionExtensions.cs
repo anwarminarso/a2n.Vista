@@ -1,9 +1,11 @@
 using a2n.Vista.EntityFrameworkCore;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.EntityFrameworkCore.Hosting;
 using a2n.Vista.Filter;
 using a2n.Vista.Ports;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
+using Microsoft.Extensions.Hosting;
 
 namespace Microsoft.Extensions.DependencyInjection;
 
@@ -81,6 +83,11 @@ public static class VistaServiceCollectionExtensions
         // A request-scoped scope so the executor can run without an authorizer (AspNetCore, Task 10,
         // replaces/fills this from IViewAuthorizer.ShapeQuery).
         services.TryAddScoped<IViewScope, ViewScope>();
+
+        // Startup provider guard (Decision Log D107, R4.6): verify the registered dialect matches the
+        // active EF Core provider. Added at most once across repeat AddVista calls.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, VistaDialectStartupValidator>());
 
         configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor));
 

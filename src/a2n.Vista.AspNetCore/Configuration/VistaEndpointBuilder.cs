@@ -38,4 +38,13 @@ internal sealed class VistaEndpointBuilder : IVistaEndpointBuilder
         _options.AllowAnonymous = true;
         return this;
     }
+
+    /// <inheritdoc />
+    public IVistaEndpointBuilder EnableMetadataCaching(int maxAgeSeconds = 60)
+    {
+        ArgumentOutOfRangeException.ThrowIfNegative(maxAgeSeconds);
+        _options.EnableMetadataCaching = true;
+        _options.MetadataCacheMaxAgeSeconds = maxAgeSeconds;
+        return this;
+    }
 }

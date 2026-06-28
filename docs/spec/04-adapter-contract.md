@@ -1,10 +1,29 @@
 # Spec 04 — Adapter Contract (Pillar 2, client half)
 
-> Status: **DESIGN INTENT (frozen; not a final contract until Pillar 2 is built)**
-> Date: 2026-06-20 (rev: reconciliation notes against Pillar 1)
+> Status: **IMPLEMENTED (DataTables.NET reference adapter + `IViewAdapter` contract; D111–D114)**
+> Date: 2026-06-20 (rev: reconciliation notes against Pillar 1); 2026-06-27 (adapter landed)
 > Scope: the `IViewAdapter<TRequest, TResponse>` contract in `a2n.Vista.Core` and the reference adapters `a2n.Vista.Adapters.DataTablesNet` + `a2n.Vista.Adapters.QueryBuilder`. Translates **both directions**: grid-specific request ↔ `ViewQueryRequest` (Spec 02 §6.1), and `ViewQueryResult` (Spec 02 §6.2) ↔ grid response shape. **Not** included: concrete HTTP binding/content-negotiation (Spec 05), query engine (Spec 02), View authoring (Spec 01), source generator (Spec 03).
 >
-> **Reconciliation note (2026-06-20).** The adapter (Pillar 2) is **not yet implemented**. When it is built,
+> **Reconciliation note (2026-06-27 — adapter landed; code is authoritative).** The DataTables.NET
+> adapter is implemented; this document's design intent is superseded by the code where they differ
+> (`docs/PROJECT-STATUS.md` §2.7):
+> - The host-facing contract is the **non-generic `IViewAdapter`** + `ViewAdapter<TRequest,TResponse>`
+>   base (`a2n.Vista.Core/Adapters/`), so AspNetCore dispatches adapters without referencing the grid
+>   package. `ToResponse` consumes a neutral **`AdapterListResult`** (rows + `recordsFiltered`/`recordsTotal`),
+>   **not** `ViewQueryResult<object>` (DR6: the engine returns `ViewListResult<TRow>`).
+> - **`FilterOrigin` is not per-leaf** (DR9). Instead of "one tree, each leaf tagged", the adapter builds
+>   up to **three sub-trees** and places them in the `ViewQueryRequest` `Filter`/`Search`/`Scope` slots
+>   (D111); the executor compiles each under its origin. §6 invariant 1 and the per-leaf `Origin=...`
+>   columns in §7.3/§7.4 are realized this way. `IncludeUnfilteredCount` (D69) does **not** exist — the
+>   unfiltered total is always returned.
+> - **HTTP surface (D112):** `POST {route}/datatable` (route suffix); the host builds `AdapterRequest`
+>   from query + form-urlencoded (+ JSON body) via `AdapterRequestFactory`; registration is
+>   `AddVistaAdapter<TAdapter>()`. A bind failure → 400 `adapter-bind-failed`.
+> - **Deferred (D113):** the QueryBuilder schema emitter (`IViewMetadataAdapter`/`metadataQB`) — to be
+>   built per grid component. The `jsonQB` parser (Filter channel) is implemented (D114, in the
+>   DataTablesNet package).
+>
+> **Earlier reconciliation note (2026-06-20).** The adapter (Pillar 2) is **not yet implemented**. When it is built,
 > align it with the actual Pillar 1 contract (Spec 01 §13.1): the engine result = **`ViewListResult<TRow>`**
 > (`Page.TotalRows`=recordsFiltered, `TotalRowsUnfiltered`=recordsTotal), **not** `ViewQueryResult<object>`.
 > `FilterLeaf` does **not** carry `Origin`; the channel is determined at compile time (`FilterCompiler.Compile(node, origin, view)`)

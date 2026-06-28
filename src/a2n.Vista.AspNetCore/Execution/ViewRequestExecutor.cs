@@ -1,5 +1,7 @@
+using System.Collections;
 using System.Diagnostics.CodeAnalysis;
 using System.Reflection;
+using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Contracts;
 using a2n.Vista.Metadata;
@@ -97,6 +99,59 @@ public sealed class ViewRequestExecutor
         var task = (Task)closed.Invoke(executor, [view, request, scope, http.RequestAborted])!;
         return await AwaitResultAsync(task).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
+    }
+
+    /// <summary>
+    /// Executes the List facet for a grid adapter: runs the same one-door pipeline as
+    /// <see cref="ListAsync"/>, then converts the boxed <see cref="ViewListResult{TRow}"/> into the
+    /// neutral, type-erased <see cref="AdapterListResult"/> the adapter formats (Decision Log D111). The
+    /// conversion uses the same deferred-reflection style as the rest of the bridge.
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered view name being queried.</param>
+    /// <param name="request">The neutral query request produced by the adapter's <c>ToQuery</c>.</param>
+    /// <returns>The type-erased list result (rows + recordsFiltered + recordsTotal).</returns>
+    /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
+    /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> and reflects over ViewListResult<TRow>; use the source generator path for AOT.")]
+    public async Task<AdapterListResult> ListForAdapterAsync(HttpContext http, string viewName, ViewQueryRequest request)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(request);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
+
+        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, [view, request, scope, http.RequestAborted])!;
+        var boxed = await AwaitResultAsync(task).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
+
+        return ToAdapterResult(boxed);
+    }
+
+    /// <summary>
+    /// Converts a boxed <see cref="ViewListResult{TRow}"/> (runtime row type) into an
+    /// <see cref="AdapterListResult"/> by reflecting over its <c>Page</c> (<see cref="ViewListResult{TRow}.Page"/>)
+    /// and <c>TotalRowsUnfiltered</c>.
+    /// </summary>
+    [RequiresUnreferencedCode("Reflects over the runtime-closed ViewListResult<TRow>/PagedResult<TRow>; use the source generator path for AOT.")]
+    private static AdapterListResult ToAdapterResult(object boxed)
+    {
+        var resultType = boxed.GetType();
+        var page = resultType.GetProperty("Page")!.GetValue(boxed)!;
+        var unfiltered = (long)resultType.GetProperty("TotalRowsUnfiltered")!.GetValue(boxed)!;
+
+        var pageType = page.GetType();
+        var filtered = (long)pageType.GetProperty("TotalRows")!.GetValue(page)!;
+        var items = (IEnumerable)pageType.GetProperty("Items")!.GetValue(page)!;
+
+        var rows = new List<object?>();
+        foreach (var item in items)
+        {
+            rows.Add(item);
+        }
+
+        return new AdapterListResult(rows, filtered, unfiltered);
     }
 
     /// <summary>

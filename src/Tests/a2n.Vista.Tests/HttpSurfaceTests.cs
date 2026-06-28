@@ -85,8 +85,10 @@ public sealed class HttpSurfaceGlueTests
 
         var merged = VistaSearchMerge.Apply(view, request, "5");
 
-        // Only the string field (Name) is searchable → a single Contains leaf.
-        var leaf = merged.Filter as FilterLeaf;
+        // Only the string field (Name) is searchable → a single Contains leaf, now placed in the
+        // Search slot (Decision Log D111), not folded into Filter.
+        await Assert.That(merged.Filter).IsNull();
+        var leaf = merged.Search as FilterLeaf;
         await Assert.That(leaf).IsNotNull();
         await Assert.That(leaf!.Field).IsEqualTo(nameof(WidgetRow.Name));
         await Assert.That(leaf.Op).IsEqualTo(FilterOperator.Contains);
@@ -100,7 +102,7 @@ public sealed class HttpSurfaceGlueTests
 
         var merged = VistaSearchMerge.Apply(view, request, "   ");
 
-        await Assert.That(merged.Filter).IsNull();
+        await Assert.That(merged.Search).IsNull();
     }
 
     [Test]

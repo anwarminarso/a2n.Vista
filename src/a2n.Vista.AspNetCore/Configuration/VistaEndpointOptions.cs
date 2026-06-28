@@ -55,4 +55,19 @@ public sealed class VistaEndpointOptions
     /// authorizer requires this to be <see langword="true"/>; otherwise startup fails fast (D94).
     /// </summary>
     public bool AllowAnonymous { get; internal set; }
+
+    /// <summary>
+    /// Whether <c>GET {route}/metadata</c> responses carry an <c>ETag</c> + <c>Cache-Control</c> and honor
+    /// <c>If-None-Match</c> (304). Defaults to <see langword="false"/>: metadata changes only at
+    /// deploy/registration time, but caching it during development hides edits behind a 304, so it is an
+    /// explicit opt-in via <see cref="IVistaEndpointBuilder.EnableMetadataCaching"/>. When enabled, the
+    /// <c>max-age</c> (seconds) is <see cref="MetadataCacheMaxAgeSeconds"/>.
+    /// </summary>
+    public bool EnableMetadataCaching { get; internal set; }
+
+    /// <summary>
+    /// The <c>Cache-Control: max-age</c> (in seconds) applied to metadata responses when
+    /// <see cref="EnableMetadataCaching"/> is on. Defaults to 60.
+    /// </summary>
+    public int MetadataCacheMaxAgeSeconds { get; internal set; } = 60;
 }

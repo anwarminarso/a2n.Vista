@@ -30,6 +30,7 @@
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
   </ItemGroup>
 
 </Project>

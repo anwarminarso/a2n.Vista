@@ -65,3 +65,6 @@ pnpm-debug.log*
 .playwright-mcp/
 
 northwind.db
+
+## Brand / design scratch (out-of-project, agent-generated)
+brand/

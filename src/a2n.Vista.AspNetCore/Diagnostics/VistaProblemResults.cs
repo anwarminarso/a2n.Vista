@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.Filter;
 using Microsoft.AspNetCore.Http;
@@ -113,6 +114,18 @@ internal static class VistaProblemResults
                     extensions: new Dictionary<string, object?>
                     {
                         ["code"] = "invalid-request",
+                    });
+                return true;
+
+            case AdapterBindException bind:
+                result = HttpResults.Problem(
+                    statusCode: StatusCodes.Status400BadRequest,
+                    title: "Adapter bind failed",
+                    type: TypePrefix + "adapter-bind-failed",
+                    detail: bind.Message,
+                    extensions: new Dictionary<string, object?>
+                    {
+                        ["code"] = "adapter-bind-failed",
                     });
                 return true;
 

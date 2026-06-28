@@ -44,6 +44,10 @@ builder.Services.AddVista(vista =>
 // app gates access via UseAuthorizer<T>() instead.
 builder.Services.AddVistaEndpoints(v => v.AllowAnonymousAccess());
 
+// Register the jQuery DataTables.NET adapter (Decision Log D112). Each view then also exposes
+// POST {route}/datatable for DataTables server-side requests.
+builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdapter>();
+
 var app = builder.Build();
 
 // No seeding: the extracted Northwind database is the source of truth (read-only sample).

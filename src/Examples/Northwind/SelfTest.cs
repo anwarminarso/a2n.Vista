@@ -1,7 +1,10 @@
 using System.Collections;
+using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using System.Reflection;
+using a2n.Vista.Adapters;
+using a2n.Vista.Adapters.DataTablesNet;
 using a2n.Vista.Contracts;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
@@ -73,6 +76,8 @@ public static class SelfTest
         {
             allPassed &= await CompositeDetailCheckAsync(orderDetailView, executor, viewScope);
         }
+
+        allPassed &= await DataTablesRoundTripCheckAsync(view, executor, viewScope);
 
         Console.WriteLine();
         Console.WriteLine(allPassed ? "RESULT: PASS" : "RESULT: FAIL");
@@ -215,6 +220,63 @@ public static class SelfTest
         var productId = Convert.ToInt32(Prop(row, "ProductId")!, CultureInfo.InvariantCulture);
         var ok = orderId == 10248 && productId == 11;
         Console.WriteLine($"    Row: OrderId={orderId}  ProductId={productId}  -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>
+    /// D111/D112 — full DataTables adapter round-trip: a server-side request with sort + a <c>jsonQB</c>
+    /// filter (Filter channel) + an <c>externalFilter</c> scope (Scope channel) is bound, mapped to the
+    /// three neutral channels, executed, and formatted back into a <see cref="DataTablesResponse{T}"/>.
+    /// Asserts the channel separation: the scope counts toward <c>recordsTotal</c> while the filter only
+    /// narrows <c>recordsFiltered</c>.
+    /// </summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> DataTablesRoundTripCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var adapter = new DataTablesAdapter();
+
+        // Simulate a DataTables server-side request: sort by ProductName asc, filter UnitPrice >= 20
+        // (Filter channel via jsonQB), scoped to CategoryId = 1 / Beverages (Scope channel via externalFilter).
+        var values = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["draw"] = new[] { "7" },
+            ["start"] = new[] { "0" },
+            ["length"] = new[] { "20" },
+            ["columns[0][data]"] = new[] { "ProductName" },
+            ["columns[0][orderable]"] = new[] { "true" },
+            ["order[0][column]"] = new[] { "0" },
+            ["order[0][dir]"] = new[] { "asc" },
+            ["jsonQB"] = new[] { "{\"condition\":\"AND\",\"rules\":[{\"field\":\"UnitPrice\",\"operator\":\"greater_or_equal\",\"value\":20}]}" },
+            ["externalFilter"] = new[] { "{\"CategoryId\":1}" },
+        };
+
+        var raw = new AdapterRequest(view.Name, values, JsonBody: null);
+        var query = adapter.BindRequest(raw);
+        var request = adapter.ToQuery(query, view);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var rows = ToObjectList(Prop(page, "Items")!);
+        var adapterResult = new AdapterListResult(
+            rows!,
+            (long)Prop(page, "TotalRows")!,
+            (long)Prop(listResult, "TotalRowsUnfiltered")!);
+
+        var response = adapter.ToResponse(adapterResult, query, view);
+
+        Console.WriteLine("[5] DataTables round-trip (sort + jsonQB UnitPrice>=20 + externalFilter CategoryId=1)");
+        Console.WriteLine($"    draw={response.Draw}  recordsTotal={response.RecordsTotal}  " +
+            $"recordsFiltered={response.RecordsFiltered}  data={response.Data.Count}");
+
+        // Beverages (CategoryId=1) has 12 products → recordsTotal counts the Scope channel only.
+        // Of those, exactly 2 cost >= 20 → recordsFiltered applies the Filter channel.
+        var ok =
+            response.Draw == 7 &&
+            response.RecordsTotal == 12 &&
+            response.RecordsFiltered == 2 &&
+            response.Data.Count == 2;
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
         return ok;
     }
 

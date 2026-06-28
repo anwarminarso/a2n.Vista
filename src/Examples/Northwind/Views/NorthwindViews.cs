@@ -38,8 +38,10 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
                 })
             // Every projected field is filter/sort/searchable by default (default-allow, D42). Only the
             // technical keys need customizing: mark the PK and hide the key columns from transport.
+            // CategoryId is also made Scopable (opt-in, D47) so it can be used as a contextual lookup
+            // scope key — the DataTables externalFilter (Scope channel) path exercises this (D111).
             .Field(x => x.ProductId, f => f.PrimaryKey().Hidden())
-            .Field(x => x.CategoryId, f => f.Hidden())
+            .Field(x => x.CategoryId, f => f.Hidden().Scopable())
             .Field(x => x.SupplierId, f => f.Hidden());
         // No WithCrud(...) → read-only resource (List + Detail by ProductId).
 

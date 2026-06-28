@@ -179,20 +179,18 @@ public class EfViewExecutor : IViewExecutor
         // Task 9.2 seam: scope (server-trusted, pre-projection over TSource) is already AND-ed into this query.
         var scoped = ResolveScopedQueryable<TRow>(view, scope);
 
-        // recordsTotal — scope applied, client filter/search NOT applied (R10.4).
-        var totalRowsUnfiltered = await CountAsync(scoped, cancellationToken).ConfigureAwait(false);
+        // Client contextual scope sub-tree (externalFilter equivalent) defines the working context, so it
+        // is applied to the baseline and counts toward recordsTotal (Decision Log D111, FilterOrigin.Scope).
+        var baseline = ApplyChannel(scoped, request.Scope, FilterOrigin.Scope, view);
 
-        // Client filter/search path. The request carries the already-merged tree; per-origin compilation
-        // of search/scope sub-trees is the adapter's responsibility in Pilar 2 (§8.1/§8.3), so here the
-        // whole tree is validated and compiled under FilterOrigin.Filter. Documented assumption for 9.1.
-        var filtered = scoped;
-        if (request.Filter is not null)
-        {
-            var predicate = _filterCompiler.Compile<TRow>(request.Filter, FilterOrigin.Filter, view);
-            filtered = filtered.Where(predicate);
-        }
+        // recordsTotal — server-trusted scope + client Scope applied, client filter/search NOT applied (R10.4, D111).
+        var totalRowsUnfiltered = await CountAsync(baseline, cancellationToken).ConfigureAwait(false);
 
-        // recordsFiltered — after the client filter (R10.4).
+        // Client filter + global search, each validated under its own origin whitelist (Decision Log D111).
+        var filtered = ApplyChannel(baseline, request.Filter, FilterOrigin.Filter, view);
+        filtered = ApplyChannel(filtered, request.Search, FilterOrigin.Search, view);
+
+        // recordsFiltered — after the client filter/search (R10.4).
         var totalRows = await CountAsync(filtered, cancellationToken).ConfigureAwait(false);
 
         var ordered = ApplySort(filtered, request.Sort, view);
@@ -207,6 +205,27 @@ public class EfViewExecutor : IViewExecutor
         var totalPages = pageSize == 0 ? 0L : (totalRows + pageSize - 1) / pageSize;
         var page = new PagedResult<TRow>(items, totalRows, pageIndex, pageSize, totalPages);
         return new ViewListResult<TRow>(page, totalRowsUnfiltered);
+    }
+
+    /// <summary>
+    /// Applies one filter channel to <paramref name="source"/>: compiles <paramref name="node"/> under
+    /// <paramref name="origin"/> (so each leaf is validated against that channel's whitelist, Decision Log
+    /// D111) and AND-s it via <c>Where</c>. A <see langword="null"/> <paramref name="node"/> is a no-op.
+    /// </summary>
+    [RequiresUnreferencedCode("Compiles a filter sub-tree over TRow at runtime; use the source generator path for AOT.")]
+    private IQueryable<TRow> ApplyChannel<TRow>(
+        IQueryable<TRow> source,
+        FilterNode? node,
+        FilterOrigin origin,
+        ViewMetadata view)
+    {
+        if (node is null)
+        {
+            return source;
+        }
+
+        var predicate = _filterCompiler.Compile<TRow>(node, origin, view);
+        return source.Where(predicate);
     }
 
     /// <inheritdoc />
