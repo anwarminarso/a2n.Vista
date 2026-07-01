@@ -32,11 +32,15 @@ if (!File.Exists(dbFullPath))
 builder.Services.AddDbContext<NorthwindDbContext>(options =>
     options.UseSqlite($"Data Source={DbRelativePath}"));
 
-// Vista core wiring (EF layer): register the Gaya A central template. A view's route is composed at
-// registration (default root /api/views, or via RouteGroup(...)) and recorded in ViewMetadata.Route
-// (Decision Log D101/D103); views are exposed under {root}/{viewName}.
+// Vista core wiring (EF layer): register the Gaya A central template plus a class-per-view (Style B)
+// *writable* view. A view's route is composed at registration (default root /api/views, or via
+// RouteGroup(...)) and recorded in ViewMetadata.Route (Decision Log D101/D103); views are exposed under
+// {root}/{viewName}. The writable Style B view (vWritableMemo) declares a MapWritable whitelist and a
+// concurrency token, so its Create/Update/Delete endpoints are enabled (Requirement R16.4).
 builder.Services.AddVista(vista =>
-    vista.RegisterTemplate<NorthwindViews, NorthwindDbContext>());
+    vista
+        .RegisterTemplate<NorthwindViews, NorthwindDbContext>()
+        .Register<WritableMemoView>());
 
 // Vista HTTP layer. This public read-only sample runs without an authorizer; in a non-Development
 // environment that is a fail-closed startup error unless open access is opted into explicitly (D94),
@@ -60,12 +64,16 @@ var app = builder.Build();
 app.UseVistaExceptionHandling();
 app.MapVistaViews();
 
-// Guarded end-to-end self-test (R12): `dotnet run -- selftest`. Exercises List paging, filter/sort/
-// search, and Detail-by-key through the real executor, prints the outcome, and exits without serving.
+// Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises
+// List paging, filter/sort/search, and Detail-by-key against the shipped read-only northwind.db through
+// the real executor. The write self-test exercises Create/Update/Delete on the writable vWritableMemo
+// view against an isolated in-memory database (the read-only sample has no VistaMemos table and is never
+// mutated). Both run, print their outcomes, and the process exits 0 only when BOTH pass.
 if (args.Contains("selftest", StringComparer.OrdinalIgnoreCase))
 {
-    var passed = await SelfTest.RunAsync(app.Services);
-    Environment.ExitCode = passed ? 0 : 1;
+    var readPassed = await SelfTest.RunAsync(app.Services);
+    var writePassed = await WriteSelfTest.RunAsync();
+    Environment.ExitCode = readPassed && writePassed ? 0 : 1;
     return;
 }
 

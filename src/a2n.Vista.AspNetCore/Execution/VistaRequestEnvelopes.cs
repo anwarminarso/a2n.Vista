@@ -71,32 +71,34 @@ public sealed class VistaDetailRequestBody
     public JsonElement Key { get; set; }
 }
 
-/// <summary>The request body for the Create facet: the typed write payload.</summary>
-public sealed class VistaCreateRequestBody
+/// <summary>
+/// The single request envelope for every write facet (Create/Update/Delete) in the write path
+/// (Decision Log D120). The typed write model rides in <see cref="Model"/>; the row key (update/delete)
+/// rides in <see cref="Key"/>. Optimistic concurrency is carried out-of-band in the HTTP
+/// <c>If-Match</c>/<c>ETag</c> headers rather than in the body, so no token member exists here
+/// (Requirement R6.1–R6.4). Deserialized with <see cref="Serialization.VistaJson.Options"/>; the raw
+/// <see cref="System.Text.Json.JsonElement"/> members are bound to the view's runtime types by
+/// <see cref="VistaWriteBinding"/> so no System.Text.Json type crosses into Core.
+/// </summary>
+/// <remarks>
+/// This supersedes the earlier per-facet <c>VistaCreate/Update/DeleteRequestBody</c> placeholders (which
+/// carried an in-body concurrency token and were never wired). Bulk (an array body) is rejected by the
+/// binder with <see cref="a2n.Vista.Write.VistaBulkNotEnabledException"/> (Requirement R15.1); a bulk
+/// execution path is out of scope for this milestone.
+/// </remarks>
+public sealed class VistaWriteRequestBody
 {
-    /// <summary>The write model fields.</summary>
-    public JsonElement Data { get; set; }
-}
+    /// <summary>
+    /// The typed write payload (the <c>TCrud</c> model). Bound to the view's <c>CrudType</c> by
+    /// <see cref="VistaWriteBinding.BindModel"/>. Required for Create/Update; a missing or non-object
+    /// value is rejected as a malformed body (Requirement R9.1).
+    /// </summary>
+    public JsonElement? Model { get; init; }
 
-/// <summary>The request body for the Update facet: the key, the write payload, and an optional token.</summary>
-public sealed class VistaUpdateRequestBody
-{
-    /// <summary>The key of the row to update.</summary>
-    public JsonElement Key { get; set; }
-
-    /// <summary>The write model fields.</summary>
-    public JsonElement Data { get; set; }
-
-    /// <summary>Optional optimistic-concurrency token.</summary>
-    public string? ConcurrencyToken { get; set; }
-}
-
-/// <summary>The request body for the Delete facet: the key and an optional token.</summary>
-public sealed class VistaDeleteRequestBody
-{
-    /// <summary>The key of the row to delete.</summary>
-    public JsonElement Key { get; set; }
-
-    /// <summary>Optional optimistic-concurrency token.</summary>
-    public string? ConcurrencyToken { get; set; }
+    /// <summary>
+    /// The row key for Update/Delete: a scalar for a single key, or a field-name→value object for a
+    /// composite key. Read into the Core-neutral key shape by <see cref="VistaKeyReader"/>; a missing
+    /// key on Update/Delete is rejected as a missing-key error (Requirements R2.8, R5.5, R9.2).
+    /// </summary>
+    public JsonElement? Key { get; init; }
 }

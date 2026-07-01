@@ -72,6 +72,10 @@ internal static class Program
         Console.WriteLine("---- CSV ----");
         Console.Write(csv);
 
+        // 5) Phase 2 (Task 11.1): exercise the generated Style B List and Detail compiled read path so
+        //    the trim/AOT analyzer proves it is free of IL2026/IL3050 (R5.1/R5.4/R5.5/R1.7).
+        await StyleBExecutableProbe.RunAsync().ConfigureAwait(false);
+
         return 0;
     }
 

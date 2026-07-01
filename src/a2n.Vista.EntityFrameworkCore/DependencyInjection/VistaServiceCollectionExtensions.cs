@@ -3,6 +3,7 @@ using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.EntityFrameworkCore.Hosting;
 using a2n.Vista.Filter;
 using a2n.Vista.Ports;
+using a2n.Vista.Write;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
@@ -61,6 +62,22 @@ public static class VistaServiceCollectionExtensions
         var planRegistry = GetOrAddSingletonInstance<IViewExecutionPlanRegistry>(services, static () => new ViewExecutionPlanRegistry());
         var contextAccessor = GetOrAddSingletonInstance(services, static () => new VistaDbContextAccessor());
 
+        // Process-scoped write-facet registry (Decision Log D119, R13.1): populated at registration time
+        // alongside the view/plan stores with each writable view's captured CrudFacetDefinition, and read
+        // by the EF execution layer (the reflection write mapper). It lives in Core so neither adapter
+        // references the other to reach the write facet (R14.6). Registered under the concrete type so the
+        // builder can populate it, and exposed via the IWriteFacetRegistry port for DI consumers.
+        var writeFacetRegistry = GetOrAddSingletonInstance(services, static () => new WriteFacetRegistry());
+        services.TryAddSingleton<IWriteFacetRegistry>(static sp => sp.GetRequiredService<WriteFacetRegistry>());
+
+        // Write-mapper resolver (Decision Log D119, R13.1–R13.4): the single seam that resolves one
+        // WriteMapper per write, preferring a source-generated mapper (GeneratedWriteMapperStore) over the
+        // RUC reflection fallback so the executor never branches on the implementation. Registered as a
+        // singleton so its reflection mapper's per-view compiled-delegate cache is shared process-wide;
+        // the scoped executor obtains it from the request IServiceProvider.
+        services.TryAddSingleton<WriteMapperResolver>(static sp =>
+            new WriteMapperResolver(sp.GetRequiredService<IWriteFacetRegistry>()));
+
         // Default provider dialect (Decision Log D107): SQL-standard LIKE with wildcard escaping. A
         // provider package (for example a2n.Vista.EntityFrameworkCore.Npgsql via AddVistaNpgsql())
         // replaces this with a provider-specific dialect (ILIKE) before the executor resolves it.
@@ -89,7 +106,13 @@ public static class VistaServiceCollectionExtensions
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IHostedService, VistaDialectStartupValidator>());
 
-        configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor));
+        // Startup model hook (Decision Log D105 / M11, R6): derive ViewMetadata.KeyFields from
+        // DbContext.Model for single-source executable views that declared no key. Added at most once
+        // across repeat AddVista calls (R6.7) and never runs on the request hot path (R6.8).
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, VistaModelKeyDerivationService>());
+
+        configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor, writeFacetRegistry));
 
         return services;
     }

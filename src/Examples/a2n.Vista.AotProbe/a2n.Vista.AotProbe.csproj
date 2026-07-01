@@ -1,15 +1,22 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <!--
-    AOT verification probe for the source-generator Phase 1 export path (Spec source-generator,
-    Task 5.2, R6.3, Property 1). This is a BUILD-TIME analyzer check, not a runtime sample: the
-    project exercises ExportColumns.Value(viewName, row, field) and CsvViewExportWriter.WriteAsync —
-    the exact "generated-accessor" covered export path — and turns any trim/AOT warning into a build
-    error. A green build proves the covered path is free of IL2026 (RequiresUnreferencedCode) and
-    IL3050 (RequiresDynamicCode) warnings.
+    AOT verification probe for the source generator. Two paths are exercised as a BUILD-TIME analyzer
+    check (not a runtime sample), with any trim/AOT warning promoted to a build error:
 
-    No native toolchain is required: <IsAotCompatible>true</IsAotCompatible> enables BOTH the trim
-    analyzer and the AOT analyzer, which surface IL2026/IL3050 during `dotnet build`.
+      * Phase 1 export path (Spec source-generator, Task 5.2, R6.3): ExportColumns.Value(view, row, field)
+        and CsvViewExportWriter.WriteAsync — the generated-accessor covered export path.
+
+      * Phase 2 Style B executable path (Spec style-b-executable, Task 11.1, R5.1/R5.4/R5.5/R1.7):
+        the generated ICompiledViewExecutionPlan driven through EfViewExecutor.ListCompiledAsync /
+        DetailCompiledAsync — the *non-RUC* compiled List and Detail read path. Routing through these
+        helpers (rather than the public RUC ListAsync/DetailAsync) keeps the analyzed surface exactly the
+        generated Style B path, so a green build proves it is free of IL2026 (RequiresUnreferencedCode)
+        and IL3050 (RequiresDynamicCode). Style A keeps its permanent RUC serialization annotation
+        unchanged (D96 / R5.3) — this probe neither references nor alters it.
+
+    A green build IS the verification. No native toolchain is required: <IsAotCompatible>true</IsAotCompatible>
+    enables BOTH the trim analyzer and the AOT analyzer, which surface IL2026/IL3050 during `dotnet build`.
   -->
   <PropertyGroup>
     <OutputType>Exe</OutputType>
@@ -38,6 +45,30 @@
   <ItemGroup>
     <!-- The covered export path lives in Core: ExportColumns + ViewAccessorRegistry + CsvViewExportWriter. -->
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+
+    <!--
+      Phase 2 (spec style-b-executable, Task 11.1, R5.1/R5.4/R5.5/R1.7): the generated Style B
+      List/Detail path lives in the EF layer (EfViewExecutor compiled helpers + ICompiledViewExecutionPlan
+      + GeneratedExecutionPlanStore). Referencing the EF layer also makes the EF-aware Phase 2 emitter
+      run over this assembly's partial Style B view (CompiledPlanSupported == true).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency), exactly how a real
+      consumer wires it (Spec 03 D71). With the EF-layer types present above, the generator emits — INTO
+      this probe assembly — a `file sealed` CompiledViewExecutionPlan_<View> plus a [ModuleInitializer]
+      that registers the plan into GeneratedExecutionPlanStore at module load. The probe then runs that
+      REAL generated plan through the compiled (non-RUC) List/Detail path under the trim/AOT analyzer.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SQLite provider for the self-contained probe DbContext (net8.0 → EF Core 8.0.x, centrally pinned). -->
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>
 
 </Project>

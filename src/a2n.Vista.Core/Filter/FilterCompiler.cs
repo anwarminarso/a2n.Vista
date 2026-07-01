@@ -96,8 +96,77 @@ public class FilterCompiler
 
         var fields = BuildFieldLookup(view.Fields);
         var parameter = Expression.Parameter(typeof(T), "x");
-        var body = Build(node, origin, parameter, fields);
+
+        // RUC path: each whitelisted field resolves to a member by reflecting over T with
+        // Expression.Property(string). The reflective call lives in this RUC-annotated factory only.
+        var body = Build(node, origin, parameter, fields, field => Expression.Property(parameter, field.Name));
         return Expression.Lambda<Func<T, bool>>(body, parameter);
+    }
+
+    /// <summary>
+    /// Compiles <paramref name="node"/> into a predicate over <typeparamref name="T"/> using
+    /// <em>generated</em> member-access lambdas resolved via <paramref name="memberAccessResolver"/>
+    /// instead of <c>Expression.Property(string)</c> — the AOT-clean seam for the source-generated
+    /// Style B compiled read path (source-generator Phase 2 / Decision Log D118, R2.2/R2.3). The
+    /// tri-whitelist (<see cref="FilterOrigin"/>) is enforced identically to the reflection overload, so
+    /// disallowed / non-projected / masked-without-opt-in fields are still rejected before any query
+    /// executes (R2.4, R8.1).
+    /// </summary>
+    /// <typeparam name="T">The projected row type the predicate runs against.</typeparam>
+    /// <param name="node">The filter tree to compile.</param>
+    /// <param name="origin">The whitelist path that governs every leaf in <paramref name="node"/>.</param>
+    /// <param name="view">The view metadata supplying field whitelist information.</param>
+    /// <param name="memberAccessResolver">
+    /// Resolves a field name to its generated member-access lambda
+    /// (<c>Expression&lt;Func&lt;T, TField&gt;&gt;</c>), or <see langword="null"/> when the field has no
+    /// generated member-access (i.e. it is not a projected field).
+    /// </param>
+    /// <returns>A predicate expression equivalent to <paramref name="node"/>.</returns>
+    /// <exception cref="ArgumentNullException">A required argument is <see langword="null"/>.</exception>
+    /// <exception cref="FilterValidationException">A leaf violates the whitelist or carries an invalid value.</exception>
+    public Expression<Func<T, bool>> Compile<T>(
+        FilterNode node,
+        FilterOrigin origin,
+        ViewMetadata view,
+        Func<string, LambdaExpression?> memberAccessResolver)
+    {
+        ArgumentNullException.ThrowIfNull(node);
+        ArgumentNullException.ThrowIfNull(view);
+        ArgumentNullException.ThrowIfNull(memberAccessResolver);
+
+        EnforceLimits(node, view.Limits);
+
+        var fields = BuildFieldLookup(view.Fields);
+        var parameter = Expression.Parameter(typeof(T), "x");
+
+        // Compiled path: each whitelisted field resolves to its generated member-access lambda, whose
+        // single parameter is rebound to the shared predicate parameter. No Expression.Property(string)
+        // is reached, keeping this seam AOT-clean.
+        var body = Build(node, origin, parameter, fields, field => ResolveGeneratedMember(field, parameter, memberAccessResolver));
+        return Expression.Lambda<Func<T, bool>>(body, parameter);
+    }
+
+    /// <summary>
+    /// Resolves a whitelisted field to a member expression over <paramref name="parameter"/> using the
+    /// generated member-access lambda, rebinding the lambda's own parameter to
+    /// <paramref name="parameter"/>. A field that passed the whitelist but has no generated member-access
+    /// is treated as not part of the projection (R2.4).
+    /// </summary>
+    private static Expression ResolveGeneratedMember(
+        FieldMetadata field,
+        ParameterExpression parameter,
+        Func<string, LambdaExpression?> memberAccessResolver)
+    {
+        var accessor = memberAccessResolver(field.Name);
+        if (accessor is null)
+        {
+            throw new FilterValidationException(
+                FilterErrorCode.UnknownField,
+                $"Field '{field.Name}' has no generated member-access and is not part of the view projection.",
+                field.Name);
+        }
+
+        return ParameterReplaceVisitor.Replace(accessor.Body, accessor.Parameters[0], parameter);
     }
 
     private static Dictionary<string, FieldMetadata> BuildFieldLookup(IReadOnlyList<FieldMetadata> fields)
@@ -115,14 +184,15 @@ public class FilterCompiler
         FilterNode node,
         FilterOrigin origin,
         ParameterExpression parameter,
-        IReadOnlyDictionary<string, FieldMetadata> fields)
+        IReadOnlyDictionary<string, FieldMetadata> fields,
+        Func<FieldMetadata, Expression> memberFactory)
     {
         return node switch
         {
-            FilterLeaf leaf => BuildLeaf(leaf, origin, parameter, fields),
-            FilterAnd and => Combine(and.Children, origin, parameter, fields, Expression.AndAlso, seed: true),
-            FilterOr or => Combine(or.Children, origin, parameter, fields, Expression.OrElse, seed: false),
-            FilterNot not => Expression.Not(Build(not.Child, origin, parameter, fields)),
+            FilterLeaf leaf => BuildLeaf(leaf, origin, parameter, fields, memberFactory),
+            FilterAnd and => Combine(and.Children, origin, parameter, fields, memberFactory, Expression.AndAlso, seed: true),
+            FilterOr or => Combine(or.Children, origin, parameter, fields, memberFactory, Expression.OrElse, seed: false),
+            FilterNot not => Expression.Not(Build(not.Child, origin, parameter, fields, memberFactory)),
             _ => throw new FilterValidationException(
                 FilterErrorCode.InvalidValue,
                 $"Unsupported filter node type '{node.GetType().Name}'."),
@@ -134,6 +204,7 @@ public class FilterCompiler
         FilterOrigin origin,
         ParameterExpression parameter,
         IReadOnlyDictionary<string, FieldMetadata> fields,
+        Func<FieldMetadata, Expression> memberFactory,
         Func<Expression, Expression, Expression> combine,
         bool seed)
     {
@@ -146,7 +217,7 @@ public class FilterCompiler
         Expression? acc = null;
         foreach (var child in children)
         {
-            var current = Build(child, origin, parameter, fields);
+            var current = Build(child, origin, parameter, fields, memberFactory);
             acc = acc is null ? current : combine(acc, current);
         }
 
@@ -157,11 +228,12 @@ public class FilterCompiler
         FilterLeaf leaf,
         FilterOrigin origin,
         ParameterExpression parameter,
-        IReadOnlyDictionary<string, FieldMetadata> fields)
+        IReadOnlyDictionary<string, FieldMetadata> fields,
+        Func<FieldMetadata, Expression> memberFactory)
     {
         var field = ValidateLeaf(leaf, origin, fields);
 
-        var member = Expression.Property(parameter, field.Name);
+        var member = memberFactory(field);
         var memberType = member.Type;
         var underlying = Nullable.GetUnderlyingType(memberType) ?? memberType;
 
@@ -341,7 +413,7 @@ public class FilterCompiler
         return Expression.AndAlso(notNull, call);
     }
 
-    private Expression BuildIn(FilterLeaf leaf, MemberExpression member, Type underlying, Type memberType)
+    private Expression BuildIn(FilterLeaf leaf, Expression member, Type underlying, Type memberType)
     {
         if (leaf.Value is not IEnumerable enumerable || leaf.Value is string)
         {
@@ -365,7 +437,7 @@ public class FilterCompiler
         return Expression.Call(contains, setConstant, member);
     }
 
-    private Expression BuildBetween(FilterLeaf leaf, MemberExpression member, Type underlying, Type memberType)
+    private Expression BuildBetween(FilterLeaf leaf, Expression member, Type underlying, Type memberType)
     {
         if (leaf.Value is string || leaf.Value is not IEnumerable enumerable)
         {
@@ -398,7 +470,7 @@ public class FilterCompiler
         return Expression.AndAlso(lowerBound, upperBound);
     }
 
-    private static Expression BuildIsNull(MemberExpression member, Type memberType)
+    private static Expression BuildIsNull(Expression member, Type memberType)
     {
         var underlying = Nullable.GetUnderlyingType(memberType);
         if (underlying is null && memberType.IsValueType)
@@ -627,4 +699,37 @@ public class FilterCompiler
             }
         }
     }
+}
+
+/// <summary>
+/// Rebinds every occurrence of one <see cref="ParameterExpression"/> to another inside an expression
+/// tree. Used to splice a generated member-access lambda (whose body references its own parameter) onto
+/// the shared predicate/key parameter without reflecting over the row type — the AOT-clean replacement
+/// for <c>Expression.Property(string)</c> on the source-generated compiled read path (Decision Log
+/// D118). Internal so the EF execution layer can reuse the same rebinding for Detail-by-key.
+/// </summary>
+internal sealed class ParameterReplaceVisitor : ExpressionVisitor
+{
+    private readonly ParameterExpression _from;
+    private readonly ParameterExpression _to;
+
+    private ParameterReplaceVisitor(ParameterExpression from, ParameterExpression to)
+    {
+        _from = from;
+        _to = to;
+    }
+
+    /// <summary>
+    /// Returns <paramref name="body"/> with every reference to <paramref name="from"/> replaced by
+    /// <paramref name="to"/>.
+    /// </summary>
+    /// <param name="body">The expression to rewrite.</param>
+    /// <param name="from">The parameter to replace (the generated lambda's parameter).</param>
+    /// <param name="to">The parameter to substitute in (the shared parameter).</param>
+    public static Expression Replace(Expression body, ParameterExpression from, ParameterExpression to) =>
+        new ParameterReplaceVisitor(from, to).Visit(body);
+
+    /// <inheritdoc />
+    protected override Expression VisitParameter(ParameterExpression node) =>
+        node == _from ? _to : base.VisitParameter(node);
 }

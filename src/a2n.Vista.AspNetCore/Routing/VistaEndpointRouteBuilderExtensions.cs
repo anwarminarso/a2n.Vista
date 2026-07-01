@@ -11,6 +11,7 @@ using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Export;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
+using a2n.Vista.Write;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.DependencyInjection;
@@ -54,9 +55,13 @@ namespace Microsoft.AspNetCore.Builder;
 /// read-only view; if reached anyway, the write handler returns <c>404 Not Found</c>.
 /// </para>
 /// <para>
-/// <b>Write execution in Pillar 1.</b> The EF executor's Create/Update/Delete are not implemented in
-/// Pillar 1, so for a writable view the write handlers return <c>501 Not Implemented</c>; the routes
-/// exist so the surface is stable and read-only enforcement (R3.3) is observable now (DR7).
+/// <b>Write execution (M12).</b> For a writable view the write handlers bind the request, authorize the
+/// write facet fail-closed, forward to the Core <c>IViewExecutor</c> write facet, and map the outcome to
+/// HTTP: <c>200</c> with the created row's primary key (create) or an <c>ETag</c> header carrying the
+/// current concurrency token (update/delete on a token view), <c>404</c> for a no-match / read-only /
+/// unregistered / no-plan target (indistinguishable), <c>428</c> when a token view omits <c>If-Match</c>,
+/// and <c>409</c> / <c>4xx</c> / <c>5xx</c> for the typed write failures (Requirements R1.2, R2.2, R3.2,
+/// R6.x, R12.x, R16.6).
 /// </para>
 /// <para>
 /// <b>AOT hygiene (R11.4).</b> Mapping drives the reflection bridge in <see cref="ViewRequestExecutor"/>
@@ -175,9 +180,9 @@ public static class VistaEndpointRouteBuilderExtensions
 
         if (!view.IsReadOnly)
         {
-            endpoints.MapPost($"{route}/create", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Create)));
-            endpoints.MapPost($"{route}/update", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Update)));
-            endpoints.MapPost($"{route}/delete", (Delegate)((HttpContext http) => HandleWrite(http, name, ViewFacet.Delete)));
+            endpoints.MapPost($"{route}/create", (Delegate)((HttpContext http) => HandleWriteAsync(http, name, ViewFacet.Create)));
+            endpoints.MapPost($"{route}/update", (Delegate)((HttpContext http) => HandleWriteAsync(http, name, ViewFacet.Update)));
+            endpoints.MapPost($"{route}/delete", (Delegate)((HttpContext http) => HandleWriteAsync(http, name, ViewFacet.Delete)));
         }
     }
 
@@ -361,29 +366,172 @@ public static class VistaEndpointRouteBuilderExtensions
     }
 
     /// <summary>
-    /// Handles the write actions (Create/Update/Delete). Enforces D38 (read-only views expose no write
-    /// action — though such views are not even mapped) and returns 501 for writable views because write
-    /// execution is not implemented in Pillar 1 (DR7).
+    /// Handles the write actions (Create/Update/Delete) as a dumb mapper (Decision Log D110, D120):
+    /// resolve the view, gate to an indistinguishable <c>404</c>, bind the request, enforce the <c>428</c>
+    /// precondition gate, forward to <see cref="ViewRequestExecutor"/>, and map the outcome to HTTP. All
+    /// typed write failures ride the shared RFC 7807 envelope via
+    /// <see cref="a2n.Vista.AspNetCore.Diagnostics.VistaProblemResults"/> (Requirements R1.2, R1.4, R1.5,
+    /// R2.2, R2.6, R3.2, R3.5, R6.1, R6.4, R6.6, R12.1–R12.4, R16.6).
     /// </summary>
-    private static IResult HandleWrite(HttpContext http, string viewName, ViewFacet facet)
+    /// <remarks>
+    /// The route is only mapped for <c>!view.IsReadOnly</c>, so a read-only or missing view can only be
+    /// reached by a hand-crafted request; both — together with a writable view that carries no
+    /// executable write plan (the executor raises <see cref="WriteErrorCode.NoWritePlan"/>) — collapse to
+    /// the same bodyless <c>404</c> so the write surface of a read-only view is undiscoverable
+    /// (Requirements R12.2, R12.3, R12.4).
+    /// </remarks>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleWriteAsync(HttpContext http, string viewName, ViewFacet facet)
     {
         var registry = http.RequestServices.GetRequiredService<IViewRegistry>();
-
         var view = registry.Get(viewName);
-        if (view is null)
-        {
-            throw new VistaViewNotFoundException(viewName);
-        }
 
-        if (view.IsReadOnly)
+        // Indistinguishable 404 for an unregistered, read-only, or non-writable (no CrudType) target
+        // (R1.4, R1.5, R12.2, R12.3). The read-only / null branches are defense in depth: write routes
+        // are only mapped for a writable view, so these are unreachable through normal mapping.
+        if (view is null || view.IsReadOnly || view.CrudType is null)
         {
             return Results.NotFound();
         }
 
-        return Results.Problem(
-            statusCode: StatusCodes.Status501NotImplemented,
-            title: "Write facet not implemented",
-            detail: $"The '{facet}' facet of view '{viewName}' is not available in Pillar 1. "
-                + "Write execution (compiled TCrud-to-entity mapping, concurrency, SaveChanges) lands in a later milestone.");
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+
+        try
+        {
+            var body = await VistaWriteBinding.ReadBodyAsync(http).ConfigureAwait(false);
+
+            return facet switch
+            {
+                ViewFacet.Create => await HandleCreateAsync(http, view, body, executor).ConfigureAwait(false),
+                ViewFacet.Update => await HandleUpdateAsync(http, view, body, executor).ConfigureAwait(false),
+                ViewFacet.Delete => await HandleDeleteAsync(http, view, body, executor).ConfigureAwait(false),
+                _ => Results.NotFound(),
+            };
+        }
+        catch (VistaWriteException ex) when (ex.Code == WriteErrorCode.NoWritePlan)
+        {
+            // R12.3/R12.4: a writable view registered as metadata-only (no executable write plan) is
+            // rendered as a plain 404 — indistinguishable from a genuinely nonexistent view, never a
+            // coded body that would disclose the view exists.
+            return Results.NotFound();
+        }
+    }
+
+    /// <summary>
+    /// Handles <c>POST {route}/create</c>: bind the write model, insert through the executor, and return
+    /// <c>200</c> with a minimal <see cref="VistaWriteResponse"/> carrying only the new primary key
+    /// (Requirements R1.1, R1.2, R10.1).
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleCreateAsync(
+        HttpContext http,
+        ViewMetadata view,
+        VistaWriteRequestBody body,
+        ViewRequestExecutor executor)
+    {
+        var model = VistaWriteBinding.BindModel(body, view.CrudType!);
+        var key = await executor.CreateAsync(http, view.Name, model).ConfigureAwait(false);
+        return Results.Ok(new VistaWriteResponse(key));
+    }
+
+    /// <summary>
+    /// Handles <c>POST {route}/update</c>: bind the model and the request key, enforce the <c>428</c>
+    /// precondition gate for a token view, update through the executor, and map the result — <c>404</c>
+    /// when no row matched within scope, otherwise <c>200</c> (with the round-tripped <c>ETag</c> when the
+    /// view declares a token). The row identity is taken solely from the request key, never the body
+    /// (Requirements R2.1, R2.2, R2.3, R2.5, R2.8, R6.1, R6.2, R6.4, R6.6).
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleUpdateAsync(
+        HttpContext http,
+        ViewMetadata view,
+        VistaWriteRequestBody body,
+        ViewRequestExecutor executor)
+    {
+        var model = VistaWriteBinding.BindModel(body, view.CrudType!);
+        var key = VistaWriteBinding.ReadKey(body);
+        var hasToken = ViewDeclaresConcurrencyToken(http, view.Name);
+        var ifMatch = ResolvePrecondition(http, hasToken);
+
+        var updated = await executor
+            .UpdateAsync(http, view.Name, key, model, ifMatch)
+            .ConfigureAwait(false);
+
+        return updated ? WriteOk(http, hasToken, ifMatch) : Results.NotFound();
+    }
+
+    /// <summary>
+    /// Handles <c>POST {route}/delete</c>: read the request key, enforce the <c>428</c> precondition gate
+    /// for a token view, delete through the executor, and map the result — <c>404</c> when no row matched
+    /// within scope, otherwise <c>200</c> (with the round-tripped <c>ETag</c> when the view declares a
+    /// token) (Requirements R3.1, R3.2, R3.3, R6.1, R6.2, R6.4, R6.6).
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleDeleteAsync(
+        HttpContext http,
+        ViewMetadata view,
+        VistaWriteRequestBody body,
+        ViewRequestExecutor executor)
+    {
+        var key = VistaWriteBinding.ReadKey(body);
+        var hasToken = ViewDeclaresConcurrencyToken(http, view.Name);
+        var ifMatch = ResolvePrecondition(http, hasToken);
+
+        var deleted = await executor
+            .DeleteAsync(http, view.Name, key, ifMatch)
+            .ConfigureAwait(false);
+
+        return deleted ? WriteOk(http, hasToken, ifMatch) : Results.NotFound();
+    }
+
+    /// <summary>
+    /// Reads the <c>If-Match</c> precondition and applies the token gate: for a view that declares a
+    /// concurrency token a missing/blank header is <c>428</c> (Requirement R6.2); for a tokenless view
+    /// any header is ignored and <see langword="null"/> flows to the executor (Requirement R6.6).
+    /// </summary>
+    private static string? ResolvePrecondition(HttpContext http, bool hasToken)
+    {
+        var ifMatch = VistaWriteBinding.ReadIfMatch(http);
+
+        if (!hasToken)
+        {
+            // R6.6: a tokenless view performs the write without any precondition and ignores If-Match.
+            return null;
+        }
+
+        // R6.2: a token view requires a non-blank If-Match before the executor is touched.
+        return ifMatch ?? throw new VistaPreconditionRequiredException();
+    }
+
+    /// <summary>
+    /// Produces the <c>200</c> success result for an update/delete, round-tripping the concurrency token
+    /// into the <c>ETag</c> response header when the view declares one (Requirement R6.4).
+    /// </summary>
+    /// <remarks>
+    /// The Core <see cref="IViewExecutor"/> update/delete facet reports success as a <see cref="bool"/>,
+    /// so the token echoed here is the client-supplied <c>If-Match</c> value (guaranteed non-null for a
+    /// token view by <see cref="ResolvePrecondition"/>). A post-write token that differs from the
+    /// precondition would require the port to surface it; that is a later refinement and does not change
+    /// this endpoint's wiring.
+    /// </remarks>
+    private static IResult WriteOk(HttpContext http, bool hasToken, string? token)
+    {
+        if (hasToken && token is not null)
+        {
+            http.Response.Headers.ETag = token;
+        }
+
+        return Results.Ok();
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when the view declares an optimistic-concurrency token, consulting
+    /// the Core <see cref="IWriteFacetRegistry"/> (EF-free; no adapter cross-reference, Requirement
+    /// R14.5/R14.6). Drives both the <c>428</c> gate and the <c>ETag</c> round-trip.
+    /// </summary>
+    private static bool ViewDeclaresConcurrencyToken(HttpContext http, string viewName)
+    {
+        var facets = http.RequestServices.GetRequiredService<IWriteFacetRegistry>();
+        return facets.TryGet(viewName, out var facet) && facet.ConcurrencyToken is not null;
     }
 }

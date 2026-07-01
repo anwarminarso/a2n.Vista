@@ -1,0 +1,41 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Real generator consumer for the Style B *executable* compiled read path (Spec style-b-executable,
+    Property 6 / task 9.3 — masked fields are non-probeable). Like a2n.Vista.GeneratorExecSampleP4, this
+    library references BOTH Core and the EF layer, so the generator's Phase 2 emitter produces a real
+    AOT-clean ICompiledViewExecutionPlan for the declared partial typed Style B view and registers it
+    into GeneratedExecutionPlanStore via a [ModuleInitializer] at module load.
+
+    It declares exactly one view (P6PersonView) carrying a masked-WITHOUT-opt-in string field (Secret),
+    which D95 makes non-filterable and non-searchable. The non-probeable property test seeds two datasets
+    that differ only in that field's value and asserts identical result-set membership across generated
+    filter/search sequences, byte-identical rejection errors, and that the masked field never contributes
+    to global search. The project is scoped to that one test (P6 prefix) so it cannot collide with sibling
+    property-test fixtures.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so the generated plan is proven to compile on every TFM.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorExecSampleP6</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorExecSampleP6</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- View<TQuery> + masking primitives live in Core; ICompiledViewExecutionPlan + the store live in EF. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it. Because Core AND EF are referenced above, the generator's CompiledPlanSupported
+      gate is satisfied and the Phase 2 execution plan is emitted for the analyzable single-source view.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

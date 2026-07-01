@@ -37,6 +37,13 @@ public class NorthwindDbContext : DbContext
 
     public virtual DbSet<Invoice> Invoices { get; set; }
 
+    /// <summary>
+    /// Purpose-made writable table used by the Vista write-path demo (see <see cref="Memo"/>). It is not
+    /// part of the real Northwind schema; the write self-test creates and exercises it in an isolated
+    /// database so the read-only sample data is never mutated.
+    /// </summary>
+    public virtual DbSet<Memo> Memos { get; set; }
+
     public virtual DbSet<Order> Orders { get; set; }
 
     public virtual DbSet<OrderDetail> OrderDetails { get; set; }
@@ -337,6 +344,21 @@ public class NorthwindDbContext : DbContext
                 .ValueGeneratedNever()
                 .HasColumnName("RegionID");
             entity.Property(e => e.RegionDescription).IsRequired();
+        });
+
+        // Purpose-made writable table for the Vista write-path demo (not part of the real Northwind
+        // schema). A store-assigned integer key, two whitelisted scalar columns, and a concurrency token
+        // exercised through If-Match/ETag.
+        modelBuilder.Entity<Memo>(entity =>
+        {
+            entity.ToTable("VistaMemos");
+            entity.HasKey(e => e.MemoId);
+            entity.Property(e => e.MemoId)
+                .ValueGeneratedOnAdd()
+                .HasColumnName("MemoID");
+            entity.Property(e => e.Subject).IsRequired();
+            entity.Property(e => e.Body).IsRequired();
+            entity.Property(e => e.RowVersion).IsConcurrencyToken();
         });
 
         modelBuilder.Entity<SalesByCategory>(entity =>

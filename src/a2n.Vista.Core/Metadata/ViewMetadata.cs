@@ -43,12 +43,64 @@ public sealed record ViewMetadata(
     HardLimits Limits,
     bool IsReadOnly)
 {
+    private readonly object _keyFieldsGate = new();
+    private IReadOnlyList<string> _keyFields = [];
+    private bool _keyFieldsCompleted;
+
     /// <summary>
     /// The ordered list of projected field names that uniquely identify a row <b>of this view</b>
     /// (single-element for a simple key, multi-element for a composite key). This is the view-level
     /// source of truth for deterministic paging tiebreakers and Detail-by-key; it defaults from the
     /// fields marked <see cref="FieldMetadata.IsPrimaryKey"/> and may be overridden during authoring
-    /// (Decision Log D104). Empty only transiently before the registration fail-fast (Decision Log D106).
+    /// (Decision Log D104). Empty only transiently before the registration fail-fast (Decision Log D106)
+    /// or, for a single-source executable view that declared no key, until the startup model hook
+    /// completes it from <c>DbContext.Model</c> via <see cref="CompleteKeyFields"/> (Decision Log D105).
     /// </summary>
-    public IReadOnlyList<string> KeyFields { get; init; } = [];
+    public IReadOnlyList<string> KeyFields
+    {
+        get => _keyFields;
+        init => _keyFields = value ?? [];
+    }
+
+    /// <summary>
+    /// Completes the view's <see cref="KeyFields"/> from the EF model at startup for a single-source
+    /// executable view that declared no key (Decision Log D105 / M11). This is a <b>startup-only</b>,
+    /// run-at-most-once mutation performed by the model hook before any request is served; it never runs
+    /// on the request hot path and never changes request-time behavior beyond making the (previously
+    /// empty) key resolvable. A declared key is never overridden (Requirement R6.3): the method refuses
+    /// to run when <see cref="KeyFields"/> is already non-empty.
+    /// </summary>
+    /// <param name="keyFields">
+    /// The derived key field names, in the source entity's declared primary-key column order
+    /// (Requirement R6.2). Composite keys list every column.
+    /// </param>
+    /// <exception cref="ArgumentNullException"><paramref name="keyFields"/> is <see langword="null"/>.</exception>
+    /// <exception cref="InvalidOperationException">
+    /// The key has already been completed, or a key was already declared (Requirement R6.3): the startup
+    /// hook must derive a key only for a key-less view and only once.
+    /// </exception>
+    internal void CompleteKeyFields(IReadOnlyList<string> keyFields)
+    {
+        ArgumentNullException.ThrowIfNull(keyFields);
+
+        lock (_keyFieldsGate)
+        {
+            if (_keyFieldsCompleted)
+            {
+                throw new InvalidOperationException(
+                    $"KeyFields for view '{Name}' have already been completed; the startup primary-key " +
+                    "derivation runs at most once per application start (Decision Log D105).");
+            }
+
+            if (_keyFields.Count != 0)
+            {
+                throw new InvalidOperationException(
+                    $"View '{Name}' already declares a key, so the startup primary-key derivation must " +
+                    "not override, merge, or supplement it from the EF model (Decision Log D105, R6.3).");
+            }
+
+            _keyFields = [.. keyFields];
+            _keyFieldsCompleted = true;
+        }
+    }
 }

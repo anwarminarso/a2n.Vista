@@ -29,7 +29,9 @@ namespace a2n.Vista.AspNetCore.Execution;
 ///   <see cref="VistaViewNotFoundException"/> (→ 404, R1.1).</description></item>
 ///   <item><description>Resolve <see cref="IViewAuthorizer"/> from the request services. When present,
 ///   <see cref="IViewAuthorizer.IsAllowedAsync"/> gates the request; <see langword="false"/> throws
-///   <see cref="VistaForbiddenException"/> (→ 403, R7.1). When absent, access is allowed (R7.2).</description></item>
+///   <see cref="VistaForbiddenException"/> (→ 403, R7.1). An authorizer that throws while deciding is
+///   treated as a deny and also maps to 403 — fail-closed (R7.3). When absent, access is allowed
+///   (R7.2).</description></item>
 ///   <item><description>Build a fresh Core <see cref="ViewScope"/>. When an authorizer is present,
 ///   <see cref="IViewAuthorizer.ShapeQuery"/> populates it with server-trusted row filters (R6.3); when
 ///   absent the scope stays empty.</description></item>
@@ -61,6 +63,14 @@ public sealed class ViewRequestExecutor
     private static readonly MethodInfo DetailAsyncMethod =
         typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.DetailAsync))
         ?? throw new InvalidOperationException($"{nameof(IViewExecutor)}.{nameof(IViewExecutor.DetailAsync)} was not found.");
+
+    private static readonly MethodInfo CreateAsyncMethod =
+        typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.CreateAsync))
+        ?? throw new InvalidOperationException($"{nameof(IViewExecutor)}.{nameof(IViewExecutor.CreateAsync)} was not found.");
+
+    private static readonly MethodInfo UpdateAsyncMethod =
+        typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.UpdateAsync))
+        ?? throw new InvalidOperationException($"{nameof(IViewExecutor)}.{nameof(IViewExecutor.UpdateAsync)} was not found.");
 
     private readonly IViewRegistry _registry;
 
@@ -249,6 +259,114 @@ public sealed class ViewRequestExecutor
     }
 
     /// <summary>
+    /// Executes the Create facet (write): authorizes the <see cref="ViewFacet.Create"/> facet
+    /// independently and fail-closed, shapes the server-trusted scope, then inserts a new row from the
+    /// typed write model through the Core <see cref="IViewExecutor.CreateAsync{TCrud}"/> port
+    /// (Requirements R7.1, R7.2, R7.3, R8.1, R14.3, R14.4).
+    /// </summary>
+    /// <param name="http">The current HTTP context (carries the user, request services, and cancellation token).</param>
+    /// <param name="viewName">The registered (writable) view name being created into.</param>
+    /// <param name="model">
+    /// The already-bound write model, typed as the view's <c>CrudType</c> (bound by the endpoint via
+    /// <see cref="VistaWriteBinding.BindModel"/> before authorization).
+    /// </param>
+    /// <returns>The non-null primary-key value of the newly inserted row (a scalar or a composite-key map).</returns>
+    /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
+    /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.CreateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    public async Task<object> CreateAsync(HttpContext http, string viewName, object model)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(model);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Create).ConfigureAwait(false);
+        var crudType = RequireCrudType(view);
+
+        var closed = CreateAsyncMethod.MakeGenericMethod(crudType);
+        var task = (Task)closed.Invoke(executor, [view, model, scope, http.RequestAborted])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"View '{viewName}' Create execution returned no primary key.");
+    }
+
+    /// <summary>
+    /// Executes the Update facet (write): authorizes the <see cref="ViewFacet.Update"/> facet
+    /// independently and fail-closed, shapes the server-trusted scope, then updates the row identified by
+    /// <paramref name="key"/> through the Core <see cref="IViewExecutor.UpdateAsync{TCrud}"/> port. The
+    /// row identity is taken solely from <paramref name="key"/>, never from the model body
+    /// (Requirements R7.1, R7.2, R7.3, R8.1, R14.3, R14.4).
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered (writable) view name being updated.</param>
+    /// <param name="key">The row key (scalar or field-name→value map) read from the request.</param>
+    /// <param name="model">The already-bound write model, typed as the view's <c>CrudType</c>.</param>
+    /// <param name="concurrencyToken">
+    /// The optimistic-concurrency token from the HTTP <c>If-Match</c> header, or <see langword="null"/>
+    /// when the view declares none.
+    /// </param>
+    /// <returns><see langword="true"/> when a row was updated; <see langword="false"/> when no row matched within scope.</returns>
+    /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
+    /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.UpdateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    public async Task<bool> UpdateAsync(
+        HttpContext http,
+        string viewName,
+        object key,
+        object model,
+        string? concurrencyToken)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(key);
+        ArgumentNullException.ThrowIfNull(model);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Update).ConfigureAwait(false);
+        var crudType = RequireCrudType(view);
+
+        var closed = UpdateAsyncMethod.MakeGenericMethod(crudType);
+        var task = (Task)closed.Invoke(executor, [view, key, model, scope, concurrencyToken, http.RequestAborted])!;
+        var result = await AwaitResultAsync(task).ConfigureAwait(false)
+            ?? throw new InvalidOperationException($"View '{viewName}' Update execution returned no result.");
+        return (bool)result;
+    }
+
+    /// <summary>
+    /// Executes the Delete facet (write): authorizes the <see cref="ViewFacet.Delete"/> facet
+    /// independently and fail-closed, shapes the server-trusted scope, then deletes the row identified by
+    /// <paramref name="key"/> through the Core <see cref="IViewExecutor.DeleteAsync"/> port
+    /// (Requirements R7.1, R7.2, R7.3, R8.1, R14.3, R14.4). <see cref="IViewExecutor.DeleteAsync"/> is
+    /// non-generic, so no runtime type closing is needed here.
+    /// </summary>
+    /// <param name="http">The current HTTP context.</param>
+    /// <param name="viewName">The registered (writable) view name being deleted from.</param>
+    /// <param name="key">The row key (scalar or field-name→value map) read from the request.</param>
+    /// <param name="concurrencyToken">
+    /// The optimistic-concurrency token from the HTTP <c>If-Match</c> header, or <see langword="null"/>
+    /// when the view declares none.
+    /// </param>
+    /// <returns><see langword="true"/> when a row was deleted; <see langword="false"/> when no row matched within scope.</returns>
+    /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
+    /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
+    [RequiresUnreferencedCode("Invokes IViewExecutor.DeleteAsync, whose key resolution is metadata-driven at runtime; use the source generator path for AOT.")]
+    public async Task<bool> DeleteAsync(HttpContext http, string viewName, object key, string? concurrencyToken)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentNullException.ThrowIfNull(key);
+
+        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Delete).ConfigureAwait(false);
+
+        return await executor.DeleteAsync(view, key, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Returns the view's <c>CrudType</c> for the write bridge, or throws when it is absent. A missing
+    /// <c>CrudType</c> means the view is not writable; the endpoint gates read-only/unregistered views to
+    /// an indistinguishable 404 before reaching this glue (Requirement R12), so this is defense in depth.
+    /// </summary>
+    private static Type RequireCrudType(ViewMetadata view) =>
+        view.CrudType
+        ?? throw new InvalidOperationException(
+            $"View '{view.Name}' has no CrudType; the write facet is only valid for a writable view.");
+
+    /// <summary>
     /// Runs the shared one-door pipeline: resolve metadata, gate via the authorizer, and build the
     /// server-trusted scope. Returns the pieces the facet methods need to invoke the executor.
     /// </summary>
@@ -268,9 +386,29 @@ public sealed class ViewRequestExecutor
         // The authorizer call and ShapeQuery share one context instance (R7.4). When no authorizer is
         // registered, access defaults to allow and the scope stays empty (R7.2). Awaiting the ValueTask
         // keeps the synchronous-decision common case allocation-free.
-        if (authorizer is not null && !await authorizer.IsAllowedAsync(context).ConfigureAwait(false))
+        if (authorizer is not null)
         {
-            throw new VistaForbiddenException(viewName, facet);
+            bool allowed;
+            try
+            {
+                allowed = await authorizer.IsAllowedAsync(context).ConfigureAwait(false);
+            }
+            catch (OperationCanceledException)
+            {
+                // A cancelled request is not an authorization failure; let it propagate unchanged.
+                throw;
+            }
+            catch (Exception)
+            {
+                // R7.3: an authorizer that fails to reach a decision (throws or errors) is treated as a
+                // deny and mapped to 403 — fail-closed, so a faulty authorizer can never expose a facet.
+                throw new VistaForbiddenException(viewName, facet);
+            }
+
+            if (!allowed)
+            {
+                throw new VistaForbiddenException(viewName, facet);
+            }
         }
 
         // AspNetCore owns the per-request scope (see ViewScope remarks); it is then handed to the executor.

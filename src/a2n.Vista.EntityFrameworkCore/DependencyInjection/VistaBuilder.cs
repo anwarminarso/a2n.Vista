@@ -4,6 +4,7 @@ using a2n.Vista.Authoring;
 using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
+using a2n.Vista.Write;
 
 namespace a2n.Vista.EntityFrameworkCore;
 
@@ -22,6 +23,7 @@ internal sealed class VistaBuilder : IVistaBuilder
     private readonly IViewRegistry _registry;
     private readonly IViewExecutionPlanRegistry _planRegistry;
     private readonly VistaDbContextAccessor _contextAccessor;
+    private readonly WriteFacetRegistry _writeFacetRegistry;
 
     /// <summary>The active route-group prefix, or <see langword="null"/> to use <see cref="DefaultRouteRoot"/>.</summary>
     private string? _currentPrefix;
@@ -29,15 +31,18 @@ internal sealed class VistaBuilder : IVistaBuilder
     internal VistaBuilder(
         IViewRegistry registry,
         IViewExecutionPlanRegistry planRegistry,
-        VistaDbContextAccessor contextAccessor)
+        VistaDbContextAccessor contextAccessor,
+        WriteFacetRegistry writeFacetRegistry)
     {
         ArgumentNullException.ThrowIfNull(registry);
         ArgumentNullException.ThrowIfNull(planRegistry);
         ArgumentNullException.ThrowIfNull(contextAccessor);
+        ArgumentNullException.ThrowIfNull(writeFacetRegistry);
 
         _registry = registry;
         _planRegistry = planRegistry;
         _contextAccessor = contextAccessor;
+        _writeFacetRegistry = writeFacetRegistry;
     }
 
     /// <inheritdoc />
@@ -61,6 +66,14 @@ internal sealed class VistaBuilder : IVistaBuilder
             // Then the matching EF execution plan, keyed by the same view name.
             var plan = ViewExecutionPlan.FromTemplateDefinition(definition);
             _planRegistry.Add(plan);
+
+            // Publish the captured write facet (Gaya A already materializes it on the definition) into
+            // the process write-facet registry so the EF execution layer can build the whitelisted
+            // TCrud → TEntity assignment (Decision Log D119, R13.1). Read-only views carry no facet.
+            if (definition.Crud is not null)
+            {
+                _writeFacetRegistry.Register(definition.Metadata.Name, definition.Crud);
+            }
         }
 
         return this;
@@ -71,13 +84,48 @@ internal sealed class VistaBuilder : IVistaBuilder
     public IVistaBuilder Register<TView>()
         where TView : class, new()
     {
-        var metadata = WithComposedRoute(BuildViewMetadata<TView>());
+        var source = CreateViewSource<TView>();
+        var built = source.BuildMetadata();
 
-        // Metadata-only registration: the view is discoverable, but no execution plan is built because
-        // Gaya B does not yet surface its source/projection to the EF layer (flagged limitation). The
-        // executor throws a clear "no plan registered" error if this view is executed. Pair it with
-        // Register<TView>(IViewExecutionPlan) to make it executable.
+        // Source-generator Phase 2 (Decision Log D118): if the generator emitted a compiled execution
+        // plan for this view, its [ModuleInitializer] published it into GeneratedExecutionPlanStore at
+        // module load. Look it up by the view's runtime Name (no assembly/type enumeration, R4.2).
+        var hasPlan = GeneratedExecutionPlanStore.TryGet(built.Name, out var compiled);
+
+        // Key fail-fast deferral (Decision Log D105 / M11): a view backed by a generated plan may declare
+        // no key and instead rely on startup model-derivation (single-source) — so its key is completed
+        // later by VistaModelKeyDerivationService. Defer the registration-time key check for those views;
+        // the startup hook derives a single-source key (R6.1) or fails closed for a keyless source (R6.4)
+        // or a non-single-source keyless view (R6.6). Views with no generated plan stay metadata-only and
+        // still require a declared key at registration (Decision Log D106), unchanged.
+        var metadata = hasPlan
+            ? ComposeRoute(built)
+            : WithComposedRoute(built);
+
+        // Metadata first (EF-free transport surface); the view is always discoverable.
         _registry.Add(metadata);
+
+        // Masking runtime (Decision Log D118 / R7): publish the captured mask specs (predicate + masker)
+        // for this view so the executor applies them at materialization. The runtime delegates are kept
+        // off the EF-free ViewMetadata and delivered via the Core MaskSpecRegistry, matched to the
+        // generated MaskAccessors by field name at apply time.
+        RegisterMaskSpecs(metadata.Name, source);
+
+        // Write facet (Decision Log D119 / R13.1): publish the captured MapWritable whitelist and
+        // concurrency-token selector into the process write-facet registry so the EF execution layer
+        // (the reflection write mapper) can build the whitelisted TCrud → TEntity assignment. The facet
+        // shape was validated when metadata was built above (ValidateWriteFacet). Read-only views carry
+        // no facet and register nothing.
+        RegisterWriteFacet(metadata.Name, source);
+
+        // Adopt the generated plan so the view becomes EXECUTABLE (List/Detail). Absent a generated plan,
+        // the view stays metadata-only (DR5) and the executor fails fast on execution with a clear
+        // "no plan" message. The existing Register<TView>(IViewExecutionPlan) overload is unchanged.
+        if (hasPlan)
+        {
+            _planRegistry.Add(new CompiledExecutionPlanAdapter(compiled));
+        }
+
         return this;
     }
 
@@ -88,7 +136,8 @@ internal sealed class VistaBuilder : IVistaBuilder
     {
         ArgumentNullException.ThrowIfNull(plan);
 
-        var metadata = BuildViewMetadata<TView>();
+        var source = CreateViewSource<TView>();
+        var metadata = source.BuildMetadata();
 
         if (!string.Equals(plan.ViewName, metadata.Name, StringComparison.Ordinal))
         {
@@ -100,6 +149,14 @@ internal sealed class VistaBuilder : IVistaBuilder
 
         _registry.Add(WithComposedRoute(metadata));
         _planRegistry.Add(plan);
+
+        // Publish the captured mask specs so masking is applied at materialization on this RUC plan too
+        // (Decision Log D118 / R7); reflection supplies the read/write accessors on the RUC path.
+        RegisterMaskSpecs(metadata.Name, source);
+
+        // Publish the captured write facet (Decision Log D119 / R13.1) so the EF execution layer can
+        // build the whitelisted TCrud → TEntity assignment on this explicit-plan path as well.
+        RegisterWriteFacet(metadata.Name, source);
         return this;
     }
 
@@ -153,15 +210,16 @@ internal sealed class VistaBuilder : IVistaBuilder
 
     /// <summary>
     /// Returns <paramref name="metadata"/> with its <see cref="ViewMetadata.Route"/> set to the full
-    /// route composed from the active group prefix (or the default root) and the view name. Registration
-    /// is the single source of a view's route (D101/D103).
+    /// route composed from the active group prefix (or the default root) and the view name, after
+    /// enforcing the D106 key fail-fast. Registration is the single source of a view's route
+    /// (D101/D103).
     /// </summary>
     private ViewMetadata WithComposedRoute(ViewMetadata metadata)
     {
         // Fail-fast (Decision Log D106): a registered view must declare a key so deterministic paging and
         // Detail-by-key can resolve. Keys come from .PrimaryKey() marks or an explicit Key(...) override
         // (Decision Log D104/D105). EF-model auto-derivation is not available at registration time (no
-        // DbContext yet), so an explicit declaration is required.
+        // DbContext yet), so an explicit declaration is required on this path.
         if (metadata.KeyFields.Count == 0)
         {
             throw new InvalidOperationException(
@@ -170,8 +228,17 @@ internal sealed class VistaBuilder : IVistaBuilder
                 "with .Key(...) (Decision Log D104/D106).");
         }
 
-        return metadata with { Route = $"{_currentPrefix ?? DefaultRouteRoot}/{metadata.Name}" };
+        return ComposeRoute(metadata);
     }
+
+    /// <summary>
+    /// Returns <paramref name="metadata"/> with its <see cref="ViewMetadata.Route"/> composed from the
+    /// active group prefix (or the default root) and the view name — <b>without</b> the D106 key
+    /// fail-fast. Used for source-generated executable views whose key may be derived from the EF model
+    /// at startup (Decision Log D105 / M11); the startup hook completes the key or fails closed.
+    /// </summary>
+    private ViewMetadata ComposeRoute(ViewMetadata metadata)
+        => metadata with { Route = $"{_currentPrefix ?? DefaultRouteRoot}/{metadata.Name}" };
 
     /// <summary>
     /// Combines an outer group prefix with an inner one. A top-level group ignores the default root and
@@ -187,13 +254,13 @@ internal sealed class VistaBuilder : IVistaBuilder
     }
 
     /// <summary>
-    /// Builds a Gaya B view's <see cref="ViewMetadata"/> through the internal
-    /// <see cref="IViewMetadataSource"/> seam (visible to this assembly via <c>InternalsVisibleTo</c>).
-    /// The route is the relative segment (view name); the global route root is owned by the AspNetCore
-    /// layer (D101). Only metadata is built here; the captured execution state is not touched.
+    /// Creates a Gaya B view instance and returns its internal <see cref="IViewMetadataSource"/> seam
+    /// (visible to this assembly via <c>InternalsVisibleTo</c>), through which metadata and captured mask
+    /// specs are read. The route is composed by the caller; the global route root is owned by the
+    /// AspNetCore layer (D101).
     /// </summary>
     [RequiresUnreferencedCode("Gaya B registration introspects the view type at runtime to build its metadata; use the source generator path for AOT.")]
-    private ViewMetadata BuildViewMetadata<TView>()
+    private static IViewMetadataSource CreateViewSource<TView>()
         where TView : class, new()
     {
         var instance = new TView();
@@ -206,6 +273,36 @@ internal sealed class VistaBuilder : IVistaBuilder
                 nameof(TView));
         }
 
-        return source.BuildMetadata();
+        return source;
+    }
+
+    /// <summary>
+    /// Publishes the view's captured mask specs into the Core <see cref="MaskSpecRegistry"/> keyed by
+    /// view name (Decision Log D118 / R7), so the executor can apply masking at materialization. A view
+    /// that masks no field registers nothing. The runtime mask delegates are intentionally not placed on
+    /// the EF-free <see cref="ViewMetadata"/>.
+    /// </summary>
+    private static void RegisterMaskSpecs(string viewName, IViewMetadataSource source)
+    {
+        var specs = source.GetMaskSpecs();
+        if (specs.Count > 0)
+        {
+            MaskSpecRegistry.Register(viewName, specs);
+        }
+    }
+
+    /// <summary>
+    /// Publishes the view's captured write facet into the process <see cref="WriteFacetRegistry"/> keyed
+    /// by view name (Decision Log D119 / R13.1), so the EF execution layer can build the whitelisted
+    /// <c>TCrud → TEntity</c> assignment. A read-only view exposes no write facet and registers nothing.
+    /// The runtime write mappings are intentionally kept off the EF-free <see cref="ViewMetadata"/>.
+    /// </summary>
+    private void RegisterWriteFacet(string viewName, IViewMetadataSource source)
+    {
+        var facet = source.GetCrudFacetDefinition();
+        if (facet is not null)
+        {
+            _writeFacetRegistry.Register(viewName, facet);
+        }
     }
 }

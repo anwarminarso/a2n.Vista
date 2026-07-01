@@ -1,0 +1,46 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    EF + source-generator consumer sample for Style B Executable (source-generator Phase 2, D118).
+
+    Unlike a2n.Vista.GeneratorSample (Core-only, which exercises just the Phase 1 accessor map), this
+    sample ALSO references the EF layer. With the EF-layer ICompiledViewExecutionPlan type present in
+    the compilation, the generator's Phase 2 emitter runs (CompiledPlanSupported == true): for each
+    analyzable single-source partial Style B view declared here it emits a `file sealed`
+    CompiledViewExecutionPlan_<View> plus a [ModuleInitializer] that registers it into
+    GeneratedExecutionPlanStore at module load. This is the ONLY way the test suite can obtain a REAL
+    generated compiled plan (the test project itself cannot reference the generator: its existing
+    non-partial Style B views would trip VISTA0001).
+
+    The behavioral-parity property test (a2n.Vista.Tests/GeneratedRucParityPropertyTests, task 7.6,
+    Property 1) references this assembly, forces its module to load, and runs the generated plan against
+    a hand-built SplitViewExecutionPlan (the RUC reference) over the same source/projection.
+
+    Per-task type prefix: every type here is prefixed `P1` (Property 1) to avoid collisions with the
+    sibling parity tasks (7.3-7.5) that may add their own prefixed fixtures to this shared sample.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props so the generated
+    code is built on every TFM the test project runs.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.StyleBExecSample</RootNamespace>
+    <AssemblyName>a2n.Vista.StyleBExecSample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The View<TQuery> base lives in Core; the compiled-plan contract + store live in the EF layer. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency), exactly how a real
+      consumer wires it (Spec 03 D71). OutputItemType="Analyzer" runs it at compile time;
+      ReferenceOutputAssembly="false" keeps its netstandard2.0 assembly out of this library's references.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

@@ -17,4 +17,16 @@
     <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      The AOT verification probe (src/Examples/a2n.Vista.AotProbe) exercises the *non-RUC* compiled
+      Style B read path (EfViewExecutor.ListCompiledAsync / DetailCompiledAsync) directly, so the
+      trim/AOT analyzer proves THAT path is free of IL2026/IL3050 without routing through the public
+      RUC ListAsync/DetailAsync entry points. Those compiled helpers are intentionally `internal`
+      (D118), so the probe needs access. This is the only InternalsVisibleTo this assembly grants
+      besides Core's grant to this layer.
+    -->
+    <InternalsVisibleTo Include="a2n.Vista.AotProbe" />
+  </ItemGroup>
+
 </Project>

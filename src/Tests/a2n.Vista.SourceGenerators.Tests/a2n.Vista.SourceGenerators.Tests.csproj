@@ -24,8 +24,22 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!--
+      Golden snapshots for the Phase 2 compiled execution plan (task 4.2). Embedded as resources (NOT
+      compiled as .cs source) and loaded by ViewExecutionPlanGeneratorTests via the assembly manifest,
+      so the large generated-plan text lives in readable files rather than escaped inline string literals.
+      The logical resource name is normalized to "Goldens.<file>" via LogicalName for a stable lookup.
+    -->
+    <EmbeddedResource Include="Goldens\*.verified.txt">
+      <LogicalName>Goldens.%(Filename)%(Extension)</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
     <PackageReference Include="TUnit" />
+    <!-- Property-based testing library (Property 8 snapshot determinism, task 4.3). -->
+    <PackageReference Include="CsCheck" />
     <!-- Needed to build a CSharpCompilation and drive CSharpGeneratorDriver from the test code. -->
     <PackageReference Include="Microsoft.CodeAnalysis.CSharp" />
   </ItemGroup>

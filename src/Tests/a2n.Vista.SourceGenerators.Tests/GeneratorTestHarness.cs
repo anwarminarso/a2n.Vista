@@ -56,6 +56,153 @@ namespace a2n.Vista.Metadata
 }
 ";
 
+    /// <summary>
+    /// Minimal stubs of the authoring fluent surface (<c>IViewBuilder&lt;TQuery&gt;</c> /
+    /// <c>IFieldBuilder&lt;TProp&gt;</c>) the generator recognizes by FQN so a view's
+    /// <c>From&lt;TSource&gt;(...)</c> / <c>Field(...)</c> / <c>Key(...)</c> / <c>MaskField(...)</c>
+    /// calls resolve to symbols whose containing type the generator matches. Mirrors the surface used by
+    /// the diagnostic tests so plan-emission analysis (task 4.1/4.2) sees the same fluent shape.
+    /// </summary>
+    public const string BuilderStubs = @"
+namespace a2n.Vista.Authoring
+{
+    public interface IFieldBuilder<TProp>
+    {
+        IFieldBuilder<TProp> PrimaryKey();
+        IFieldBuilder<TProp> Filterable(bool allowed = true);
+        IFieldBuilder<TProp> Sortable(bool allowed = true);
+        IFieldBuilder<TProp> Operators(params string[] operators);
+    }
+
+    public interface IViewBuilder<TQuery> where TQuery : class
+    {
+        IViewBuilder<TQuery> From<TSource>(
+            System.Linq.Expressions.Expression<System.Func<TSource, TQuery>> projection)
+            where TSource : class;
+
+        IViewBuilder<TQuery> Field<TProp>(
+            System.Linq.Expressions.Expression<System.Func<TQuery, TProp>> field,
+            System.Action<IFieldBuilder<TProp>> configure);
+
+        IViewBuilder<TQuery> Key(params System.Linq.Expressions.Expression<System.Func<TQuery, object?>>[] fields);
+
+        IViewBuilder<TQuery> MaskField<TProp>(
+            System.Linq.Expressions.Expression<System.Func<TQuery, TProp>> field,
+            System.Func<System.IServiceProvider, bool> shouldMask,
+            System.Func<TProp, TProp> masker);
+    }
+}
+";
+
+    /// <summary>
+    /// Stub declarations of the EF-layer / metadata / ports types the GENERATED execution plan names by
+    /// FQN. The single hard requirement for the generator to emit a plan is that
+    /// <c>a2n.Vista.EntityFrameworkCore.Execution.ICompiledViewExecutionPlan</c> is present in the
+    /// compilation (its absence gates the plan off — see <c>ViewAccessorGenerator.CompiledPlanSupported</c>).
+    /// The remaining types (<c>GeneratedExecutionPlanStore</c>, <c>MaskAccessor</c>, <c>IViewScope</c>,
+    /// <c>DbContext</c>) plus the <c>View.GetSourceRowFilters&lt;TSource&gt;()</c> hook mirror the real
+    /// runtime surface so the emitted <c>&lt;View&gt;_VistaExecutionPlan.g.cs</c> snapshots are realistic
+    /// and compilable. This stub set declares its OWN View base types, so it is combined with
+    /// <see cref="BuilderStubs"/> and the view source WITHOUT <see cref="VistaStubs"/> (which would
+    /// otherwise duplicate the View / ViewAccessorRegistry declarations).
+    /// </summary>
+    public const string ExecutionPlanStubs = @"
+namespace a2n.Vista.Authoring
+{
+    public abstract class View<TQuery>
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public System.Collections.Generic.IReadOnlyList<
+            System.Func<System.IServiceProvider, System.Linq.Expressions.Expression<System.Func<TSource, bool>>>>
+            GetSourceRowFilters<TSource>()
+            => System.Array.Empty<
+                System.Func<System.IServiceProvider, System.Linq.Expressions.Expression<System.Func<TSource, bool>>>>();
+    }
+
+    public abstract class View<TQuery, TCrud>
+    {
+        public string Name { get; set; } = string.Empty;
+
+        public System.Collections.Generic.IReadOnlyList<
+            System.Func<System.IServiceProvider, System.Linq.Expressions.Expression<System.Func<TSource, bool>>>>
+            GetSourceRowFilters<TSource>()
+            => System.Array.Empty<
+                System.Func<System.IServiceProvider, System.Linq.Expressions.Expression<System.Func<TSource, bool>>>>();
+    }
+}
+
+namespace a2n.Vista.Metadata
+{
+    public static class ViewAccessorRegistry
+    {
+        public static void Register(
+            string viewName,
+            System.Collections.Generic.IReadOnlyDictionary<string, System.Func<object, object?>> accessors)
+        {
+        }
+    }
+
+    public sealed record MaskAccessor(
+        string FieldName,
+        System.Func<object, object?> Get,
+        System.Func<object, object?, object> Set);
+}
+
+namespace a2n.Vista.Ports
+{
+    public interface IViewScope
+    {
+        System.Collections.Generic.IReadOnlyList<System.Linq.Expressions.Expression<System.Func<TSource, bool>>>
+            GetRowFilters<TSource>();
+    }
+}
+
+namespace Microsoft.EntityFrameworkCore
+{
+    public class DbContext
+    {
+        public System.Linq.IQueryable<T> Set<T>() where T : class => null!;
+    }
+}
+
+namespace a2n.Vista.EntityFrameworkCore.Execution
+{
+    public interface ICompiledViewExecutionPlan
+    {
+        string ViewName { get; }
+        System.Type RowType { get; }
+        System.Type SourceType { get; }
+        bool IsSingleSource { get; }
+
+        System.Linq.IQueryable CreateScopedQueryable(
+            global::Microsoft.EntityFrameworkCore.DbContext dbContext,
+            System.IServiceProvider services,
+            global::a2n.Vista.Ports.IViewScope scope);
+
+        bool TryGetMemberAccess(string fieldName, out System.Linq.Expressions.LambdaExpression accessor);
+
+        System.Linq.IOrderedQueryable ApplyPrimarySort(System.Linq.IQueryable source, string fieldName, bool descending);
+        System.Linq.IOrderedQueryable ApplyThenSort(System.Linq.IOrderedQueryable source, string fieldName, bool descending);
+
+        System.Collections.Generic.IReadOnlyList<global::a2n.Vista.Metadata.MaskAccessor> MaskAccessors { get; }
+    }
+
+    public static class GeneratedExecutionPlanStore
+    {
+        public static void Add(string viewName, ICompiledViewExecutionPlan plan)
+        {
+        }
+
+        public static bool TryGet(string viewName, out ICompiledViewExecutionPlan plan)
+        {
+            plan = null!;
+            return false;
+        }
+    }
+}
+";
+
     // All framework reference assemblies for the running TFM. Using the TRUSTED_PLATFORM_ASSEMBLIES set
     // is the standard way to give the in-memory compilation a complete reference closure (object,
     // System.Func<>, Dictionary<,>, etc.) without hand-picking individual facades.
@@ -77,6 +224,36 @@ namespace a2n.Vista.Metadata
             syntaxTrees: new[]
             {
                 CSharpSyntaxTree.ParseText(VistaStubs),
+                CSharpSyntaxTree.ParseText(viewSource),
+            },
+            references: References,
+            options: new CSharpCompilationOptions(
+                OutputKind.DynamicallyLinkedLibrary,
+                nullableContextOptions: NullableContextOptions.Enable));
+
+        var generator = new ViewAccessorGenerator();
+        GeneratorDriver driver = CSharpGeneratorDriver.Create(generator);
+        driver = driver.RunGeneratorsAndUpdateCompilation(compilation, out _, out _);
+
+        return driver.GetRunResult();
+    }
+
+    /// <summary>
+    /// Runs the generator over <paramref name="viewSource"/> combined with the authoring fluent stubs
+    /// (<see cref="BuilderStubs"/>) AND the EF-layer / metadata / ports stubs
+    /// (<see cref="ExecutionPlanStubs"/>) that make <c>ICompiledViewExecutionPlan</c> present in the
+    /// compilation, so the generator emits the Phase 2 <c>&lt;View&gt;_VistaExecutionPlan.g.cs</c>
+    /// compiled execution plan (task 4.1/4.2). The plan stubs declare their own View base types, so
+    /// <see cref="VistaStubs"/> is intentionally NOT included (it would duplicate them).
+    /// </summary>
+    public static GeneratorDriverRunResult RunWithExecutionPlanSupport(string viewSource)
+    {
+        var compilation = CSharpCompilation.Create(
+            assemblyName: "Vista.GeneratorTests.InMemory",
+            syntaxTrees: new[]
+            {
+                CSharpSyntaxTree.ParseText(ExecutionPlanStubs),
+                CSharpSyntaxTree.ParseText(BuilderStubs),
                 CSharpSyntaxTree.ParseText(viewSource),
             },
             references: References,
@@ -168,4 +345,22 @@ namespace a2n.Vista.Metadata
         => result.Results
             .SelectMany(static r => r.GeneratedSources)
             .Any(s => s.HintName.Contains(hintNameFragment, StringComparison.Ordinal));
+
+    /// <summary>
+    /// Produces a stable, byte-comparable snapshot of <em>every</em> source the generator emitted for a
+    /// run — each generated source's hint name and its full text (line endings normalized to <c>\n</c>),
+    /// ordered by hint name. This captures the Phase 2 execution-plan and member-access output (emitted
+    /// inside <c>&lt;View&gt;_VistaExecutionPlan.g.cs</c>) alongside the Phase 1 accessor output, so two
+    /// snapshots compare equal only when the whole generator output is byte-identical. Used by the
+    /// Property 8 (snapshot determinism, R10.1) property test.
+    /// </summary>
+    public static string AllGeneratedSourcesSnapshot(this GeneratorDriverRunResult result)
+    {
+        var sources = result.Results
+            .SelectMany(static r => r.GeneratedSources)
+            .OrderBy(static s => s.HintName, StringComparer.Ordinal)
+            .Select(static s => s.HintName + "\n" + s.SourceText.ToString().Replace("\r\n", "\n"));
+
+        return string.Join("\n----\n", sources);
+    }
 }

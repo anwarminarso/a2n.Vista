@@ -21,6 +21,8 @@
   <ItemGroup>
     <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
     <PackageReference Include="TUnit" />
+    <!-- Property-based testing (CsCheck): generated/RUC behavioral parity (Property 1, task 7.6). -->
+    <PackageReference Include="CsCheck" />
     <!--
       SQLite EF Core provider for the paging tests (task 12.5): exercises the real EfViewExecutor
       List path against a relational provider that translates LIKE / supports async cancellation.
@@ -47,6 +49,43 @@
       the GENERATED accessors are present in ViewAccessorRegistry at runtime.
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorSample\a2n.Vista.GeneratorSample.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated compiled execution plan exercised by the
+      Generated/RUC behavioral-parity property test (GeneratedRucParityPropertyTests, task 7.6). The test
+      project cannot reference the generator directly (its non-partial Style B views would trip VISTA0001),
+      so the generated plan is produced in this dedicated sample and consumed here.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.StyleBExecSample\a2n.Vista.StyleBExecSample.csproj" />
+    <!--
+      EF-aware generator consumer for the compiled execution plan (spec style-b-executable, Property 3):
+      its partial Style B views get a REAL generated CompiledViewExecutionPlan registered into
+      GeneratedExecutionPlanStore at module load, which DetailByKeyRoundTripPropertyTests drives.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.Examples.StyleBExecP3\a2n.Vista.Examples.StyleBExecP3.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated compiled execution plan with a
+      masked-without-opt-in field, exercised by the disallowed filter/sort rejection property test
+      (DisallowedFieldRejectionPropertyTests, task 7.5 / Property 4).
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorExecSampleP4\a2n.Vista.GeneratorExecSampleP4.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated compiled execution plan with a
+      conditionally-masked (record-row) field, exercised by the conditional-masking-at-materialization
+      property test (ConditionalMaskingPropertyTests, task 9.2 / Property 5).
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorExecSampleP5\a2n.Vista.GeneratorExecSampleP5.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated compiled execution plan with a
+      masked-without-opt-in field, exercised by the non-probeable masked-field property test
+      (NonProbeableMaskedFieldPropertyTests, task 9.3 / Property 6).
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorExecSampleP6\a2n.Vista.GeneratorExecSampleP6.csproj" />
+    <!--
+      EF + source-generator consumer hosting REAL generated compiled execution plans for KEYLESS and
+      EXPLICIT-key single-source views, exercised by the single-source PK auto-derivation property test
+      (SingleSourcePkDerivationPropertyTests, task 10.2 / Property 7).
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.Examples.StyleBExecP7\a2n.Vista.Examples.StyleBExecP7.csproj" />
   </ItemGroup>
 
 </Project>

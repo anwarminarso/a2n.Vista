@@ -33,7 +33,7 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     private readonly HashSet<string> _maskedFields = new(StringComparer.Ordinal);
     private readonly List<object> _rowFilterFactories = [];
     private readonly List<object> _projectedRowFilterFactories = [];
-    private readonly List<object> _maskFactories = [];
+    private readonly List<MaskSpec> _maskSpecs = [];
 
     private string? _viewName;
     private int? _maxPageSize;
@@ -58,11 +58,42 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     /// <summary>The accumulated pre-projection row-filter factories (server-trusted, D28).</summary>
     internal IReadOnlyList<object> RowFilterFactories => _rowFilterFactories;
 
+    /// <summary>
+    /// Returns the authored, server-trusted, pre-projection row-filter factories declared via
+    /// <see cref="WithRowFilter{TSource}"/>, strongly typed to <typeparamref name="TSource"/> and in
+    /// declaration order. The source-generated compiled execution plan (source-generator Phase 2 /
+    /// Decision Log D118) calls this to AND the predicates pre-projection over the source entity,
+    /// consistent with <c>SplitViewExecutionPlan</c> (R1.4). The factories are recovered by a typed cast
+    /// — never reflection — so the path stays AOT-clean. Returns an empty list when no row filter was
+    /// declared.
+    /// </summary>
+    /// <typeparam name="TSource">The EF source entity type the view projects from.</typeparam>
+    internal IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>> GetSourceRowFilters<TSource>()
+        where TSource : class
+    {
+        if (_rowFilterFactories.Count == 0)
+        {
+            return [];
+        }
+
+        var typed = new List<Func<IServiceProvider, Expression<Func<TSource, bool>>>>(_rowFilterFactories.Count);
+        foreach (var factory in _rowFilterFactories)
+        {
+            typed.Add((Func<IServiceProvider, Expression<Func<TSource, bool>>>)factory);
+        }
+
+        return typed;
+    }
+
     /// <summary>The accumulated post-projection row-filter factories (D28).</summary>
     internal IReadOnlyList<object> ProjectedRowFilterFactories => _projectedRowFilterFactories;
 
-    /// <summary>The accumulated field-mask factories (D29).</summary>
-    internal IReadOnlyList<object> MaskFactories => _maskFactories;
+    /// <summary>
+    /// The accumulated field masks (Decision Log D29/D95): one ordered <see cref="MaskSpec"/> per
+    /// <see cref="MaskField{TProp}"/> declaration, carrying both the request-scoped predicate and the
+    /// value transform so both reach runtime (source-generator Phase 2 / D118).
+    /// </summary>
+    internal IReadOnlyList<MaskSpec> MaskSpecs => _maskSpecs;
 
     /// <inheritdoc />
     public IViewBuilder<TQuery> Named(string viewName)
@@ -160,7 +191,15 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
 
         var name = GetMemberName(field);
         _maskedFields.Add(name);
-        _maskFactories.Add(masker);
+
+        // Capture BOTH the request-scoped predicate and the value transform (source-generator Phase 2 /
+        // D118). The masker is wrapped to a non-generic shape so the executor can apply it at
+        // materialization without knowing TProp. Previously the predicate was discarded; it is now
+        // honored at runtime (R7.1).
+        _maskSpecs.Add(new MaskSpec(
+            name,
+            shouldMask,
+            value => (object?)masker((TProp)value!)));
         return this;
     }
 
@@ -276,9 +315,9 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
             fields.Add(field);
         }
 
-        ValidateWriteFacet(_viewName, hasPrimaryKey);
-
         var keyFields = ResolveKeyFields(_viewName, fields);
+
+        ValidateWriteFacet(_viewName, hasPrimaryKey, keyFields);
 
         var limits = new HardLimits(
             _maxPageSize ?? HardLimits.DefaultMaxPageSize,
@@ -341,6 +380,21 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     /// <summary>The write target entity type, or <see langword="null"/> for a read-only view.</summary>
     private protected virtual Type? GetCrudEntityType() => null;
 
+    /// <summary>
+    /// The captured write facet as a <see cref="CrudFacetDefinition"/>, or <see langword="null"/> for a
+    /// read-only view. The write-capable builder overrides this so registration can feed the facet into
+    /// the shared write-facet registry.
+    /// </summary>
+    private protected virtual CrudFacetDefinition? GetCrudFacetDefinition() => null;
+
+    /// <summary>
+    /// Internal accessor over <see cref="GetCrudFacetDefinition"/> so the <c>IViewMetadataSource</c>
+    /// seam can hand the captured write facet to the registration path. Returns <see langword="null"/>
+    /// for a read-only view. Valid to call after <c>Configure</c> has run (and, for a write-capable
+    /// view, after metadata build has validated the facet).
+    /// </summary>
+    internal CrudFacetDefinition? CrudFacet => GetCrudFacetDefinition();
+
     /// <summary>Whether the view exposes only read facets. <see langword="true"/> for the read-only builder.</summary>
     private protected virtual bool IsReadOnlyView() => true;
 
@@ -350,7 +404,11 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
     /// </summary>
     /// <param name="viewName">The view name, for diagnostics.</param>
     /// <param name="hasPrimaryKey">Whether a projected field was marked as the primary key.</param>
-    private protected virtual void ValidateWriteFacet(string viewName, bool hasPrimaryKey)
+    /// <param name="keyFields">The resolved key field names (explicit or PK-derived), for the write-facet guards.</param>
+    private protected virtual void ValidateWriteFacet(
+        string viewName,
+        bool hasPrimaryKey,
+        IReadOnlyList<string> keyFields)
     {
         // Read-only views require no primary key (they expose only a List facet; Detail is an optional
         // by-PK fallback). The write-capable builder overrides this to enforce the facet invariants.

@@ -1,0 +1,40 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    EF-aware consumer fixture for the source-generator Phase 2 compiled execution plan
+    (spec style-b-executable, Property 2 — List page bound and unfiltered total; Decision Log D118).
+
+    Why a dedicated consumer assembly (and not the test project)? The source generator reports
+    VISTA0001 (error) for every non-partial Style B view it sees. The test project deliberately
+    declares several non-partial Style B views, so the generator cannot run there. This minimal
+    library is a REAL consumer the generator runs over: it references the EF layer (so
+    a2n.Vista.EntityFrameworkCore.Execution.ICompiledViewExecutionPlan is present and the Phase 2
+    plan is emitted) and declares a partial, single-source typed Style B view. The generator emits,
+    INTO this assembly, a `file sealed` CompiledViewExecutionPlan_<View> plus a [ModuleInitializer]
+    that registers the plan into GeneratedExecutionPlanStore at module load. The test project
+    references this library and drives List paging through the real generated compiled plan.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Examples.StyleBExecP2</RootNamespace>
+    <AssemblyName>a2n.Vista.Examples.StyleBExecP2</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- View<TQuery> base lives in Core; the EF layer provides ICompiledViewExecutionPlan + the store. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it (Spec 03 D71). With the EF layer referenced above, the generator emits the Phase 2
+      compiled execution plan for each analyzable, single-source partial Style B view declared here.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>
