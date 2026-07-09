@@ -1,0 +1,128 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · DataTables adapter demo (Northwind)</title>
+
+  <!-- jQuery DataTables (default styling) -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css" />
+  <!-- jQuery-QueryBuilder (default theme) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jQuery-QueryBuilder@2.6.2/dist/css/query-builder.default.min.css" />
+
+  <style>
+    :root { color-scheme: light dark; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: #1c2024;
+      background: #f6f7f9;
+    }
+    header {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 20px 28px;
+    }
+    header h1 { margin: 0 0 6px; font-size: 20px; }
+    header p { margin: 0; color: #94a3b8; font-size: 13px; }
+    header code {
+      background: #1e293b; color: #cbd5e1; padding: 1px 6px; border-radius: 4px; font-size: 12px;
+    }
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 28px 60px; }
+    .panel {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 18px 20px; margin-bottom: 20px;
+    }
+    .panel h2 { margin: 0 0 14px; font-size: 15px; color: #334155; text-transform: uppercase; letter-spacing: .04em; }
+    .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 12px; color: #64748b; font-weight: 600; }
+    select, button {
+      font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: #fff;
+    }
+    button { cursor: pointer; background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600; }
+    button.secondary { background: #fff; color: #334155; }
+    button:hover { filter: brightness(1.05); }
+    .hint { font-size: 12px; color: #64748b; margin: 4px 0 0; }
+    #status { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px; display: none; }
+    #status.ok { display: block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    #status.err { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    table.dataTable { width: 100% !important; }
+    .channels { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 12px; margin-top: 6px; }
+    .channels .c { border: 1px solid #e2e8f0; border-radius: 8px; padding: 10px 12px; background: #f8fafc; }
+    .channels .c b { display: block; font-size: 12px; color: #0f172a; margin-bottom: 2px; }
+    .channels .c span { font-size: 12px; color: #64748b; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vista · jQuery DataTables adapter demo</h1>
+    <p>
+      Live grid over the read-only Northwind view <code>vProductCategory</code>, driven end-to-end by the
+      DataTables adapter (<code>POST /api/views/vProductCategory/datatable</code>) and the QueryBuilder
+      schema (<code>GET /api/views/vProductCategory/querybuilder</code>).
+    </p>
+  </header>
+
+  <main>
+    <div id="status"></div>
+
+    <div class="panel">
+      <h2>Three request channels</h2>
+      <p class="hint">Every control below maps to one of Vista's neutral query channels (Decision Log D111).</p>
+      <div class="channels">
+        <div class="c"><b>Search</b><span>The DataTables global search box &rarr; <code>Contains</code> over searchable string fields.</span></div>
+        <div class="c"><b>Filter</b><span>The jQuery-QueryBuilder rules below &rarr; the structured <code>jsonQB</code> channel.</span></div>
+        <div class="c"><b>Scope</b><span>The category selector &rarr; the server-trusted <code>externalFilter</code> channel.</span></div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Scope &amp; structured filter</h2>
+      <div class="controls">
+        <div class="field">
+          <label for="categoryScope">Category scope (externalFilter)</label>
+          <select id="categoryScope">
+            <option value="">All categories</option>
+            <option value="1">Beverages</option>
+            <option value="2">Condiments</option>
+            <option value="3">Confections</option>
+            <option value="4">Dairy Products</option>
+            <option value="5">Grains/Cereals</option>
+            <option value="6">Meat/Poultry</option>
+            <option value="7">Produce</option>
+            <option value="8">Seafood</option>
+          </select>
+        </div>
+        <button id="applyBtn" type="button">Apply filters</button>
+        <button id="resetBtn" type="button" class="secondary">Reset</button>
+      </div>
+      <p class="hint">The filter builder is populated from the view's QueryBuilder schema, so only server-allowed fields and operators appear.</p>
+      <div id="builder" style="margin-top:14px;"></div>
+    </div>
+
+    <div class="panel">
+      <h2>vProductCategory</h2>
+      <table id="grid" class="display" style="width:100%">
+        <thead>
+          <tr>
+            <th>Product</th>
+            <th>Unit price</th>
+            <th>In stock</th>
+            <th>Discontinued</th>
+            <th>Category</th>
+            <th>Supplier</th>
+          </tr>
+        </thead>
+      </table>
+    </div>
+  </main>
+
+  <!-- Scripts: jQuery first, then DataTables and the QueryBuilder standalone bundle. -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/2.1.8/js/dataTables.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jQuery-QueryBuilder@2.6.2/dist/js/query-builder.standalone.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

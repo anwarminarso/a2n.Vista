@@ -1,6 +1,7 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using a2n.Vista.Examples.Northwind.Views;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using Microsoft.Data.Sqlite;
@@ -84,6 +85,15 @@ public static class WriteSelfTest
         Console.WriteLine($"IsReadOnly: {view.IsReadOnly}");
         Console.WriteLine($"KeyFields : [{string.Join(", ", view.KeyFields)}]");
         Console.WriteLine($"CrudType  : {view.CrudType?.Name ?? "(none)"}");
+
+        // Confirm the write path is exercising the SOURCE-GENERATED mapper, not the reflection fallback.
+        // The WriteMapperGenerator emits a [ModuleInitializer] into this assembly that registers the
+        // generated WriteMapper into GeneratedWriteMapperStore keyed by the view's runtime Name at
+        // assembly load — before DI — so WriteMapperResolver prefers it (first-wins) for every write to
+        // this view (Decision Log D121; Requirements R7.1, R7.4). This does not alter the write behavior;
+        // it only reports which mapper origin the Create/Update/Delete below run through.
+        var usingGenerated = GeneratedWriteMapperStore.TryGet(view.Name, out _);
+        Console.WriteLine($"WriteMapper: {(usingGenerated ? "GENERATED (source generator)" : "reflection fallback")}");
         Console.WriteLine();
 
         var failures = 0;

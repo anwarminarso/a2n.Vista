@@ -10,5 +10,12 @@
     <PackageProjectUrl>https://github.com/anwarminarso/a2n.Vista</PackageProjectUrl>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
     <Version>0.0.1</Version>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Transitive advisory acknowledged and suppressed for the audit (was declared in the former
+         stray src/Directory.Packages.props, moved here so it applies solution-wide). -->
+    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
+  </ItemGroup>
 </Project>

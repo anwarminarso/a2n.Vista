@@ -1,38 +1,42 @@
 <Solution>
   <Folder Name="/00 Core/">
-    <Project Path="a2n.Vista.Core/a2n.Vista.Core.csproj" />
     <Project Path="a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj" />
-    <Project Path="a2n.Vista.SourceGenerators/a2n.Vista.SourceGenerators.csproj" />
+    <Project Path="a2n.Vista.Core/a2n.Vista.Core.csproj" />
     <Project Path="a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj" />
-    <Project Path="Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj" />
     <Project Path="a2n.Vista.Newtonsoft/a2n.Vista.Newtonsoft.csproj" />
+    <Project Path="a2n.Vista.SourceGenerators/a2n.Vista.SourceGenerators.csproj" />
+    <Project Path="Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj" />
   </Folder>
   <Folder Name="/10 Adapters/">
-    <Project Path="Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj" />
     <Project Path="Adapters/a2n.Vista.Adapters.AgGrid/a2n.Vista.Adapters.AgGrid.csproj" />
+    <Project Path="Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj" />
+    <Project Path="Adapters/a2n.Vista.Adapters.GraphQL/a2n.Vista.Adapters.GraphQL.csproj" />
     <Project Path="Adapters/a2n.Vista.Adapters.MudBlazor/a2n.Vista.Adapters.MudBlazor.csproj" />
-    <Project Path="Adapters/a2n.Vista.Adapters.Telerik/a2n.Vista.Adapters.Telerik.csproj" />
+    <Project Path="Adapters/a2n.Vista.Adapters.OData/a2n.Vista.Adapters.OData.csproj" />
+    <Project Path="Adapters/a2n.Vista.Adapters.PrimeNG/a2n.Vista.Adapters.PrimeNG.csproj" />
     <Project Path="Adapters/a2n.Vista.Adapters.Syncfusion/a2n.Vista.Adapters.Syncfusion.csproj" />
     <Project Path="Adapters/a2n.Vista.Adapters.TanStackTable/a2n.Vista.Adapters.TanStackTable.csproj" />
-    <Project Path="Adapters/a2n.Vista.Adapters.PrimeNG/a2n.Vista.Adapters.PrimeNG.csproj" />
-    <Project Path="Adapters/a2n.Vista.Adapters.OData/a2n.Vista.Adapters.OData.csproj" />
-    <Project Path="Adapters/a2n.Vista.Adapters.GraphQL/a2n.Vista.Adapters.GraphQL.csproj" />
+    <Project Path="Adapters/a2n.Vista.Adapters.Telerik/a2n.Vista.Adapters.Telerik.csproj" />
   </Folder>
   <Folder Name="/20 Client/">
     <Project Path="a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj" />
   </Folder>
   <Folder Name="/30 Examples/">
     <Project Path="Examples/a2n.Vista.AotProbe/a2n.Vista.AotProbe.csproj" />
-    <Project Path="Examples/a2n.Vista.GeneratorSample/a2n.Vista.GeneratorSample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP4/a2n.Vista.GeneratorExecSampleP4.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP5/a2n.Vista.GeneratorExecSampleP5.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP6/a2n.Vista.GeneratorExecSampleP6.csproj" />
+    <Project Path="Examples/a2n.Vista.GeneratorSample/a2n.Vista.GeneratorSample.csproj" />
+    <Project Path="Examples/a2n.Vista.GeneratorWriteMapperSample/a2n.Vista.GeneratorWriteMapperSample.csproj" />
     <Project Path="Examples/a2n.Vista.StyleBExecSample/a2n.Vista.StyleBExecSample.csproj" />
     <Project Path="Examples/Northwind.DataAccess/Northwind.DataAccess.csproj" />
     <Project Path="Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" />
   </Folder>
   <Folder Name="/99 Tests/">
-    <Project Path="Tests/a2n.Vista.Tests/a2n.Vista.Tests.csproj" />
     <Project Path="Tests/a2n.Vista.SourceGenerators.Tests/a2n.Vista.SourceGenerators.Tests.csproj" />
+    <Project Path="Tests/a2n.Vista.Tests/a2n.Vista.Tests.csproj" />
+  </Folder>
+  <Folder Name="/_ Solution Items/">
+    <File Path="Directory.Packages.props" />
   </Folder>
 </Solution>

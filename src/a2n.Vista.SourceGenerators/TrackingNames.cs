@@ -28,5 +28,14 @@ namespace a2n.Vista.SourceGenerators
         /// this stage's outputs are served from cache, proving the equatable model (R1.3).
         /// </summary>
         public const string ViewModel = "ViewModel";
+
+        /// <summary>
+        /// The stage that yields the equatable <c>WriteMapperModel</c> per discovered typed Style B
+        /// writable view (the write-mapper generator's semantic transform output after filtering). When
+        /// an unrelated edit leaves a view's write-mapper model unchanged, this stage's outputs are
+        /// served from cache, proving the equatable model for the write-mapper pipeline (Spec
+        /// source-generator-write-mapper R11.x, mirroring Phase 1/2).
+        /// </summary>
+        public const string WriteMapperModel = "WriteMapperModel";
     }
 }

@@ -1,0 +1,44 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Real generator consumer for the Phase 3 generated WRITE MAPPER (spec source-generator-write-mapper,
+    task 7.1; Decision Log D121/D122). This is the write-path analogue of the Phase 2
+    a2n.Vista.GeneratorExecSampleP4/P5/P6 fixtures: it references BOTH Core and the EF layer AND the
+    source generator (as an analyzer), so the WriteMapperGenerator emits — INTO this assembly, per view —
+    a reflection-free `file static` <View>_VistaWriteMapper.g.cs holding a WriteMapper (cast + direct
+    member assignments) plus a [ModuleInitializer] that registers it into
+    a2n.Vista.EntityFrameworkCore.Execution.GeneratedWriteMapperStore keyed by the view's runtime Name.
+
+    The whole point is COMPILE ONCE, QUANTIFY OVER VALUES: the master oracle-parity property test
+    (task 7.2, Property 1) resolves each view's GENERATED mapper from the store and compares it, over
+    random (model, entity) VALUES, against a ReflectionWriteMapper built from the same captured
+    CrudFacetDefinition — never re-compiling per iteration. The views here are the representative,
+    compiled-once surface that test quantifies over (R4.1, R4.6, R3.6).
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so every generated write mapper is proven to compile on every supported consumer TFM (R11.5).
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorWriteMapperSample</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorWriteMapperSample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- View<TQuery, TCrud> + the write-authoring DSL live in Core; WriteMapper is in Core.Write and the
+         GeneratedWriteMapperStore the module initializer targets lives in the EF layer. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it. Because Core AND EF are referenced above, the WriteMapperGenerator recognizes the
+      typed Style B writable views declared here and emits a real generated write mapper + registration
+      for each analyzable one.
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

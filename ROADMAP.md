@@ -163,21 +163,28 @@ README message:
 
 ## Status & Next Steps
 
+> For the detailed, authoritative snapshot see `docs/PROJECT-STATUS.md`; for the milestone tracker with
+> progress bars and the dependency graph see `docs/MILESTONES.md`. Build is green on net8/9/10 with
+> **206 tests/TFM** + 21 generator tests, and the Northwind read + write self-tests pass.
+
 **Done (v0.x foundation):**
 
 1. Repo skeleton: solution layout, multi-targeted build (.NET 8/9/10), test framework (TUnit on Microsoft.Testing.Platform).
 2. Pillar 1 (View) spec plus supporting specs: filter/query (02), source generator (03), adapter contract (04), ASP.NET Core mapping (05), operations & observability (10), versioning & deprecation (11).
-3. Working core implementation:
-   - **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, filter contract, the `IViewExecutor`/`IViewScope` ports.
-   - **EntityFrameworkCore** — View execution (List + Detail, paging, filter/sort/search, provider-aware) and DbContext-bound authoring.
-   - **AspNetCore** — generic endpoint mapping, RFC 7807 error mapping, fail-open authorizer with a startup warning.
-4. End-to-end Northwind example (read-only `vProductCategory`) with a passing self-test.
+3. **Pillar 1 — Core View engine (complete, read + write):**
+   - **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, filter contract, the `IViewExecutor`/`IViewScope`/`IViewRegistry` ports, `FilterCompiler` (tri-whitelist + DoS guards), the write seam (`WriteMapper`/`IWriteFacetRegistry`).
+   - **EntityFrameworkCore** — View execution (List + Detail, deterministic paging, filter/sort/search, composite keys, provider-aware) and the write facet (Create/Update/Delete with mass-assignment whitelist, optimistic concurrency, single `SaveChanges`); `IQueryDialect` port + Npgsql dialect; startup PK auto-derivation (D105) and provider guard.
+   - **AspNetCore** — action-style endpoint mapping (`POST list/detail/export/create/update/delete` + `GET metadata`), RFC 7807 error mapping, secure-by-default one-door auth (fail-closed in non-Development).
+4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: the **DataTables.NET** reference adapter, the pluggable **export pipeline** (CSV/XLSX), and the **QueryBuilder metadata-schema** emitter.
+5. **Pillar 3 — source generator:** Phase 1 (shape-driven export accessors), Phase 2 (executable typed Style B via generated `ICompiledViewExecutionPlan` + masking runtime), and the write-DSL phase (the generated write mapper) have landed — the typed Style B read + write path is AOT-clean.
+6. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper).
 
 **Next:**
 
-1. A minimal source-generator prototype that removes reflection from the hot path (Pillar 3) — the AOT-clean typed-DTO path.
-2. The first reference adapter: `a2n.Vista.Adapters.DataTablesNet` (Pillar 2, client half).
-3. A TypeScript client generator from `ViewMetadata`.
-4. Security hardening & hard limits (max page size, max export rows), compile-time OpenAPI.
+1. The remaining source-generator phases (Pillar 3): `JsonSerializerContext` generation, compile-time OpenAPI, and Style A (anonymous) accessor/serialization coverage.
+2. A TypeScript client generator from `ViewMetadata`.
+3. Observability (D100 — OpenTelemetry) and versioning/deprecation (D99).
+4. The remaining reference adapters (AG Grid, MudBlazor first; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — eight are still empty scaffolds.
 5. A GitHub Actions CI workflow (build + test across the target frameworks).
-6. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).
+6. Bulk write operations (v1.x; an array body is rejected with 400 today).
+7. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).

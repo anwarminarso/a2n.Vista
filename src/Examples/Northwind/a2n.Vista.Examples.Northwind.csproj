@@ -31,6 +31,20 @@
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
+
+    <!--
+      Reference the Phase 3 source generator as an ANALYZER only (no runtime assembly dependency) — the
+      same way a real consumer wires it, mirroring a2n.Vista.GeneratorWriteMapperSample. Because Core and
+      the EF layer are referenced above, the WriteMapperGenerator recognizes the typed Style B writable
+      view declared here (vWritableMemo) and emits — INTO this assembly — a reflection-free generated
+      WriteMapper plus a [ModuleInitializer] that registers it into
+      a2n.Vista.EntityFrameworkCore.Execution.GeneratedWriteMapperStore keyed by the view's runtime Name.
+      At assembly load the resolver then prefers the generated mapper (first-wins) over reflection, so the
+      write self-test exercises the generated write path (Decision Log D121/D122).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

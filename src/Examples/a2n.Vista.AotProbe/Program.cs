@@ -76,6 +76,11 @@ internal static class Program
         //    the trim/AOT analyzer proves it is free of IL2026/IL3050 (R5.1/R5.4/R5.5/R1.7).
         await StyleBExecutableProbe.RunAsync().ConfigureAwait(false);
 
+        // 6) Phase 3 (spec source-generator-write-mapper, Task 11.1, R10.1–R10.6): bind a payload →
+        //    resolve a WriteMapper via WriteMapperResolver → apply it to an entity → persist, so the
+        //    trim/AOT analyzer proves the generated write-mapper path is free of IL2026/IL3050.
+        await GeneratedWriteMapperProbe.RunAsync().ConfigureAwait(false);
+
         return 0;
     }
 

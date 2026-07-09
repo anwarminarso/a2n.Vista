@@ -86,6 +86,14 @@
       (SingleSourcePkDerivationPropertyTests, task 10.2 / Property 7).
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.Examples.StyleBExecP7\a2n.Vista.Examples.StyleBExecP7.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated WRITE MAPPERS for the representative
+      typed Style B writable views (spec source-generator-write-mapper, task 7.1). Referencing it loads
+      its [ModuleInitializer]-driven registrations into GeneratedWriteMapperStore so the master
+      oracle-parity property test (GeneratedReflectionWriteParityPropertyTests, task 7.2 / Property 1)
+      can resolve each view's generated mapper and compare it against the ReflectionWriteMapper oracle.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorWriteMapperSample\a2n.Vista.GeneratorWriteMapperSample.csproj" />
   </ItemGroup>
 
 </Project>

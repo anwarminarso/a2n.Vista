@@ -1,12 +1,30 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-01 (`style-b-executable` **LANDED**: D118 — source-generator Phase 2 =
-> M10 + M11 + M13. Second generator emitter produces AOT-clean `ICompiledViewExecutionPlan` per typed
-> Style B view → executable List/Detail (DR5 closed for typed views); D105 single-source PK
-> auto-derivation at startup; masking runtime on materialization. Build green net8/9/10, **156 tests/TFM**,
-> Northwind self-test PASS, AOT probe clean. M9 Phase 1 landed earlier: D117 — incremental generator +
-> shape-driven export accessors)
+> Last updated: 2026-07-09 (`source-generator-write-mapper` **LANDED**: M9 write-DSL phase — D121 (the
+> generated write mapper) + D122 (interim write-authoring startup guards promoted to build-time analyzer
+> diagnostics). A second incremental generator (`WriteMapperGenerator`) now emits, per analyzable typed
+> Style B writable view, a reflection-free `WriteMapper` as C# source + a `[ModuleInitializer]` that fills
+> the M12 `GeneratedWriteMapperStore`, so `WriteMapperResolver` silently prefers the generated mapper with
+> **zero executor changes** — the reflection `[RequiresUnreferencedCode]` write path is now AOT-clean for
+> typed Style B. Build-time diagnostics `VISTA0030`/`VISTA0031`/`VISTA0032` (errors: zero-mapping /
+> non-scalar target / key-or-token target) replace the interim startup fail-fast guards (D122); `VISTA0033`
+> (warning) marks an unanalyzable `MapWritable` chain → silent reflection fallback. Build green net8/9/10,
+> **206 tests/TFM** (0 failed/skipped) + 21 generator tests, Northwind read + write self-tests PASS (write
+> now reports `WriteMapper: GENERATED`). See §2.13.
+> Prior: 2026-07-07 (`write-path` **LANDED**: M12 — D119 (write mapping seam) + D120 (write
+> error vocabulary + concurrency signalling). Writable Style B views now execute Create/Update/Delete
+> through the `IViewExecutor` write facet (DR8), replacing the DR7 501 stub: default-deny `MapWritable`
+> mass-assignment whitelist, protected keys + concurrency token, optimistic concurrency (`If-Match`/`ETag`),
+> server-trusted scope, single `SaveChanges`, minimal (PK-only) write responses, RFC 7807 write-error
+> vocabulary; reflection write mapper behind a fixed-signature seam (`WriteMapperResolver`) a future
+> generated mapper fills, `[RequiresUnreferencedCode]` confined to that branch. Build green net8/9/10,
+> **204 tests/TFM** (0 failed/skipped), Northwind read + write self-tests PASS. See §2.12.
+> Prior: 2026-07-01 (`style-b-executable` **LANDED**: D118 — source-generator Phase 2 = M10 + M11 + M13.
+> Second generator emitter produces AOT-clean `ICompiledViewExecutionPlan` per typed Style B view →
+> executable List/Detail (DR5 closed for typed views); D105 single-source PK auto-derivation at startup;
+> masking runtime on materialization. 156 tests/TFM, AOT probe clean. M9 Phase 1 earlier: D117 —
+> incremental generator + shape-driven export accessors)
 > Purpose: a single, authoritative snapshot of *where the project is*, *what was decided*, and *what
 > is next*, so a new chat/work session can continue without re-litigating settled decisions ("no
 > dispute"). When this document and the code disagree, **the code is the source of truth**; reconcile
@@ -38,7 +56,7 @@ repo at `d:\GitHub\DynData`, **do not modify**; see `.kiro/steering/readonly-ext
 
 Three pillars (see `ROADMAP.md`):
 - **Pillar 1 — Core View engine** (View concept, neutral query/filter contract, EF execution, ASP.NET
-  endpoints). **Implemented.**
+  endpoints). **Implemented — read (List/Detail) and write (Create/Update/Delete) (M12, D119/D120).**
 - **Pillar 2 — Adapters + neutral query engine** (server half = query engine, **built & hardened**:
   PK-in-metadata, deterministic paging, DoS guards, `IQueryDialect` port, composite keys — see §2.4;
   HTTP surface is now action-style POST + `GET metadata` — see §2.5; multi-channel Search/Scope request —
@@ -50,8 +68,13 @@ Three pillars (see `ROADMAP.md`):
   D118):** a second emitter produces an AOT-clean `ICompiledViewExecutionPlan` per typed Style B view
   (compile-time projection, per-field member-access, typed sort appliers, masked-field accessors) →
   executable List/Detail (DR5 closed for typed views), plus startup single-source PK auto-derivation
-  (D105) and the masking runtime on materialization — see §2.11. The remaining reflection paths
-  (Style A serialization, write mapping) stay `[RequiresUnreferencedCode]` until later phases.
+  (D105) and the masking runtime on materialization — see §2.11. **Phase 3 landed (M9 write-DSL,
+  D121/D122):** a second generator (`WriteMapperGenerator`) emits a reflection-free `WriteMapper` per
+  analyzable typed Style B writable view into the M12 `GeneratedWriteMapperStore`, so the write path is
+  now AOT-clean for typed Style B (the reflection mapper is a fallback only) — see §2.13. The remaining
+  reflection paths (Style A serialization/write; there is no typed-`TCrud` Style A write) stay
+  `[RequiresUnreferencedCode]` until later phases. The **write path (M12, D119/D120)** is implemented on
+  the executor write facet — see §2.12.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -286,9 +309,9 @@ with the reflection (RUC) path — behavioral parity is the central guard.
   run-at-most-once, never on the request hot path.
 - **AOT + write-contract guard**: the Phase 1 AOT probe (`a2n.Vista.AotProbe`, `IsAotCompatible`,
   IL2026/IL3050-as-errors) now also drives the generated Style B List/Detail compiled path — green build =
-  zero IL2026/IL3050 on that path; Style A keeps its RUC annotation. Writable Style B endpoints
-  (Create/Update/Delete) still return **501** (M12 unbuilt; DR7); the generated plan implements List/Detail
-  only (R4.7).
+  zero IL2026/IL3050 on that path; Style A keeps its RUC annotation. The generated plan implements
+  List/Detail only (R4.7); the write facet (Create/Update/Delete) is delivered separately by M12 on the
+  reflection mapper (§2.12) — at Phase 2 those endpoints still returned 501.
 - **Property tests (1–8)** placed next to the code they validate: generated/RUC behavioral parity (model-
   based), List page-bound + unfiltered total, Detail-by-key round-trip, disallowed-field rejection-before-
   SQL (interceptor spy), conditional masking at materialization, masked-field non-probeable, single-source
@@ -296,9 +319,122 @@ with the reflection (RUC) path — behavioral parity is the central guard.
   (`a2n.Vista.GeneratorExecSampleP5/P6`, `a2n.Vista.Examples.StyleBExecP7`) emit real compiled plans the
   tests run through `EfViewExecutor`.
 
-**Still deferred after Phase 2:** the **write path (M12, DR7)** — Create/Update/Delete stay 501;
-`JsonSerializerContext` generation; OpenAPI; TypeScript client; Style A (anonymous) accessor/serialization
-generation; cross-assembly discovery polish (D97) and `MapView<TView>()` (DR10).
+**Still deferred after Phase 2 (now partly closed):** the **write path (M12)** is **DONE** (D119/D120,
+see §2.12). Remaining: `JsonSerializerContext` generation; OpenAPI; TypeScript client; Style A (anonymous)
+accessor/serialization generation; the **generated** write mapper (M12 ships the reflection mapper);
+cross-assembly discovery polish (D97) and `MapView<TView>()` (DR10).
+
+### 2.12 `write-path` — M12 write path / CRUD (landed; spec `.kiro/specs/write-path`)
+Secure-by-default Create/Update/Delete for writable Style B views (**D119** write mapping seam, **D120**
+write error vocabulary + concurrency signalling), replacing the DR7 501 stub. Build green net8/9/10,
+**204 tests/TFM** (0 failed/skipped), Northwind **read + write** self-tests PASS (Create/Update/Delete,
+0 failed operations).
+
+- **Core (EF-free/HTTP-free)** — `a2n.Vista.Core/Write/`: the fixed-signature `WriteMapper`
+  (`(object model, object entity) → void`) seam; `IWriteFacetRegistry` + `WriteFacetRegistry` (per-view
+  captured `CrudFacetDefinition`, populated at registration by both authoring styles); `WriteErrorCode`
+  vocabulary + `WriteErrorCodes` wire strings; and the typed write exceptions (`VistaWriteException` base,
+  `VistaValidationException`, `VistaWriteKeyException`, `VistaPreconditionRequiredException`,
+  `VistaConcurrencyConflictException`, `VistaWriteConflictException`, `VistaBulkNotEnabledException`). Both
+  adapters raise/consume these without referencing each other (R14.6). `ViewMetadata` stays EF-free
+  (only `CrudType`/`CrudEntityType`).
+- **Style B authoring** — `CrudBuilder`/`CrudFacetState` now capture the `MapWritable` expressions
+  (ordered `WritableFieldMapping` From/To lambdas), the `WithConcurrencyToken` selector, and `AllowBulk`
+  into a full `CrudFacetDefinition` (matching Style A). Interim startup fail-fast guards reject a
+  zero-mapping facet, a navigation/non-scalar target, and a key-field/concurrency-token target (the
+  interim net for the M9 analyzer diagnostics VISTA0030/0031/0032).
+- **EntityFrameworkCore** — `ReflectionWriteMapper` (RUC) compiles+caches the whitelisted assignment
+  from the captured lambdas (skips key/token/navigation targets, defense in depth); `GeneratedWriteMapperStore`
+  (empty this milestone, a future M9 `[ModuleInitializer]` fills it); `WriteMapperResolver` resolves one
+  `WriteMapper` per write — generated-preferred, reflection fallback — with `[RequiresUnreferencedCode]`
+  confined to the fallback branch. `EfViewExecutor` implements the DR8 write facet: entity resolution
+  within the server-trusted `IViewScope` (AND-ed pre-projection, unvalidated), composite-capable key
+  normalization/coercion (reusing `FilterCompiler.CoerceValue`), optimistic-concurrency pre-check, single
+  `SaveChanges`, and `DbUpdateException`/`DbUpdateConcurrencyException` → typed 409 translation
+  (leak-free message; provider detail kept only as inner exception).
+- **AspNetCore (dumb mapper)** — `VistaWriteBinding` (body/model/key/`If-Match` binding), `VistaWriteResponse`
+  (PK-only), `VistaWriteRequestBody`; `VistaProblemResults` maps every typed write failure onto the shared
+  RFC 7807 envelope with `extensions["code"]` (and honors a `WriteErrorCode` carried by
+  `VistaInvalidRequestException`); `ViewRequestExecutor` write methods authorize the write facet
+  independently and fail-closed (deny/throw → 403); `HandleWriteAsync` replaces the 501 stub — write
+  routes mapped only for `!IsReadOnly`, an indistinguishable 404 for miss/read-only/no-plan, a 428 gate
+  when a token view omits `If-Match`, and 200 (create: PK body; update/delete: `ETag`) / 404 / 409 /
+  4xx-5xx outcomes.
+- **Bulk deferred (Requirement 15):** an array body → HTTP 400 `write-bulk-not-enabled`; the `AllowBulk`
+  authoring flag enables no execution path this milestone.
+- **Northwind:** a writable `vWritableMemo` Style B view (`Memo`/`VistaMemos`, `MapWritable` whitelist +
+  `RowVersion` token) and a write self-test (Create → Update → Delete against an isolated in-memory DB, so
+  the read-only shipped `northwind.db` is never mutated).
+- **Tests:** the nine correctness properties (whitelisted-only assignment, request-key authority, delete
+  precision, composite-key order independence, not-found indistinguishability, concurrency abort + token
+  round-trip, write-response minimality, error-envelope conformance/non-leakage, rejected-write state
+  preservation — CsCheck via TUnit, ≥100 iterations each) plus example/integration/layering suites.
+
+**Still deferred (write path):** ~~the **generated** write mapper (M9 write-DSL phase; the store is created
+but empty), the build-time analyzer diagnostics VISTA0030/0031/0032 (interim startup guards ship now)~~ —
+**both DONE (2026-07-09, D121/D122; see §2.13).** Remaining: **bulk** Create/Update/Delete (v1.x).
+
+### 2.13 `source-generator-write-mapper` — M9 Source Generator, write-DSL phase (landed; spec `.kiro/specs/source-generator-write-mapper`)
+Source-generator **write-DSL phase** (**D121** generated write mapper, **D122** interim write-authoring
+startup guards promoted to build-time analyzer diagnostics), filling the single write-path seam M12 left
+open (the `GeneratedWriteMapperStore` was created but empty). Build green net8/9/10, **206 tests/TFM** in
+`a2n.Vista.Tests` + **21 tests/TFM** in `a2n.Vista.SourceGenerators.Tests` (0 failed/skipped), Northwind
+read + write self-tests PASS — the write self-test now reports `WriteMapper: GENERATED (source generator)`,
+proving the generated mapper is live and parity-equivalent to the reflection oracle.
+
+- **Second incremental generator** (`a2n.Vista.SourceGenerators`, `netstandard2.0`, no Vista project ref,
+  FQN recognition): `WriteMapperGenerator` (`IIncrementalGenerator`) — an independent pipeline from the
+  Phase 1/2 `ViewAccessorGenerator` that happens to recognize the same base type, keeping each emitter's
+  equatable model small and its snapshot tests isolated. A cheap syntax predicate (partial class with a
+  base list) + a semantic transform that walks base types to `a2n.Vista.Authoring.View<TQuery,TCrud>`
+  (**arity-2 only** — the write facet requires a typed `TCrud`) and recognizes the CRUD facet
+  (`CrudOn`/`MapWritable`/`WithConcurrencyToken`). Produces a fully equatable `WriteMapperModel` (+
+  `WriteMappingModel`) reusing `EquatableArray<T>`/`LocationInfo` so an unrelated edit does not regenerate
+  every view (R2.1, R2.2, R5.3, R11.*).
+- **`MapWritable` analyzer**: extracts the ordered `(CrudMember, EntityMember)` pairs from the fluent
+  chain in textual declaration order, unwrapping compiler-inserted `Convert`/`ConvertChecked` to the
+  innermost member; recognizes a `Simple_Member_Selector` (single-parameter lambda whose stripped body is
+  a member access on the parameter). Captures the concurrency-token member (`WithConcurrencyToken`) and
+  statically declared key members (`.Key(...)`/`.PrimaryKey()`), and each target's scalar-ness (value type
+  with `Nullable<T>` unwrapped, `string`, or `byte[]`). Marks a view **unanalyzable** when any selector is
+  not simple after unwrapping or `TCrud` is not a named type.
+- **Emitter**: for an analyzable, non-erroring view, emits a `file static` `<View>_VistaWriteMapper.g.cs`
+  holding a `WriteMapper` (`Action<object,object>`) that casts `model`→`TCrud`, `entity`→`TEntity`, and
+  emits **exactly one** `entity.<EntityMember> = model.<CrudMember>;` per **safe** mapping (target is
+  neither a declared key nor the concurrency token, and is scalar) in declaration order — deterministic,
+  byte-for-byte, defense-in-depth matching the reflection oracle. An empty safe subset yields a conforming
+  no-op mapper. No `Activator.CreateInstance`, `PropertyInfo` Get/SetValue, or `Expression.Compile` —
+  trim/AOT-clean. Plus one `[ModuleInitializer]` per view that constructs the view via its public
+  parameterless ctor, reads `.Name`, and calls `GeneratedWriteMapperStore.Add(name, Mapper)` (mirrors
+  Phase 1/2); no ctor → nothing emitted, store untouched (R3.*, R4.*, R5.*, R6.*, R11.*).
+- **Build-time diagnostics (D122)**: `VISTA0030` (error, zero declared mappings), `VISTA0031` (error, once
+  per non-scalar/navigation target), `VISTA0032` (error, once per key-field/concurrency-token target) —
+  all **gate emission** (no mapper when any error fires for a view); `VISTA0033` (warning) names an
+  unanalyzable `MapWritable` chain + the offending expression → build succeeds, view falls back to
+  reflection. These replace the interim `ViewBuilderOfTCrud.ValidateWriteFacet` startup fail-fast guards
+  (retired; the primary-key executability guard is retained). Category `a2n.Vista.SourceGenerators`,
+  help-links under `docs/diagnostics/`, analyzer release tracking updated.
+- **Runtime wiring unchanged**: no change to `EfViewExecutor`, `WriteMapperResolver`, or
+  `GeneratedWriteMapperStore` (built in M12 to be filled by exactly this generator); `Resolve(view)`
+  prefers the store (generated) over `ReflectionWriteMapper` (RUC fallback), and the executor never
+  branches on mapper origin.
+- **AOT + samples**: the AOT probe (`a2n.Vista.AotProbe`, IL2026/IL3050-as-errors) now drives a generated
+  write mapper end-to-end (bind → generated mapper → executor) and asserts the generated type/members carry
+  no `[RequiresUnreferencedCode]`/`[RequiresDynamicCode]`; new `src/Examples/a2n.Vista.GeneratorWriteMapperSample`
+  is a real consumer assembly with representative views (one/many mappings, aliasing for R4.6 ordering,
+  empty/no-op whitelist, nullable + `byte[]` scalars). The Northwind `vWritableMemo` view now gains a
+  generated mapper; its unchanged Create → Update → Delete self-test runs through it (live coexistence +
+  parity).
+
+**Test-coverage caveat:** the emitter, analyzer, diagnostics, guard retirement, AOT probe, and the
+Northwind generated-mapper self-test all landed and pass; some of the spec's **optional CsCheck property
+tests** (oracle-parity master, store/resolver coexistence, deterministic-emission) remain deferred
+(`.kiro/specs/source-generator-write-mapper/tasks.md`). Live parity is currently proven by the Northwind
+write self-test running through the generated mapper plus the generator recognition/packaging tests.
+
+**Still deferred after the write-DSL phase:** `JsonSerializerContext` generation (separate spec), OpenAPI
+(M18), Style A (anonymous) accessor/serialization generation, and **bulk** write (v1.x; array body → 400).
+Style A write is out of scope by construction (write requires a typed `TCrud`).
 
 ---
 
@@ -311,9 +447,12 @@ Under `docs/spec/` (all **English** after the 2026-06-20 migration; see §4 lang
   (D104–D109 via `query-engine-hardening`); **prose lags the code** for §10 (dialect port) — the code is
   authoritative (see §2.4/§6).
 - `03-source-generator.md` — Pillar 3. Status: **DESIGN INTENT (frozen; D71–D81)** — remains the
-  authoritative intent; **Phase 1 has landed** (M9/D117, shape-driven export accessors — see §2.10) and
+  authoritative intent; **Phase 1 has landed** (M9/D117, shape-driven export accessors — see §2.10),
   **Phase 2 has landed** (D118, `style-b-executable` — executable typed Style B + D105 + masking runtime;
-  see §2.11). The rest (JSON contexts, OpenAPI, Style A) is still forward-looking.
+  see §2.11), and **the write-DSL phase has landed** (D121/D122, `source-generator-write-mapper` — the
+  generated write mapper + build-time diagnostics; see §2.13). The rest (JSON contexts, OpenAPI, Style A)
+  is still forward-looking. Note: this spec's §13 diagnostic catalog is **superseded** on the write-DSL
+  numbering — the landed code uses `VISTA0030`–`VISTA0033` per §2.13 (code is the source of truth).
 - `04-adapter-contract.md` — Pillar 2 adapters. Status: **DESIGN INTENT (frozen)**.
 - `05-aspnetcore-mapping.md` — HTTP composition. Status: IMPLEMENTED as the **action-style surface**
   (D110 via `http-surface-redesign`, supersedes DR3); **prose lags the code** — the code + §2.5 are
@@ -403,7 +542,10 @@ These record where the code intentionally differs from the early spec sketches. 
   via `Register<TView>(plan)` or source-gen).
 - **DR6** List result = **`ViewListResult<TRow>`** (`PagedResult<TRow> Page` + `long TotalRowsUnfiltered`).
   **Supersedes** the proposed `ViewQueryResult<T>` (Spec 02 §6.2, D51).
-- **DR7** Write endpoints mapped but EF write **not implemented** → **501** (writable) / **404** (read-only).
+- **DR7** ~~Write endpoints mapped but EF write **not implemented** → **501** (writable) / **404**
+  (read-only).~~ **Superseded by M12 (D119/D120):** the EF write facet is now implemented; writable views
+  execute Create/Update/Delete (200/404/409/428/4xx), read-only/unregistered/no-plan views produce an
+  indistinguishable **404**. The 501 stub is gone. See §2.12.
 - **DR8** Write is **merged into `IViewExecutor`** (`CreateAsync<TCrud>`/`UpdateAsync<TCrud>`/`DeleteAsync`),
   **not** a separate `IViewWriter` (contra Spec 05 §7.1 D82). `IViewExecutor` is **generic**
   (`ListAsync<TRow>`/`DetailAsync<TRow>`), not erased-to-`object` `QueryAsync(ViewQueryExecution)`.
@@ -445,7 +587,11 @@ These record where the code intentionally differs from the early spec sketches. 
 | D116 | `metadata-schema-adapters` spec / `04` §5.2/§8.2 | Per-grid metadata schema: `IViewMetadataAdapter` + QueryBuilder `metadataQB` emitter; `GET {route}/{RouteSuffix}`. Supersedes the D113 deferral. |
 | D117 | `source-generator` spec / `03` §15 | **Landed (M9, Phase 1).** Phased source generator: `IIncrementalGenerator` (`netstandard2.0`, FQN recognition, no Vista project ref) recognizing typed Style B views; shape-driven read-accessor generation; `[ModuleInitializer]` registration into a Core `ViewAccessorRegistry`; export pipeline prefers generated accessors with reflection fallback (coexistence); `VISTA0001`/`VISTA0002` diagnostics; snapshot + AOT test harness. **Deferred to later phases:** executable plans/`CompiledView`, member-access for filter/sort, `JsonSerializerContext`, OpenAPI, projection/`MapWritable` DSL analysis, Style A. Builds on Spec 03 D71–D81. See §2.10. |
 | D118 | `style-b-executable` spec / `03` §15 | **Landed (M9 Phase 2 = M10 + M11 + M13).** A second generator emitter produces, per typed Style B view, an AOT-clean `ICompiledViewExecutionPlan` (compile-time projection, per-field member-access, strongly-typed sort appliers, masked-field accessors, single-source marker) published via `[ModuleInitializer]` into a static `GeneratedExecutionPlanStore` that `AddVista` drains → executable List/Detail (**DR5 closed for typed views**); the contract does not inherit the RUC `IViewExecutionPlan` (DR8 seam split). Adds non-RUC `EfViewExecutor.ListCompiledAsync`/`DetailCompiledAsync`; the masking runtime (`MaskApplier`, fail-closed, post-projection in memory, SQL unchanged); D105 single-source PK auto-derivation (`VistaModelKeyDerivationService : IHostedService`); `VISTA0003`/`VISTA0020` diagnostics. Write path stays **501** (M12, separate spec). Build green net8/9/10, 156 tests/TFM, Northwind self-test PASS, AOT probe clean. Builds on D117 / Spec 03 D71–D81. See §2.11. |
-| **D119+** | **next free** | Use for new decisions. |
+| D119 | `write-path` spec / `01` §7 | **Landed (M12).** Write mapping seam: fixed-signature `WriteMapper` delegate (`(object,object)→void`) resolved once per write via `WriteMapperResolver` (generated-preferred `GeneratedWriteMapperStore`, RUC `ReflectionWriteMapper` fallback — `[RequiresUnreferencedCode]` confined to the fallback); Style B `CrudBuilder` captures `MapWritable`/token/`AllowBulk` into a `CrudFacetDefinition` delivered via the Core `IWriteFacetRegistry`. Zero executor changes when the future M9 write-DSL mapper lands. See §2.12. |
+| D120 | `write-path` spec / `01` §7 | **Landed (M12).** Write error-code vocabulary + concurrency signalling: `WriteErrorCode`/`WriteErrorCodes` on the shared RFC 7807 envelope (`extensions["code"]`), typed write exceptions mapped by `VistaProblemResults`; optimistic concurrency via `If-Match`/`ETag` (428 precondition gate, 409 mismatch/`SaveChanges` conflict). Bulk deferred (array → 400; `AllowBulk` enables no path). See §2.12. |
+| D121 | `source-generator-write-mapper` spec / `03` §15 | **Landed (M9 write-DSL phase).** The generated write mapper: a second `IIncrementalGenerator` (`WriteMapperGenerator`) emits, per analyzable typed Style B writable view, a reflection-free `WriteMapper` (`Action<object,object>` = casts + one whitelisted scalar assignment per safe `MapWritable` mapping, declaration-ordered, defense-in-depth) as `file static` C# + a `[ModuleInitializer]` filling the M12 `GeneratedWriteMapperStore` keyed by the view's runtime `Name`; `WriteMapperResolver` prefers it over `ReflectionWriteMapper` (RUC fallback) with **zero executor changes** → the typed Style B write path is now AOT-clean. `VISTA0033` (warning) marks an unanalyzable chain → silent reflection fallback. Builds on D117/D118. See §2.13. |
+| D122 | `source-generator-write-mapper` spec / `03` §13 | **Landed (M9 write-DSL phase).** Interim write-authoring startup guards promoted to **build-time** analyzer diagnostics: `VISTA0030` (zero mappings), `VISTA0031` (non-scalar/navigation target), `VISTA0032` (key-field/concurrency-token target) — all **errors** that gate emission; the mirroring fail-fast guards in `ViewBuilderOfTCrud.ValidateWriteFacet` were retired (the primary-key executability guard is retained). Adopts the code/PROJECT-STATUS `VISTA0030`–`VISTA0033` numbering; the frozen `03` §13 catalog's conflicting assignment is superseded. See §2.13. |
+| **D123+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -480,6 +626,10 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 - **Masking runtime** — **DONE (2026-07-01, D118)**: `MaskApplier` applies `MaskField` transforms post-
   projection in memory on List/Detail/export (SQL unchanged), fail-closed, AOT-clean via generated
   `MaskAccessor` with an RUC reflection fallback for Style A.
+- **Write path / CRUD (M12)** — **DONE (2026-07-07, D119/D120)**: Create/Update/Delete on the
+  `IViewExecutor` write facet — `MapWritable` whitelist, protected keys/token, optimistic concurrency,
+  server-trusted scope, single `SaveChanges`, minimal write responses, RFC 7807 write errors; reflection
+  mapper behind a generator-fillable seam. Bulk still deferred. (See §2.12.)
 - **Export formatting** (CSV/XLSX), **metadata cache headers**, **full HTTP TestServer integration test** —
   all DONE (see §7).
 - **Doc prose**: `docs/spec/02` §10 (dialect port) and `docs/spec/05` (action surface) prose not yet
@@ -489,18 +639,24 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 
 ## 7. Backlog / known gaps (tech debt)
 
-- **Write path (DR7)** — Create/Update/Delete return 501. Needs `TCrud → entity` mapping (reflection
-  now, source-gen later), concurrency, SaveChanges, bulk. Its own spec (M12). **Stays 501 through D118.**
+- **Write path (DR7 → M12)** — **DONE (2026-07-07, D119/D120)**: Create/Update/Delete implemented on the
+  reflection `TCrud → entity` mapper (behind a generator-fillable seam), with mass-assignment whitelist,
+  optimistic concurrency, single `SaveChanges`, and the RFC 7807 write-error model. **The generated write
+  mapper + build-time diagnostics landed (2026-07-09, D121/D122; §2.13)** — the store is now filled by
+  `WriteMapperGenerator`, the reflection mapper is a fallback only, and VISTA0030/0031/0032 are build-time
+  errors (interim startup guards retired). **Remaining write-path debt:** **bulk** ops (v1.x; array body →
+  400 today). Its own specs (`write-path`, `source-generator-write-mapper`). See §2.12/§2.13.
 - **Style B executable (DR5)** — **DONE (2026-07-01, D118)**: typed Style B views are executable for
   List/Detail via the generated `ICompiledViewExecutionPlan` (`AddVista` adopts it; metadata-only views
   fail fast on execution). See §2.11.
 - **Masking runtime** — **DONE (2026-07-01, D118)**: `MaskApplier` applies `MaskField` transforms on
   materialization (fail-closed, post-projection, SQL unchanged). See §2.11.
 - **Per-channel enforcement** — bind to Spec 04 adapters.
-- **Source generator (Pillar 3)** — **Phase 1 landed (M9/D117, §2.10)** and **Phase 2 landed (D118, §2.11):**
-  executable typed Style B plans + member-access for filter/sort + masking runtime + D105 PK derivation.
-  Remaining phases: `JsonSerializerContext`, OpenAPI, Style A accessor/serialization, plus cross-assembly
-  discovery (D97) and `MapView<TView>()` (DR10).
+- **Source generator (Pillar 3)** — **Phase 1 landed (M9/D117, §2.10)**, **Phase 2 landed (D118, §2.11):**
+  executable typed Style B plans + member-access for filter/sort + masking runtime + D105 PK derivation,
+  and **the write-DSL phase landed (D121/D122, §2.13):** the generated write mapper + build-time
+  diagnostics (VISTA0030–0033). Remaining phases: `JsonSerializerContext`, OpenAPI, Style A
+  accessor/serialization, plus cross-assembly discovery (D97) and `MapView<TView>()` (DR10).
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
@@ -579,9 +735,17 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `ViewAccessorGenerator.cs` (the `IIncrementalGenerator` — predicate/transform, equatable `ViewModel` +
   `EquatableArray<T>`, accessor-map + `[ModuleInitializer]` emission; **Phase 2** adds the
   `CompiledViewExecutionPlan_<View>` emitter — projection reproduction, member-access map, typed sort
-  appliers, `MaskAccessor` get/set, plan-store `[ModuleInitializer]`), `DiagnosticDescriptors.cs`
-  (`VISTA0001` error, `VISTA0002` info, **`VISTA0003`** warning + **`VISTA0020`** error — D118),
+  appliers, `MaskAccessor` get/set, plan-store `[ModuleInitializer]`); **write-DSL phase (D121/D122):**
+  `WriteMapperGenerator.cs` (the second `IIncrementalGenerator` — `MapWritable` analyzer, equatable
+  `WriteMapperModel`/`WriteMappingModel`, safe-subset `WriteMapper` emitter + store `[ModuleInitializer]`);
+  `DiagnosticDescriptors.cs` (`VISTA0001` error, `VISTA0002` info, **`VISTA0003`** warning, **`VISTA0020`**
+  error — D118; **`VISTA0030`/`VISTA0031`/`VISTA0032`** errors + **`VISTA0033`** warning — D121/D122),
   `LocationInfo.cs`, `TrackingNames.cs`, `AssemblyMarker.cs`, `AnalyzerReleases.{Shipped,Unshipped}.md`.
+- Write seams (Core/EF; D119/D120, filled by D121): `src/a2n.Vista.Core/Write/` (`WriteMapper`,
+  `IWriteFacetRegistry`); `src/a2n.Vista.EntityFrameworkCore/Execution/` (`GeneratedWriteMapperStore`,
+  `WriteMapperResolver`, `ReflectionWriteMapper`). The interim `ViewBuilderOfTCrud.ValidateWriteFacet`
+  zero-mapping/non-scalar/key-token guards were **retired** (D122); the primary-key executability guard
+  remains.
 - Masking primitives (Core): `src/a2n.Vista.Core/Metadata/` (`MaskSpec`, `MaskAccessor`); captured by
   `Authoring/ViewBuilder.cs` (`MaskField` records predicate + masker; D118).
 - DataTables adapter: `src/Adapters/a2n.Vista.Adapters.DataTablesNet/` (`DataTablesModels.cs`,
@@ -604,7 +768,10 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   the generated Style B List/Detail compiled path are trim/AOT-clean — `StyleBProbeView.cs` +
   `StyleBExecutableProbe.cs`, D118) — M9/D117 + D118. Phase-2 generator-consumer fixtures:
   `src/Examples/a2n.Vista.GeneratorExecSampleP5` (conditional masking), `…ExecSampleP6` (non-probeable
-  masked field), `src/Examples/a2n.Vista.Examples.StyleBExecP7` (single-source PK derivation).
+  masked field), `src/Examples/a2n.Vista.Examples.StyleBExecP7` (single-source PK derivation). Write-DSL
+  phase (D121): `src/Examples/a2n.Vista.GeneratorWriteMapperSample` (representative writable views —
+  one/many mappings, aliasing, empty whitelist, nullable + `byte[]` scalars); the AotProbe drives a
+  generated write mapper end-to-end.
 - Tests: `src/Tests/a2n.Vista.Tests/` (`AuthorizationTests`, `MaskingTests`, `RouteGroupTests`,
   `WireVersionTests`, `EnforcementTests`, `DefaultAllowTests`, `PagingTests`, `TypingInvariantTests`,
   `WidgetTestFixtures`, `QueryEngineHardeningTests`, `HttpSurfaceTests`, `DialectStartupGuardTests`,
@@ -614,4 +781,6 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `NonProbeableMaskedFieldPropertyTests`, `MaskingFailClosedAndOptInTests`,
   `SingleSourcePkDerivationPropertyTests`, `ModelKeyDerivationFailureTests`, `WritableStyleB501Tests`);
   generator snapshot/golden tests in `src/Tests/a2n.Vista.SourceGenerators.Tests/`
-  (`ViewAccessorGeneratorTests`, `GeneratorTestHarness`, `SnapshotDeterminismPropertyTests`).
+  (`ViewAccessorGeneratorTests`, `ViewExecutionPlanGeneratorTests`, `GeneratorDiagnosticsTests`,
+  `GeneratorTestHarness`, `SnapshotDeterminismPropertyTests`; **D121/D122:** `WriteMapperRecognitionTests`,
+  `WriteMapperGeneratorPackagingTests`).

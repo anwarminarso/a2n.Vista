@@ -9,6 +9,53 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **SourceGenerators** — Pillar 3, write-DSL phase (Decision Log D121/D122): a
+  second incremental generator (`WriteMapperGenerator`) that statically analyzes
+  each analyzable typed Style B writable view's `MapWritable` chain and emits a
+  reflection-free `WriteMapper` (casts + one whitelisted scalar assignment per
+  safe mapping, declaration-ordered) plus a `[ModuleInitializer]` filling the
+  `GeneratedWriteMapperStore`. `WriteMapperResolver` prefers the generated mapper
+  over the reflection fallback with no executor changes, so the typed Style B
+  write path is now AOT-clean. The interim write-authoring startup guards are
+  promoted to build-time diagnostics `VISTA0030` (zero mappings), `VISTA0031`
+  (non-scalar target), `VISTA0032` (key/token target) — all errors — and
+  `VISTA0033` (unanalyzable chain → warning + reflection fallback); help docs
+  under `docs/diagnostics/`.
+- **SourceGenerators / EntityFrameworkCore** — Pillar 3, Phase 2 (Decision Log
+  D118): a generated AOT-clean `ICompiledViewExecutionPlan` per typed Style B
+  view (compile-time projection, per-field member-access, typed sort appliers,
+  masked-field accessors) registered into `GeneratedExecutionPlanStore` and
+  adopted by `AddVista`, making typed Style B views executable for List/Detail
+  through a non-`[RequiresUnreferencedCode]` compiled path. Bundles single-source
+  primary-key auto-derivation from `DbContext.Model` at startup (D105) and the
+  masking runtime (`MaskField` transforms applied post-projection in memory,
+  fail-closed, SQL unchanged). Diagnostics `VISTA0003`/`VISTA0020`.
+- **Write path / CRUD** (Decision Log D119/D120): Create/Update/Delete for
+  writable Style B views on the `IViewExecutor` write facet, replacing the prior
+  501 stub. Default-deny `MapWritable` mass-assignment whitelist, protected keys
+  and concurrency token, optimistic concurrency via `If-Match`/`ETag`,
+  server-trusted scope, a single `SaveChanges` per operation, minimal (PK-only)
+  write responses, and an RFC 7807 write-error vocabulary. The `TCrud → entity`
+  mapping runs behind a fixed-signature seam (`WriteMapper`/`WriteMapperResolver`)
+  that the generated write mapper now fills. Bulk operations deferred (array body
+  → 400).
+- **Adapters** — the **DataTables.NET** reference adapter (Decision Log
+  D111–D114): a Core `IViewAdapter` contract, multi-channel `Search`/`Scope`
+  request slots on `ViewQueryRequest`, `jsonQB`/`externalFilter` parsing, and the
+  `POST {route}/datatable` endpoint. A pluggable **export pipeline** (D115):
+  `IViewExportWriter` with built-in zero-dependency CSV and XLSX writers,
+  overridable via `AddVistaExportWriter<T>()`. A per-grid **metadata-schema**
+  emitter (D116): `IViewMetadataAdapter` + the jQuery-QueryBuilder `metadataQB`
+  schema at `GET {route}/querybuilder`.
+- **Query engine hardening** (Decision Log D104, D106–D109): a view key model in
+  metadata (`FieldMetadata.IsPrimaryKey`/`ViewMetadata.KeyFields`, composite),
+  deterministic paging (key-field tiebreaker), an `IQueryDialect` port with a
+  default (LIKE) dialect and an optional Npgsql (ILIKE) dialect, DoS guards
+  (filter depth/leaves/`In`-count/string-length), and composite Detail-by-key.
+- **HTTP action surface** (Decision Log D110): `POST {route}/list|detail|export`
+  and `GET {route}/metadata` with the key and query carried in the JSON body,
+  superseding the earlier query-string List form. Opt-in metadata cache headers
+  (`ETag`/`Cache-Control`/304) via `EnableMetadataCaching()`.
 - **SourceGenerators** — Pillar 3, Phase 1 (Decision Log D117): an incremental
   generator (`ViewAccessorGenerator`) that recognizes typed Style B views by
   fully-qualified name and emits shape-driven field accessors plus a
@@ -35,7 +82,15 @@ While the version is `0.x`, anything may change between releases.
   `NOTICES`, `COPYING`, and this changelog.
 
 ### Changed
-- The global route root is owned solely by the AspNetCore layer (Decision Log
-  D101); `ViewMetadata.Route` now carries only the view-name segment.
+- **Routing** (Decision Log D101/D103, model R): a view's full route is composed
+  at registration (default root `/api/views`, or a `RouteGroup` prefix) and baked
+  into `ViewMetadata.Route`; the AspNetCore layer is a dumb mapper that maps each
+  view at its `ViewMetadata.Route`. View names are globally unique and one view
+  maps to exactly one endpoint.
+- **Authorization** (Decision Log D94): without an `IViewAuthorizer`, endpoints
+  allow-all with a startup warning in Development but **fail-closed at startup**
+  in non-Development environments unless `AllowAnonymousAccess()` is called.
+- **Masking** (Decision Log D95): a `MaskField`'d field defaults to
+  non-filterable and non-searchable unless explicitly opted back in.
 
 [Unreleased]: https://github.com/anwarminarso/a2n.Vista/commits

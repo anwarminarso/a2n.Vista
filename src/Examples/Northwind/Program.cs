@@ -60,6 +60,13 @@ var app = builder.Build();
 
 // No seeding: the extracted Northwind database is the source of truth (read-only sample).
 
+// Serve the interactive demo UI from wwwroot (index.html): a jQuery DataTables grid plus a
+// jQuery-QueryBuilder panel wired to the adapter endpoints (POST {route}/datatable and
+// GET {route}/querybuilder). Static-file serving is independent of the API surface — MapVistaViews still
+// owns everything under /api/views. UseDefaultFiles rewrites "/" to "/index.html" before UseStaticFiles.
+app.UseDefaultFiles();
+app.UseStaticFiles();
+
 // RFC 7807 error mapping, then the generic view endpoints under {root}/{viewName}.
 app.UseVistaExceptionHandling();
 app.MapVistaViews();

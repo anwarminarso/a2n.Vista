@@ -23,11 +23,16 @@ namespace a2n.Vista.Tests;
 /// <see cref="WritableFieldMapping"/> whitelist (with both the <c>From</c>/<c>To</c> selectors and the
 /// resolved <c>CrudMember</c>/<c>EntityMember</c> names), the <c>ConcurrencyToken</c> selector, and the
 /// <c>AllowsBulk</c> flag — matching the Style A shape so both styles feed the same registry (D119).</item>
-/// <item><b>Guards</b> — the interim startup fail-fast net (the M9 analyzer diagnostics VISTA0030/0031/0032
-/// until the source generator reports them at build time) throws <see cref="InvalidOperationException"/>
-/// during metadata build, naming the offending view and the offending mapping/member, for: a zero-mapping
-/// facet (R4.4), a navigation/non-scalar target (R4.6), a key-field target (R5.4), and a concurrency-token
-/// target (R5.4).</item>
+/// <item><b>Guards</b> — the interim mass-assignment startup fail-fast net that mirrored the M9 analyzer
+/// diagnostics VISTA0030/0031/0032 has been <b>retired</b> (D122, Requirement 9.6): those unsafe-mapping
+/// cases are now caught exactly once, at build time, by the source-generator write-DSL analyzer, so
+/// <c>ValidateWriteFacet</c> no longer throws for a zero-mapping facet (R4.4), a navigation/non-scalar
+/// target (R4.6), or a key-field/concurrency-token target (R5.4) — these facets now register and capture
+/// cleanly. The only <b>retained</b> startup guards are the two <em>write-executability</em>
+/// preconditions that cannot be a build-time diagnostic: a write-capable view must declare a write facet
+/// (<c>CrudOn</c>) and must have a resolvable primary key so a write can locate the target row (R4.4).
+/// Both still throw <see cref="InvalidOperationException"/> during metadata build, naming the offending
+/// view.</item>
 /// </list>
 /// </summary>
 /// <remarks>
@@ -113,69 +118,121 @@ public sealed class WriteAuthoringCaptureTests
         await Assert.That(facet.AllowsBulk).IsFalse();
     }
 
-    // ---- Guards (R4.4 / R4.6 / R5.4): fail-fast naming the offending view/mapping ------------------
+    // ---- Guard retirement (D122, R9.6): the interim mass-assignment fail-fast net is gone ----------
 
     /// <summary>
-    /// VISTA0030 (interim): a CRUD facet that declares zero <c>MapWritable</c> mappings fails fast, since
-    /// write is default-deny (R4.4). The message names the offending view and points at <c>MapWritable</c>.
+    /// VISTA0030 retired (R9.6): a CRUD facet that declares zero <c>MapWritable</c> mappings no longer
+    /// fails fast at startup — the source generator reports it at build time. Registration now succeeds
+    /// and the facet is captured with an empty whitelist (the reflection oracle yields a conforming no-op
+    /// mapper for it).
     /// </summary>
     [Test]
-    public async Task Guard_ZeroMapping_Facet_Fails_Fast_Naming_View()
+    public async Task ZeroMapping_Facet_No_Longer_Fails_Fast_And_Captures_Empty_Whitelist()
     {
-        var ex = await CaptureRegistration<ZeroMappingView>();
+        var facet = await RegisterAndGetFacet<ZeroMappingView>("write-zero-mapping");
 
-        await Assert.That(ex).IsNotNull();
-        await Assert.That(ex!.Message).Contains("write-zero-mapping");
-        await Assert.That(ex.Message).Contains("MapWritable");
+        await Assert.That(facet).IsNotNull();
+        await Assert.That(facet!.WritableFields.Count).IsEqualTo(0);
     }
 
     /// <summary>
-    /// VISTA0031 (interim): a <c>MapWritable</c> target that is a navigation / non-scalar member is
-    /// rejected (R4.6). The message names the offending view and the offending mapping's members.
+    /// VISTA0031 retired (R9.6): a <c>MapWritable</c> target that is a navigation / non-scalar member no
+    /// longer fails fast at startup — the source generator reports it at build time. Registration now
+    /// succeeds and the mapping is captured verbatim (the reflection oracle's defense in depth skips the
+    /// non-scalar target at write time).
     /// </summary>
     [Test]
-    public async Task Guard_Navigation_Target_Fails_Fast_Naming_Mapping()
+    public async Task Navigation_Target_No_Longer_Fails_Fast_And_Captures_Mapping()
     {
-        var ex = await CaptureRegistration<NavigationTargetView>();
+        var facet = await RegisterAndGetFacet<NavigationTargetView>("write-navigation-target");
 
-        await Assert.That(ex).IsNotNull();
-        await Assert.That(ex!.Message).Contains("write-navigation-target");
-        await Assert.That(ex.Message).Contains(nameof(NavigationCrud.Related));
-        await Assert.That(ex.Message).Contains("non-scalar");
+        await Assert.That(facet).IsNotNull();
+        await Assert.That(facet!.WritableFields.Count).IsEqualTo(1);
+        await Assert.That(facet.WritableFields[0].EntityMember).IsEqualTo(nameof(CaptureSourceEntity.Related));
     }
 
     /// <summary>
-    /// VISTA0032 (interim): a <c>MapWritable</c> target that is a key field is rejected — row identity
-    /// comes from the request key, never the body (R5.4). The message names the view and the key member.
+    /// VISTA0032 retired (R9.6): a <c>MapWritable</c> target that is a key field no longer fails fast at
+    /// startup — the source generator reports it at build time. Registration now succeeds and the mapping
+    /// is captured verbatim (the reflection oracle's defense in depth skips the key member at write time).
     /// </summary>
     [Test]
-    public async Task Guard_KeyField_Target_Fails_Fast_Naming_Key_Member()
+    public async Task KeyField_Target_No_Longer_Fails_Fast_And_Captures_Mapping()
     {
-        var ex = await CaptureRegistration<KeyFieldTargetView>();
+        var facet = await RegisterAndGetFacet<KeyFieldTargetView>("write-key-target");
 
-        await Assert.That(ex).IsNotNull();
-        await Assert.That(ex!.Message).Contains("write-key-target");
-        await Assert.That(ex.Message).Contains(nameof(CaptureSourceEntity.Id));
-        await Assert.That(ex.Message).Contains("key field");
+        await Assert.That(facet).IsNotNull();
+        await Assert.That(facet!.WritableFields.Count).IsEqualTo(1);
+        await Assert.That(facet.WritableFields[0].EntityMember).IsEqualTo(nameof(CaptureSourceEntity.Id));
     }
 
     /// <summary>
-    /// VISTA0032 (interim): a <c>MapWritable</c> target that is the concurrency token is rejected — the
-    /// token is compared for optimistic concurrency, never client-assigned (R5.4). The message names the
-    /// view and the token member.
+    /// VISTA0032 retired (R9.6): a <c>MapWritable</c> target that is the concurrency token no longer fails
+    /// fast at startup — the source generator reports it at build time. Registration now succeeds and the
+    /// mapping is captured verbatim (the reflection oracle's defense in depth skips the token member at
+    /// write time).
     /// </summary>
     [Test]
-    public async Task Guard_ConcurrencyToken_Target_Fails_Fast_Naming_Token_Member()
+    public async Task ConcurrencyToken_Target_No_Longer_Fails_Fast_And_Captures_Mapping()
     {
-        var ex = await CaptureRegistration<TokenTargetView>();
+        var facet = await RegisterAndGetFacet<TokenTargetView>("write-token-target");
+
+        await Assert.That(facet).IsNotNull();
+        await Assert.That(facet!.WritableFields.Count).IsEqualTo(1);
+        await Assert.That(facet.WritableFields[0].EntityMember).IsEqualTo(nameof(CaptureSourceEntity.Version));
+        await Assert.That(MemberNameOf(facet.ConcurrencyToken!)).IsEqualTo(nameof(CaptureSourceEntity.Version));
+    }
+
+    // ---- Retained write-executability guards (R4.4): these are NOT mass-assignment guards --------------
+
+    /// <summary>
+    /// Retained (R4.4): a view that derives <c>View&lt;TQuery, TCrud&gt;</c> is write-capable and must
+    /// declare a write facet; omitting <c>CrudOn</c> still fails fast, naming the offending view. This is a
+    /// write-executability precondition, not a mass-assignment guard, so it is unaffected by D122/R9.6.
+    /// </summary>
+    [Test]
+    public async Task Guard_Missing_CrudFacet_Still_Fails_Fast_Naming_View()
+    {
+        var ex = await CaptureRegistration<MissingCrudFacetView>();
 
         await Assert.That(ex).IsNotNull();
-        await Assert.That(ex!.Message).Contains("write-token-target");
-        await Assert.That(ex.Message).Contains(nameof(CaptureSourceEntity.Version));
-        await Assert.That(ex.Message).Contains("concurrency");
+        await Assert.That(ex!.Message).Contains("write-missing-facet");
+        await Assert.That(ex.Message).Contains("CrudOn");
+    }
+
+    /// <summary>
+    /// Retained (R4.4): a write-capable view requires a resolvable primary key so a write can locate the
+    /// target row; omitting <c>.PrimaryKey()</c> still fails fast, naming the offending view. This is a
+    /// write-executability precondition, not a mass-assignment guard, so it is unaffected by D122/R9.6.
+    /// </summary>
+    [Test]
+    public async Task Guard_Missing_PrimaryKey_Still_Fails_Fast_Naming_View()
+    {
+        var ex = await CaptureRegistration<NoPrimaryKeyWritableView>();
+
+        await Assert.That(ex).IsNotNull();
+        await Assert.That(ex!.Message).Contains("write-no-pk");
+        await Assert.That(ex.Message).Contains("primary key");
     }
 
     // ---- Helpers ------------------------------------------------------------------------------------
+
+    /// <summary>
+    /// Runs registration for <typeparamref name="TView"/>, expecting it to succeed, and returns the
+    /// captured <see cref="CrudFacetDefinition"/> read back from the composition root's
+    /// <see cref="IWriteFacetRegistry"/> under <paramref name="viewName"/>.
+    /// </summary>
+    private static Task<CrudFacetDefinition?> RegisterAndGetFacet<TView>(string viewName)
+        where TView : class, new()
+    {
+        var services = new ServiceCollection();
+        services.AddVista(v => v.Register<TView>());
+        using var provider = services.BuildServiceProvider();
+
+        var registry = provider.GetRequiredService<IWriteFacetRegistry>();
+        registry.TryGet(viewName, out var facet);
+        return Task.FromResult(facet);
+    }
 
     /// <summary>
     /// Runs registration for <typeparamref name="TView"/> and returns the <see cref="InvalidOperationException"/>
@@ -307,7 +364,10 @@ internal sealed class MinimalWritableView : View<WriteCaptureRow, CaptureCrud>
     }
 }
 
-/// <summary>A writable view whose CRUD facet declares no <c>MapWritable</c> mapping (VISTA0030 guard).</summary>
+/// <summary>
+/// A writable view whose CRUD facet declares no <c>MapWritable</c> mapping (formerly the VISTA0030 startup
+/// guard; now a build-time diagnostic — registration succeeds with an empty whitelist).
+/// </summary>
 internal sealed class ZeroMappingView : View<WriteCaptureRow, CaptureCrud>
 {
     protected override void Configure(IViewBuilder<WriteCaptureRow, CaptureCrud> builder)
@@ -317,12 +377,16 @@ internal sealed class ZeroMappingView : View<WriteCaptureRow, CaptureCrud>
             .From<CaptureSourceEntity>(s => new WriteCaptureRow { Id = s.Id, Name = s.Name, Price = s.Price })
             .Field(x => x.Id, f => f.PrimaryKey());
 
-        // CrudOn declared, but no MapWritable → default-deny with an empty whitelist must fail fast.
+        // CrudOn declared, but no MapWritable → default-deny with an empty whitelist. The zero-mapping
+        // safety check is now a build-time diagnostic (VISTA0030, D122), so registration succeeds.
         builder.CrudOn<CaptureSourceEntity>();
     }
 }
 
-/// <summary>A writable view mapping to a navigation / non-scalar target (VISTA0031 guard).</summary>
+/// <summary>
+/// A writable view mapping to a navigation / non-scalar target (formerly the VISTA0031 startup guard; now a
+/// build-time diagnostic — registration succeeds and the mapping is captured).
+/// </summary>
 internal sealed class NavigationTargetView : View<WriteCaptureRow, NavigationCrud>
 {
     protected override void Configure(IViewBuilder<WriteCaptureRow, NavigationCrud> builder)
@@ -338,7 +402,10 @@ internal sealed class NavigationTargetView : View<WriteCaptureRow, NavigationCru
     }
 }
 
-/// <summary>A writable view mapping to a key field (VISTA0032 guard).</summary>
+/// <summary>
+/// A writable view mapping to a key field (formerly the VISTA0032 startup guard; now a build-time
+/// diagnostic — registration succeeds and the mapping is captured).
+/// </summary>
 internal sealed class KeyFieldTargetView : View<WriteCaptureRow, KeyCrud>
 {
     protected override void Configure(IViewBuilder<WriteCaptureRow, KeyCrud> builder)
@@ -354,7 +421,10 @@ internal sealed class KeyFieldTargetView : View<WriteCaptureRow, KeyCrud>
     }
 }
 
-/// <summary>A writable view mapping to the concurrency-token member (VISTA0032 guard).</summary>
+/// <summary>
+/// A writable view mapping to the concurrency-token member (formerly the VISTA0032 startup guard; now a
+/// build-time diagnostic — registration succeeds and the mapping is captured).
+/// </summary>
 internal sealed class TokenTargetView : View<WriteCaptureRow, TokenCrud>
 {
     protected override void Configure(IViewBuilder<WriteCaptureRow, TokenCrud> builder)
@@ -368,5 +438,43 @@ internal sealed class TokenTargetView : View<WriteCaptureRow, TokenCrud>
             .CrudOn<CaptureSourceEntity>()
             .MapWritable(c => c.Version, e => e.Version)
             .WithConcurrencyToken(e => e.Version);
+    }
+}
+
+/// <summary>
+/// A write-capable view (derives <c>View&lt;TQuery, TCrud&gt;</c>) that never declares a write facet
+/// (<c>CrudOn</c>). Exercises the retained write-executability guard (R4.4), which is not a
+/// mass-assignment guard and therefore survives the D122/R9.6 retirement.
+/// </summary>
+internal sealed class MissingCrudFacetView : View<WriteCaptureRow, CaptureCrud>
+{
+    protected override void Configure(IViewBuilder<WriteCaptureRow, CaptureCrud> builder)
+    {
+        builder
+            .Named("write-missing-facet")
+            .From<CaptureSourceEntity>(s => new WriteCaptureRow { Id = s.Id, Name = s.Name, Price = s.Price })
+            .Field(x => x.Id, f => f.PrimaryKey());
+
+        // No CrudOn: a write-capable view must declare its write facet → retained fail-fast (R4.4).
+    }
+}
+
+/// <summary>
+/// A writable view that declares a full write facet but marks no projected field as the primary key.
+/// Exercises the retained primary-key executability guard (R4.4), which is not a mass-assignment guard and
+/// therefore survives the D122/R9.6 retirement.
+/// </summary>
+internal sealed class NoPrimaryKeyWritableView : View<WriteCaptureRow, CaptureCrud>
+{
+    protected override void Configure(IViewBuilder<WriteCaptureRow, CaptureCrud> builder)
+    {
+        builder
+            .Named("write-no-pk")
+            .From<CaptureSourceEntity>(s => new WriteCaptureRow { Id = s.Id, Name = s.Name, Price = s.Price });
+
+        // A write facet is declared, but no field is marked .PrimaryKey() → retained fail-fast (R4.4).
+        builder
+            .CrudOn<CaptureSourceEntity>()
+            .MapWritable(c => c.Name, e => e.Name);
     }
 }
