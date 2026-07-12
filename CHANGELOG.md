@@ -9,6 +9,32 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **SourceGenerators / AspNetCore / Core** — Pillar 3, per-view `JsonTypeInfo`
+  phase (Decision Log D125/D126): serialization is now fully self-service for
+  typed Style B — a developer no longer has to author and register an
+  `App_Json_Context`. **D125** — a fourth incremental generator
+  (`ViewJsonContextGenerator`) emits, per covered typed Style B view, a
+  reflection-free `IJsonTypeInfoResolver` built by hand via
+  `System.Text.Json.Serialization.Metadata.JsonMetadataServices` (never the
+  `[JsonSerializable]` attribute route — the generator-of-generator constraint)
+  providing the `JsonTypeInfo` for the view's `TRow`, `ViewListResult<TRow>`,
+  `PagedResult<TRow>`, and — when writable — `TCrud`, plus the collection/nullable/
+  enum metadata those DTOs reach; a `[ModuleInitializer]` registers it into a new
+  Core-resident, serializer-neutral `GeneratedJsonContextStore` (opaque `object`
+  handles, so `a2n.Vista.Core` gains no System.Text.Json dependency). **D126** —
+  `a2n.Vista.AspNetCore` drains the store and chains each generated context into
+  the existing `TypeInfoResolverChain` ahead of the developer context and the
+  reflection fallback, making the developer `App_Json_Context` **optional** without
+  changing the seam or the dispatch invoker. Mechanism-only — no wire change;
+  byte-for-byte parity with the reflection oracle is the guard (master Property 1 +
+  round-trip Property 2). Non-blocking diagnostics `VISTA0050` (covered view, per-view
+  `JsonTypeInfo` generated) and `VISTA0051` (a DTO member cannot be emitted
+  reflection-free → the view falls back to the developer context / reflection);
+  help docs under `docs/diagnostics/`. The AOT probe was extended to a full typed
+  Style B round-trip with **no developer context and the reflection fallback
+  removed** (green with IL2026/IL3050 as errors), and the Northwind example's
+  developer `NorthwindJsonContext` was removed — its self-tests still pass on the
+  generated per-view serialization.
 - **SourceGenerators / AspNetCore / Core** — Pillar 3, HTTP-surface phase
   (Decision Log D123/D124): the last large reflection surface for typed Style B
   is closed, so the full `request → authorize → execute → serialize` path is now

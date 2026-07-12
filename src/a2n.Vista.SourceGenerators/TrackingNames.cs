@@ -46,5 +46,14 @@ namespace a2n.Vista.SourceGenerators
         /// (source-generator-http-surface R7.2, mirroring Phase 1/2/3).
         /// </summary>
         public const string ViewInvokerModel = "ViewInvokerModel";
+
+        /// <summary>
+        /// The stage that yields the equatable <c>ViewJsonContextModel</c> per discovered typed Style B
+        /// serialization candidate (the per-view <c>JsonTypeInfo</c> generator's semantic transform output
+        /// after filtering). When an unrelated edit leaves a view's context model unchanged, this stage's
+        /// outputs are served from cache, proving the equatable model for the per-view <c>JsonTypeInfo</c>
+        /// pipeline (source-generator-json-typeinfo R7.2, mirroring Phase 1/2/3/4).
+        /// </summary>
+        public const string ViewJsonContextModel = "ViewJsonContextModel";
     }
 }

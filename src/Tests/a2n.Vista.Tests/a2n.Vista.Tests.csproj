@@ -103,6 +103,16 @@
       reflection oracle over random request shapes.
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorHttpSurfaceSample\a2n.Vista.GeneratorHttpSurfaceSample.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated per-view JsonTypeInfo contexts for the
+      three representative typed Style B views WITH NO developer App_Json_Context (spec
+      source-generator-json-typeinfo, task 8.1). Referencing it loads its [ModuleInitializer]-driven
+      registrations into a2n.Vista.Metadata.GeneratedJsonContextStore so the master oracle-parity property
+      test (JsonContextOracleParityPropertyTests, task 8.2 / Property 1) and the round-trip property test
+      (task 8.3 / Property 2) can resolve each view's generated context and compare its (de)serialization
+      against the reflection oracle over random DTO values. Sibling tasks 8.3/9.3 reuse this reference.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorJsonContextSample\a2n.Vista.GeneratorJsonContextSample.csproj" />
   </ItemGroup>
 
 </Project>

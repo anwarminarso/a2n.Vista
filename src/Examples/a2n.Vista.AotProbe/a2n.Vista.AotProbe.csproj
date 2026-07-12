@@ -17,14 +17,21 @@
       * Phase 3 write-mapper path (Spec source-generator-write-mapper, Task 11.1, R10.1-R10.6): the
         generated WriteMapper resolved through WriteMapperResolver and applied to an entity.
 
-      * Phase 4 HTTP-surface round-trip (Spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3;
-        D123/D124): the generated IViewInvoker (resolved from a2n.Vista.Core's ViewInvokerStore) dispatches
-        List + Detail (read-only view) and Create + Update (writable view) over the *non-RUC* executor
-        facets, a write body is bound through the seam (VistaWriteBinding.BindModel), and every response is
-        serialized through the Serialization_Seam (VistaJson.Options + TypeInfoResolverChain) using the
-        shipped VistaStaticJsonContext plus a probe App_Json_Context, with the reflection fallback resolver
-        removed (DisableReflectionFallback). A green build proves this full typed Style B round-trip is free
-        of IL2026/IL3050. A Style A (central-template, anonymous) view is present to demonstrate the
+      * Phase 5 HTTP-surface round-trip, NO developer context (Spec source-generator-json-typeinfo,
+        Task 9.1, R8.1/R8.2/R8.3; D125/D126): the generated IViewInvoker (resolved from a2n.Vista.Core's
+        ViewInvokerStore) dispatches List + Detail (read-only view) and Create + Update (writable view) over
+        the *non-RUC* executor facets, a write body is bound through the seam (VistaWriteBinding.BindModel),
+        and every response is serialized through the Serialization_Seam (VistaJson.Options +
+        TypeInfoResolverChain) using ONLY the shipped VistaStaticJsonContext plus the source-generated
+        per-view contexts (Generated_View_Context) that the ViewJsonContextGenerator emits into this
+        assembly and drains from a2n.Vista.Core's GeneratedJsonContextStore — with NO developer
+        App_Json_Context and the reflection fallback resolver removed (DisableReflectionFallback). A green
+        build proves this full typed Style B round-trip is free of IL2026/IL3050 without any developer
+        context, demonstrating the "context is now optional" claim (R8.1/R8.2). The probe's view DTOs
+        deliberately use only int/string/nullable-byte[] members (no enums) so the seam's non-generic
+        JsonStringEnumConverter — [RequiresDynamicCode], but registered in a2n.Vista.AspNetCore, not on the
+        probe's analyzed surface — is never exercised; enum parity is covered by the generator property
+        tests (Task 8.2). A Style A (central-template, anonymous) view is present to demonstrate the
         coexistence boundary: it has no generated invoker and keeps its permanent RUC path (D96 / R8.3),
         isolated behind a narrowly-scoped suppression — it is not required to be AOT-clean.
 

@@ -1,0 +1,61 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Real generator consumer for the M9 per-view JsonTypeInfo phase (spec
+    source-generator-json-typeinfo, task 8.1; Decision Log D125/D126). This is the JsonTypeInfo analogue
+    of the Phase 2 a2n.Vista.StyleBExecSample and the Phase 4 a2n.Vista.GeneratorHttpSurfaceSample: it
+    references BOTH Core and the EF layer AND the source generator (as an analyzer), so the
+    ViewJsonContextGenerator (D125) emits — INTO this assembly, per COVERED view — a reflection-free
+    <View>_VistaJsonContext.g.cs holding a System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver
+    (built via JsonMetadataServices, NOT the [JsonSerializable] attribute route) that provides the
+    JsonTypeInfo for the view's TRow, ViewListResult<TRow>, PagedResult<TRow>, and — when writable — TCrud,
+    plus a [ModuleInitializer] that registers it into a2n.Vista.Core's GeneratedJsonContextStore keyed by
+    the view's runtime Name.
+
+    THE WHOLE POINT — NO DEVELOPER App_Json_Context. Unlike the Phase 4 HTTP-surface sample (which ships a
+    developer-authored [JsonSerializable] App_Json_Context per view), this assembly declares NONE. The
+    representative views are chosen so every DTO member is an Emittable_Shape, so the ViewJsonContextGenerator
+    classifies each view as COVERED (VISTA0050) and emits its per-view JsonTypeInfo context — proving that a
+    typed Style B app is AOT-clean for serialization WITHOUT any hand-authored context.
+
+    COMPILE ONCE, QUANTIFY OVER VALUES: the master oracle-parity property test (task 8.2, Property 1) and the
+    round-trip property test (task 8.3, Property 2) compile this fixture set ONCE, resolve each view's
+    GENERATED context from the store, and compare its (de)serialization — over random DTO VALUES — against
+    the reflection oracle. They never re-compile per iteration.
+
+    Three representative, EF-aware typed Style B views are declared here (see JsonContextFixtures.cs):
+      * a read-only SINGLE-KEY view (View<TRow>) whose TRow exercises scalar + nullable value type + enum +
+        collection + byte[] members,
+      * a read-only COMPOSITE-KEY view (View<TRow>, two-field key),
+      * a WRITABLE view (View<TRow, TCrud>) whose TCrud is a record with init-only and required members,
+        exercising the R2.5 parameterized/init construction paths.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so every generated context is proven to compile on every supported consumer TFM.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorJsonContextSample</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorJsonContextSample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The View<TQuery> / View<TQuery, TCrud> bases + the authoring DSL, ViewListResult<TRow>,
+         PagedResult<TRow>, and the GeneratedJsonContextStore the module initializer targets all live in
+         Core; the EF layer is referenced so the views are genuinely EF-aware (the compiled read/write path
+         the generated context rides at runtime), mirroring the Phase 2 / Phase 4 fixtures. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it. Because Core AND EF are referenced above, the ViewJsonContextGenerator recognizes
+      the typed Style B views declared here and emits a real generated per-view JsonTypeInfo context +
+      registration for each COVERED one (VISTA0050 is reported for each covered view).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

@@ -4,6 +4,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using System.Text.Json.Serialization.Metadata;
+using a2n.Vista.Metadata;
 
 namespace a2n.Vista.AspNetCore.Serialization;
 
@@ -23,6 +24,10 @@ namespace a2n.Vista.AspNetCore.Serialization;
 ///   <item><description>the shipped <see cref="VistaStaticJsonContext"/> (fixed request/response
 ///   envelopes + the polymorphic <c>FilterNode</c> tree), processed by the built-in System.Text.Json
 ///   source generator so those types (de)serialize AOT-clean;</description></item>
+///   <item><description>the source-generated per-view contexts drained from the Core-resident
+///   <see cref="GeneratedJsonContextStore"/> (D126), chained <b>ahead of</b> the developer contexts and
+///   the reflection fallback so a covered view's DTOs resolve AOT-clean with no developer
+///   <c>App_Json_Context</c> required;</description></item>
 ///   <item><description>any developer-authored <c>App_Json_Context</c>(s) registered through
 ///   <see cref="AddContext"/> (via <c>IVistaEndpointBuilder.AddVistaJsonContext</c>), inserted
 ///   <b>ahead of</b> the reflection fallback so covered view DTOs resolve AOT-clean;</description></item>
@@ -60,11 +65,35 @@ public static class VistaJson
         options.Converters.Add(new JsonStringEnumConverter());
         options.Converters.Add(new FilterNodeJsonConverter());
 
-        // Seam chain (D124): the shipped fixed-envelope context resolves first; developer contexts are
-        // inserted by AddContext ahead of the reflection fallback, which is appended last.
+        // Seam chain (D124/D126): the shipped fixed-envelope context resolves first; the generated
+        // per-view contexts (drained from the Core store) resolve next; developer contexts are inserted
+        // by AddContext ahead of the reflection fallback, which is appended last.
         options.TypeInfoResolverChain.Add(VistaStaticJsonContext.Default);
+        DrainGeneratedContexts(options.TypeInfoResolverChain);
         options.TypeInfoResolverChain.Add(ReflectionFallbackResolver);
         return options;
+    }
+
+    /// <summary>
+    /// Drains the Core-resident <see cref="GeneratedJsonContextStore"/> and chains each generated
+    /// per-view context into the seam <b>ahead of</b> both the developer <c>App_Json_Context</c>(s)
+    /// (inserted later by <see cref="AddContext"/>) and the reflection fallback, but <b>after</b> the
+    /// shipped <see cref="VistaStaticJsonContext"/> so the fixed envelopes keep precedence (D126).
+    /// </summary>
+    /// <param name="chain">The seam's resolver chain being assembled.</param>
+    /// <remarks>
+    /// Each stored handle is a serializer-neutral <see cref="object"/> that is, by the
+    /// <see cref="GeneratedJsonContextStore.Register(string, object)"/> contract, always an
+    /// <see cref="IJsonTypeInfoResolver"/> emitted into the view's own assembly. The single unchecked
+    /// cast below is that contract boundary — the only place a stored handle is reinterpreted as a
+    /// System.Text.Json resolver type, keeping <c>a2n.Vista.Core</c> free of any STJ dependency.
+    /// </remarks>
+    private static void DrainGeneratedContexts(IList<IJsonTypeInfoResolver> chain)
+    {
+        foreach (var handle in GeneratedJsonContextStore.All)
+        {
+            chain.Add((IJsonTypeInfoResolver)handle);
+        }
     }
 
     /// <summary>

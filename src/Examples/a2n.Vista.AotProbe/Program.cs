@@ -36,6 +36,7 @@ internal static class Program
 
     private static async Task<int> Main()
     {
+
         // 1) Register the generated-style accessor map: cast + property read, exactly what the source
         //    generator emits. No reflection, no PropertyInfo — this is the AOT-clean shape.
         var accessors = new Dictionary<string, Func<object, object?>>(StringComparer.Ordinal)
@@ -81,12 +82,14 @@ internal static class Program
         //    trim/AOT analyzer proves the generated write-mapper path is free of IL2026/IL3050.
         await GeneratedWriteMapperProbe.RunAsync().ConfigureAwait(false);
 
-        // 7) Phase 4 (spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3; D123/D124): dispatch
+        // 7) Phase 5 (spec source-generator-json-typeinfo, Task 9.1, R8.1/R8.2/R8.3; D125/D126): dispatch
         //    List/Detail and a write through the generated IViewInvoker (from ViewInvokerStore), bind a
-        //    write body and serialize responses through the Serialization_Seam using the shipped
-        //    VistaStaticJsonContext + a probe App_Json_Context with the reflection fallback removed, and
-        //    demonstrate the Style A coexistence boundary — so the trim/AOT analyzer proves the full typed
-        //    Style B HTTP round-trip is free of IL2026/IL3050.
+        //    write body and serialize responses through the Serialization_Seam using ONLY the shipped
+        //    VistaStaticJsonContext + the source-generated per-view contexts (Generated_View_Context, drained
+        //    from a2n.Vista.Core's GeneratedJsonContextStore) — NO developer App_Json_Context — with the
+        //    reflection fallback removed, and demonstrate the Style A coexistence boundary. A green build
+        //    proves the full typed Style B HTTP round-trip is free of IL2026/IL3050 with the developer
+        //    context now optional.
         await HttpSurfaceProbe.RunAsync().ConfigureAwait(false);
 
         return 0;

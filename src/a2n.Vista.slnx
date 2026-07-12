@@ -27,6 +27,7 @@
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP5/a2n.Vista.GeneratorExecSampleP5.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP6/a2n.Vista.GeneratorExecSampleP6.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorHttpSurfaceSample/a2n.Vista.GeneratorHttpSurfaceSample.csproj" />
+    <Project Path="Examples/a2n.Vista.GeneratorJsonContextSample/a2n.Vista.GeneratorJsonContextSample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorSample/a2n.Vista.GeneratorSample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorWriteMapperSample/a2n.Vista.GeneratorWriteMapperSample.csproj" />
     <Project Path="Examples/a2n.Vista.StyleBExecSample/a2n.Vista.StyleBExecSample.csproj" />

@@ -1,7 +1,24 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-12 (`source-generator-http-surface` **LANDED**: M9 HTTP-surface phase (M9-P4) —
+> Last updated: 2026-07-12 (`source-generator-json-typeinfo` **LANDED**: M9 per-view `JsonTypeInfo` phase
+> (M9-P5) — D125 (the generated per-view `JsonTypeInfo` provider + Core-resident, serializer-neutral
+> `GeneratedJsonContextStore`) + D126 (the seam integration that auto-chains the generated contexts,
+> making the developer `App_Json_Context` optional). A fourth incremental generator
+> (`ViewJsonContextGenerator`) emits, per covered typed Style B view, a reflection-free
+> `IJsonTypeInfoResolver` built by hand via `JsonMetadataServices` (NOT `[JsonSerializable]` — the
+> generator-of-generator constraint) providing the `JsonTypeInfo` for `TRow`, `ViewListResult<TRow>`,
+> `PagedResult<TRow>`, and — when writable — `TCrud`, plus the collection/nullable/enum metadata those DTOs
+> reach; a `[ModuleInitializer]` fills the Core-resident `GeneratedJsonContextStore` (opaque `object`
+> handles → Core stays STJ-free). `a2n.Vista.AspNetCore` drains the store and chains each generated context
+> into the existing `TypeInfoResolverChain` ahead of the developer `App_Json_Context`(s) and the reflection
+> fallback — no seam/invoker/API change. Mechanism-only (no wire change); byte-for-byte parity with the
+> reflection oracle is the guard (master Property 1 + round-trip Property 2). Non-blocking diagnostics
+> `VISTA0050`/`VISTA0051`. Build green net8/9/10, **281 tests/TFM** in `a2n.Vista.Tests` + **89 generator
+> tests** (0 failed/skipped), AOT probe clean on the full typed Style B round-trip with **no developer
+> context and the reflection fallback removed**, Northwind read + write self-tests PASS with its developer
+> `NorthwindJsonContext` **removed** (now exercising the generated per-view serialization). See §2.15.
+> Prior: 2026-07-12 (`source-generator-http-surface` **LANDED**: M9 HTTP-surface phase (M9-P4) —
 > D123 (the generated dispatch invoker + Core `ViewInvokerStore`) + D124 (the AOT-clean serialization
 > seam). A third incremental generator (`ViewInvokerGenerator`) emits, per covered typed Style B view, a
 > Core-only reflection-free `IViewInvoker` (closes `IViewExecutor.List/Detail/Create/Update<T>` at compile
@@ -95,9 +112,14 @@ Three pillars (see `ROADMAP.md`):
   `ViewInvokerStore`, D123) + the AOT-clean serialization seam (`TypeInfoResolverChain` over
   `VistaJson.Options`, D124) make the full typed Style B `request → authorize → execute → serialize` path
   IL2026/IL3050-clean — the ASP.NET Core `ViewRequestExecutor`/`VistaWriteBinding` reflection is now a
-  permanent fallback (Style A / uncovered views), with RUC confined to it — see §2.14. **Still to come
-  (planned, not started):** `JsonSerializerContext`/per-view `JsonTypeInfo` auto-generation, OpenAPI, and
-  Style A coverage — see §6.
+  permanent fallback (Style A / uncovered views), with RUC confined to it — see §2.14. **Phase 5 landed
+  (M9-P5, D125/D126, spec `source-generator-json-typeinfo`):** a fourth generator
+  (`ViewJsonContextGenerator`) emits a reflection-free per-view `JsonTypeInfo` set (via
+  `JsonMetadataServices`, not `[JsonSerializable]`) registered into a Core-resident, serializer-neutral
+  `GeneratedJsonContextStore`, and the AspNetCore seam auto-chains it — making the developer
+  `App_Json_Context` **optional** so an app of covered typed Style B views is AOT-clean for serialization
+  with no hand-authored context — see §2.15. **Still to come (planned, not started):** OpenAPI (M18) and
+  Style A (anonymous) serialization coverage (permanently RUC by D96) — see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -532,12 +554,91 @@ cast so int64 values round-trip as `long`. (2) The write-envelope deserialize br
 context's own case-sensitive options, dropping `model`/`key` and turning a denied write into 400 instead
 of 403; fixed by routing the envelope deserialize through the case-insensitive seam (`VistaJson.Options`).
 
-**Still deferred after the HTTP-surface phase:** per-view `JsonTypeInfo` auto-generation (a
-`JsonSerializerContext`-equivalent via `JsonMetadataServices` — precluded from the clean STJ route by the
-generator-of-generator constraint, so it is its own later phase), OpenAPI (M18), Style A (anonymous)
-serialization coverage (permanently RUC by D96), and **bulk** write (v1.x). The door is deliberately left
-open for the `JsonTypeInfo` phase to make the developer `App_Json_Context` optional without changing the
-seam or the dispatch invoker.
+**Still deferred after the HTTP-surface phase (now partly closed):** per-view `JsonTypeInfo`
+auto-generation (a `JsonSerializerContext`-equivalent via `JsonMetadataServices` — precluded from the clean
+STJ route by the generator-of-generator constraint, so it is its own phase) is **DONE (2026-07-12,
+D125/D126; see §2.15)** — the door D124 left open has been walked through, making the developer
+`App_Json_Context` optional without changing the seam or the dispatch invoker. Remaining: OpenAPI (M18),
+Style A (anonymous) serialization coverage (permanently RUC by D96), and **bulk** write (v1.x).
+
+### 2.15 `source-generator-json-typeinfo` — M9 Source Generator, per-view `JsonTypeInfo` phase (landed; spec `.kiro/specs/source-generator-json-typeinfo`)
+Source-generator **per-view `JsonTypeInfo` phase** (**D125** the generated per-view `JsonTypeInfo` provider
++ Core-resident, serializer-neutral `GeneratedJsonContextStore`, **D126** the seam integration that
+auto-chains the generated contexts ahead of the reflection fallback), walking through the door D124 left
+open: it makes the developer `App_Json_Context` **optional** for typed Style B without changing the seam or
+the dispatch invoker. Build green net8/9/10, **281 tests/TFM** in `a2n.Vista.Tests` + **89 tests/TFM** in
+`a2n.Vista.SourceGenerators.Tests` (0 failed/skipped), AOT probe clean on the full typed Style B round-trip
+with **no developer context and the reflection fallback removed**, Northwind **read + write** self-tests
+PASS with its `NorthwindJsonContext` **removed**. The reflection serializer is the **behavioral oracle**;
+the master model-based property (Property 1) + the mandatory round-trip (Property 2) prove the generated
+`JsonTypeInfo` (de)serializes byte-for-byte / value-equivalently to it.
+
+- **Core store (D125, Core stays EF-/HTTP-/STJ-free)** — `a2n.Vista.Core/Metadata/GeneratedJsonContextStore`:
+  a process-wide, thread-safe, first-wins idempotent store keyed by the view's runtime `Name`
+  (`Register(string, object)` / `TryGet` / `All`), holding each generated context as an **opaque `object`
+  handle** so Core references no `System.Text.Json` type (preserving the pluggable-serializer boundary
+  `a2n.Vista.Newtonsoft` relies on). Mirrors `ViewAccessorRegistry`/`ViewInvokerStore`.
+- **The generator-of-generator constraint** — a Roslyn generator cannot consume another generator's output,
+  so Vista cannot emit a `[JsonSerializable]` `JsonSerializerContext` the built-in STJ generator would
+  process. This phase resolves it the only clean way: it emits `JsonTypeInfo<T>` **by hand via**
+  `System.Text.Json.Serialization.Metadata.JsonMetadataServices` — the same metadata factory the built-in
+  generator emits into — which is why it is a standalone, higher-risk phase rather than a rider on D124.
+- **Fourth incremental generator** (`a2n.Vista.SourceGenerators`, `netstandard2.0`, no Vista project ref,
+  FQN recognition): `ViewJsonContextGenerator` (`IIncrementalGenerator`) — an independent pipeline with a
+  fully equatable `ViewJsonContextModel` (`DtoTypeModel`/`DtoMemberModel` + the Emittable_Shape analysis)
+  tracked via `TrackingNames.ViewJsonContextModel`. Per covered view with a public parameterless ctor it
+  emits a `file sealed` `<View>_VistaJsonContext.g.cs` implementing `IJsonTypeInfoResolver`: `GetTypeInfo`
+  dispatches to `JsonMetadataServices.CreateObjectInfo` + `CreatePropertyInfo<TMember>` factories for the
+  Serializable_DTO_Set, **plus** auxiliary arms (collection-info helpers for the envelope `Items`
+  `IReadOnlyList<TRow>` and collection members, `GetNullableConverter` for nullables, `CreateValueInfo` for
+  scalar/string/`byte[]` leaves, and the AOT-safe generic `JsonStringEnumConverter<TEnum>` for enums) so the
+  DTOs resolve with **no reflection fallback in the chain**; records / init-only / required members
+  round-trip via the parameterized/`init` creator path; JSON property names honor the seam's naming policy
+  for parity. One `[ModuleInitializer]` registers a singleton into `GeneratedJsonContextStore` keyed by
+  `new View().Name`; a view without a public parameterless ctor emits nothing. Reflection-free,
+  attribute-free, deterministic byte-for-byte, Core + BCL/shared-framework STJ only (no NuGet package, no
+  ASP.NET Core dependency in the view assembly).
+- **Emittable_Shape analysis + coverage** — walks each DTO's public serializable members and classifies
+  each against the emittable set (BCL scalars, `string`, nullable value types, enums, `byte[]`, collections
+  of an emittable element, the Vista `ViewListResult<TRow>`/`PagedResult<TRow>` envelopes, single-level
+  nested emittable POCOs). Any member the analyzer cannot fully resolve → the view is **not covered**
+  (safe default: parity over coverage) and falls back to the developer context / reflection.
+- **Non-blocking diagnostics (never Error)**: `VISTA0050` (Info — covered view, per-view `JsonTypeInfo`
+  generated; names the exact Serializable_DTO_Set now served so the `App_Json_Context` entry is optional)
+  and `VISTA0051` (Warning — a candidate DTO member cannot be emitted reflection-free; no context emitted,
+  the view falls back). Category `a2n.Vista.SourceGenerators`, help-links under `docs/diagnostics/`,
+  analyzer release tracking updated. New diagnostic family begins at `VISTA0050`.
+- **Seam integration (D126, `a2n.Vista.AspNetCore`)** — at the D124 seam-init site, `VistaJson` drains
+  `GeneratedJsonContextStore.All`, casts each opaque handle to `IJsonTypeInfoResolver` (the single unchecked
+  cast is the contract boundary), and inserts each into the `TypeInfoResolverChain` ahead of the developer
+  `App_Json_Context`(s) and the reflection fallback, keeping `VistaStaticJsonContext` first (envelope
+  precedence). No `JsonSerializerOptions` value, dispatch invoker, or public API
+  (`AddVistaJsonContext(...)`/`DisableVistaReflectionSerializationFallback()`) changed;
+  `VistaWriteBinding.BindModel` picks up the generated `TCrud` context automatically.
+- **AOT + Northwind** — the AOT probe (`a2n.Vista.AotProbe`, IL2026/IL3050-as-errors) drives a full typed
+  Style B round-trip (bind + List/Detail + write dispatch + serialize) using only `VistaStaticJsonContext`
+  + the Generated_View_Context(s), with **no developer `App_Json_Context` and the reflection fallback
+  removed**, and builds green; a Style A view stays RUC (D96 coexistence boundary). The Northwind example's
+  `NorthwindJsonContext` registration was deleted and its read + write self-tests still pass on the
+  generated per-view serialization.
+- **Representative fixtures + properties** — `src/Examples/a2n.Vista.GeneratorJsonContextSample` (a
+  read-only single-key view with scalar + nullable + enum + collection + `byte[]` members, a composite-key
+  view, and a writable view whose `TCrud` is a record with required + init-only members). Properties:
+  master oracle-parity (P1), round-trip (P2), seam resolution / context-optionality (P3), reflection-free
+  attribute-free `JsonMetadataServices`-based source (P4), deterministic emission (P5), store first-wins
+  idempotence (P6), and VISTA0050 coverage-set + diagnostic conformance (P7) — plus generator-driver
+  recognition/shape-matrix and layering/cast-guard examples.
+
+**One assumption to confirm in a later review:** `VISTA0051` was set to **Warning** severity (matching the
+precedent of `VISTA0033`, the other "falls back to reflection" diagnostic); the Info-vs-Warning choice is
+open for finalization. The opaque-handle Core store was chosen over a new `a2n.Vista.SystemTextJson`
+package (keeps the one-Core-store-per-phase pattern and the view assembly free of a new Vista reference; the
+cost is one unchecked cast at the AspNetCore drain, covered by a layering test).
+
+**Still deferred after this phase:** OpenAPI/Swagger (M18) and TypeScript client (M17) — both downstream
+consumers of the metadata + generated JSON contexts, now fully unblocked; Style A (anonymous) AOT
+serialization (permanently RUC by D96); custom-converter synthesis for arbitrary member types; and **bulk**
+write (v1.x).
 
 ---
 
@@ -700,7 +801,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D122 | `source-generator-write-mapper` spec / `03` §13 | **Landed (M9 write-DSL phase).** Interim write-authoring startup guards promoted to **build-time** analyzer diagnostics: `VISTA0030` (zero mappings), `VISTA0031` (non-scalar/navigation target), `VISTA0032` (key-field/concurrency-token target) — all **errors** that gate emission; the mirroring fail-fast guards in `ViewBuilderOfTCrud.ValidateWriteFacet` were retired (the primary-key executability guard is retained). Adopts the code/PROJECT-STATUS `VISTA0030`–`VISTA0033` numbering; the frozen `03` §13 catalog's conflicting assignment is superseded. See §2.13. |
 | D123 | `source-generator-http-surface` spec / `03` §15 | **Landed (M9 HTTP-surface phase, 2026-07-12).** The generated typed HTTP **dispatch invoker**: a per-view, reflection-free `IViewInvoker` (Core port) that closes `IViewExecutor.List/Detail/Create/Update<T>` at compile time (no `MakeGenericMethod`, no `Task<TResult>.Result`/`ViewListResult<TRow>` reflection), registered via `[ModuleInitializer]` into a Core-resident, first-wins `ViewInvokerStore` keyed by the view's runtime `Name`; `ViewRequestExecutor` prefers it with the existing `MakeGenericMethod` path confined to private `*ReflectionAsync` RUC fallbacks (coexistence — Style A / uncovered views unchanged). The executor read-facet RUC was relaxed to match (mirroring `WriteMapperResolver`). Mechanism-only: no wire change; byte-for-byte parity with the reflection oracle is the guard (master Property 1). Builds on D117/D118/D121. See §2.14. |
 | D124 | `source-generator-http-surface` spec / `03` §15 | **Landed (M9 HTTP-surface phase, 2026-07-12).** The AOT-clean **serialization seam** (in `a2n.Vista.AspNetCore`, Core stays STJ-free): a single `TypeInfoResolverChain` over `VistaJson.Options` = a shipped hand-authored `VistaStaticJsonContext` (fixed request/response envelopes + the now reflection-free polymorphic `FilterNode`) → developer-authored `App_Json_Context`(s) chained via `AddVistaJsonContext(...)` → an opt-out reflection fallback (`DefaultJsonTypeInfoResolver`, the only RUC serialization branch, removable via `DisableVistaReflectionSerializationFallback()`). Every Vista response is written via the shared `VistaJsonWriter`/`JsonTypeInfo` overloads (replacing `Results.Ok(obj)` for List/Detail/Export) and `VistaWriteBinding` deserializes through the seam (byte-for-byte parity). Per-view `JsonTypeInfo` is **not** auto-generated (generator-of-generator constraint); the generator emits `VISTA0041` guidance naming the exact `[JsonSerializable]` types, and `VISTA0040` flags an uncovered candidate. New diagnostic family begins at `VISTA0040`. See §2.14. |
-| **D125+** | **next free** | Use for new decisions. |
+| D125 | `source-generator-json-typeinfo` spec / `03` §15 | **Landed (M9 per-view `JsonTypeInfo` phase, 2026-07-12).** The generated **per-view `JsonTypeInfo` provider**: a fourth `IIncrementalGenerator` (`ViewJsonContextGenerator`) emits, per covered typed Style B view, a reflection-free `file sealed IJsonTypeInfoResolver` built by hand via `System.Text.Json.Serialization.Metadata.JsonMetadataServices` (NOT the `[JsonSerializable]` attribute route — the generator-of-generator constraint) providing the `JsonTypeInfo` for `TRow`, `ViewListResult<TRow>`, `PagedResult<TRow>`, and — when writable — `TCrud`, plus the collection/nullable/enum/leaf metadata those DTOs reach (so they resolve with no reflection fallback); a `[ModuleInitializer]` fills the new Core-resident, serializer-neutral `GeneratedJsonContextStore` (opaque `object` handles → `a2n.Vista.Core` gains no System.Text.Json dependency), keyed by the view's runtime `Name`. Non-blocking diagnostic `VISTA0050` (covered) + `VISTA0051` (non-emittable member → fallback). Builds on D117/D118/D121/D123/D124. See §2.15. |
+| D126 | `source-generator-json-typeinfo` spec / `03` §15 | **Landed (M9 per-view `JsonTypeInfo` phase, 2026-07-12).** The **seam integration**: `a2n.Vista.AspNetCore` drains `GeneratedJsonContextStore` and chains each generated context into the existing `TypeInfoResolverChain` ahead of the developer `App_Json_Context`(s) and the opt-out reflection fallback (keeping `VistaStaticJsonContext` first), making the developer `App_Json_Context` **optional** without changing the seam config, the dispatch invoker (D123), or the `AddVistaJsonContext(...)`/`DisableVistaReflectionSerializationFallback()` APIs. The single unchecked opaque-handle → `IJsonTypeInfoResolver` cast at the drain is the contract boundary (layering-tested). Mechanism-only: no wire change; byte-for-byte parity with the reflection oracle (Property 1 + round-trip Property 2). See §2.15. |
+| **D127+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

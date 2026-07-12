@@ -210,5 +210,48 @@ namespace a2n.Vista.SourceGenerators
             isEnabledByDefault: true,
             description: "A Roslyn source generator cannot consume the output of another source generator, so Vista cannot auto-generate a working System.Text.Json serialization context for a view. To make a covered typed Style B view's HTTP (de)serialization AOT-clean, author a JsonSerializerContext listing the view's DTOs via [JsonSerializable] and register it with AddVistaJsonContext(...). This diagnostic names the exact types to include: TRow, ViewListResult<TRow>, PagedResult<TRow>, and — for a writable view — TCrud. The build succeeds regardless; until a context is registered the view (de)serializes through the reflection fallback resolver. Severity is Info because it is guidance, not an error.",
             helpLinkUri: HelpLinkBase + "VISTA0041.md");
+
+        /// <summary>
+        /// VISTA0050 (info): a typed Style B view is <c>covered</c> for per-view serialization — the
+        /// generator emits a reflection-free <c>IJsonTypeInfoResolver</c> (built via
+        /// <c>JsonMetadataServices</c>, not <c>[JsonSerializable]</c>) that provides the
+        /// <c>JsonTypeInfo</c> for the view's Serializable_DTO_Set (<c>TRow</c>,
+        /// <c>ViewListResult&lt;TRow&gt;</c>, <c>PagedResult&lt;TRow&gt;</c>, and — when writable —
+        /// <c>TCrud</c>), auto-chained into the serialization seam ahead of the reflection fallback. This
+        /// diagnostic names the view and the exact DTO set now served by the generated context so the
+        /// developer knows the <c>App_Json_Context</c> entry for that view is optional. The build
+        /// succeeds. Severity is Info because it is confirmation, not an error (M9 JsonTypeInfo phase,
+        /// R9.1, R9.3, R9.4, D125/D126).
+        /// </summary>
+        public static readonly DiagnosticDescriptor GeneratedJsonContextForView = new DiagnosticDescriptor(
+            id: "VISTA0050",
+            title: "Per-view JsonTypeInfo generated for a covered Style B view",
+            messageFormat: "View '{0}' is covered by a generated per-view JsonTypeInfo; its App_Json_Context entry is now optional for these types: {1}",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "The Vista source generator emits a reflection-free per-view serialization context (an IJsonTypeInfoResolver built via System.Text.Json.Serialization.Metadata.JsonMetadataServices, not the [JsonSerializable] attribute route) for a covered typed Style B view whose DTO shapes are all emittable. It provides the JsonTypeInfo for TRow, ViewListResult<TRow>, PagedResult<TRow>, and — for a writable view — TCrud, and is auto-chained into the serialization seam ahead of the reflection fallback. This diagnostic names the DTO set now served by the generated context, so a developer App_Json_Context entry for that view is optional. Severity is Info because it is confirmation, not an error.",
+            helpLinkUri: HelpLinkBase + "VISTA0050.md");
+
+        /// <summary>
+        /// VISTA0051 (warning): a candidate typed Style B view has a DTO member whose shape the generator
+        /// cannot emit reflection-free via <c>JsonMetadataServices</c> (for example a member requiring a
+        /// bespoke/custom converter, an unsupported polymorphic shape, or an unresolved generic). The
+        /// view is <c>not covered</c> for serialization generation: no per-view context is emitted and
+        /// the view falls back to the developer <c>App_Json_Context</c> / reflection resolver. The view
+        /// stays fully functional — only the AOT-clean auto-generation is missed — and the build
+        /// succeeds. Severity is Warning (never Error) because the view is valid and working on the
+        /// fallback; only per-view serialization auto-generation is missed (M9 JsonTypeInfo phase, R1.5,
+        /// R9.2, R9.4, D125/D126).
+        /// </summary>
+        public static readonly DiagnosticDescriptor JsonContextMemberNotEmittable = new DiagnosticDescriptor(
+            id: "VISTA0051",
+            title: "Style B view DTO member cannot be emitted reflection-free",
+            messageFormat: "View '{0}' has a DTO member the Vista source generator cannot emit reflection-free ({1}); no per-view JsonTypeInfo is generated and the view falls back to the developer App_Json_Context / reflection",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "To emit a reflection-free per-view serialization context the generator must build every DTO member's JsonTypeInfo via System.Text.Json.Serialization.Metadata.JsonMetadataServices. A DTO with a member the analyzer cannot fully resolve reflection-free (a member requiring a bespoke/custom converter, an unsupported polymorphic shape, or an unresolved generic) is not covered: correctness (byte-for-byte parity with the reflection oracle) beats coverage, so no best-effort context that could drift from the wire is emitted. The view stays fully functional and (de)serializes through the developer App_Json_Context / reflection fallback resolver; only the AOT-clean per-view serialization is missed. Simplify the offending DTO member to an emittable shape to receive the generated context. Severity is Warning because the view still works via the fallback.",
+            helpLinkUri: HelpLinkBase + "VISTA0051.md");
     }
 }

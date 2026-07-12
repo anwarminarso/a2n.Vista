@@ -1,6 +1,10 @@
 // Licensed to the a2n.Vista project. Published artifact — English only.
 //
-// Phase 4 AOT verification (spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3; D123/D124).
+// Phase 5 AOT verification (spec source-generator-json-typeinfo, Task 9.1, R8.1/R8.2/R8.3; D125/D126).
+// Extends the Phase 4 HTTP-surface round-trip (D123/D124) to prove the developer App_Json_Context is now
+// OPTIONAL: the same full typed Style B round-trip is driven with NO developer App_Json_Context and NO
+// reflection fallback — only the shipped Static_Envelope_Context plus the source-generated per-view
+// contexts (Generated_View_Context) chained into the seam.
 //
 // This probe drives a full typed Style B HTTP round-trip AOT-cleanly, exercising BOTH halves the phase
 // makes trim/AOT-clean:
@@ -12,15 +16,29 @@
 //      compile time and rides the executor's NON-RUC facets (IViewExecutor.ListAsync<TRow> etc.), so no
 //      MakeGenericMethod / Task<TResult>.Result / ViewListResult<TRow> reflection is reached (R2, R3).
 //
-//   2) SERIALIZATION (D124). A write body is bound through the seam (VistaWriteBinding.BindModel resolves
-//      TCrud's JsonTypeInfo via VistaJson.Options and deserializes with the AOT-safe overload), and every
-//      response (the List envelope, the Detail row, the write response) is serialized through the
-//      Serialization_Seam (VistaJsonWriter -> VistaJson.Options + TypeInfoResolverChain). The seam is
-//      configured with the shipped VistaStaticJsonContext (Static_Envelope_Context) plus a probe-authored
-//      App_Json_Context (ProbeHttpJsonContext), and the reflection fallback resolver is REMOVED
-//      (VistaJson.DisableReflectionFallback — what IVistaEndpointBuilder.DisableVistaReflectionSerialization
-//      Fallback() calls). With no reflection resolver in the chain, a successful GetTypeInfo for a view DTO
-//      proves the seam resolved it from a source-gen context, not DefaultJsonTypeInfoResolver (R8.1/R8.2).
+//   2) SERIALIZATION (D124 seam + D126 generated contexts). A write body is bound through the seam
+//      (VistaWriteBinding.BindModel resolves TCrud's JsonTypeInfo via VistaJson.Options and deserializes
+//      with the AOT-safe overload), and every response (the List envelope, the Detail row, the write
+//      response) is serialized through the Serialization_Seam (VistaJsonWriter -> VistaJson.Options +
+//      TypeInfoResolverChain). The seam is configured with ONLY the shipped VistaStaticJsonContext
+//      (Static_Envelope_Context) plus the source-generated per-view contexts (Generated_View_Context),
+//      which the ViewJsonContextGenerator emits into this assembly and whose [ModuleInitializer]s register
+//      into a2n.Vista.Core's GeneratedJsonContextStore at module load — VistaJson.Options drains that store
+//      into the chain automatically. There is NO developer App_Json_Context (Phase 4's ProbeHttpJsonContext
+//      is gone), and the reflection fallback resolver is REMOVED (VistaJson.DisableReflectionFallback —
+//      what IVistaEndpointBuilder.DisableVistaReflectionSerializationFallback() calls). With neither a
+//      developer context nor a reflection resolver in the chain, a successful GetTypeInfo for a per-view
+//      DTO can only come from a Generated_View_Context, proving the developer context is optional
+//      (R8.1/R8.2).
+//
+// Enum / converter choice (documented AOT nuance). The seam's shared VistaJson.Options registers the
+// NON-generic JsonStringEnumConverter(), which is [RequiresDynamicCode] (IL3050). That call site lives in
+// a2n.Vista.AspNetCore, not this probe, so it never surfaces on the probe's analyzed surface. To keep the
+// probe a faithful, green demonstration of the no-fallback typed Style B round-trip (mitigation (b) in the
+// task brief), the probe's view DTOs deliberately AVOID enums: their members are int / string / nullable
+// byte[] only (ProbeWidgetRow, ProbeMemoRow, ProbeMemoCrud) — all shapes the generated JsonTypeInfo proves
+// AOT-clean without touching the non-generic enum converter. Enum parity itself is covered by the master
+// oracle-parity property test (Task 8.2) over the enum-bearing generator fixtures.
 //
 // Keeping the analyzed surface honest (mirrors the Phase 2 / Phase 3 probes):
 //   * The generated invoker and the seam helpers (VistaJsonWriter, VistaWriteBinding.BindModel,
@@ -41,7 +59,7 @@ using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Execution;
@@ -59,26 +77,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace a2n.Vista.AotProbe;
-
-/// <summary>
-/// Developer-authored, source-generated <c>App_Json_Context</c> for the Phase 4 HTTP-surface probe. Lists
-/// exactly the <c>[JsonSerializable]</c> types the generator's VISTA0041 guidance names for the two covered
-/// probe views: for the read-only <see cref="ProbeWidgetView"/> and the writable <see cref="ProbeMemoView"/>
-/// their <c>TRow</c>, <c>ViewListResult&lt;TRow&gt;</c>, <c>PagedResult&lt;TRow&gt;</c>, and — for the
-/// writable view — <c>TCrud</c>. Because this is real source, the built-in System.Text.Json source
-/// generator produces AOT-clean metadata for these types; chaining it into the Serialization_Seam via
-/// <c>VistaJson.AddContext</c> makes per-view (de)serialization AOT-clean.
-/// </summary>
-[JsonSerializable(typeof(ProbeWidgetRow))]
-[JsonSerializable(typeof(ViewListResult<ProbeWidgetRow>))]
-[JsonSerializable(typeof(PagedResult<ProbeWidgetRow>))]
-[JsonSerializable(typeof(ProbeMemoRow))]
-[JsonSerializable(typeof(ViewListResult<ProbeMemoRow>))]
-[JsonSerializable(typeof(PagedResult<ProbeMemoRow>))]
-[JsonSerializable(typeof(ProbeMemoCrud))]
-internal sealed partial class ProbeHttpJsonContext : JsonSerializerContext
-{
-}
 
 /// <summary>
 /// A public probe-local bridge from a source-generated <see cref="ICompiledViewExecutionPlan"/> (obtained
@@ -174,16 +172,19 @@ internal static class HttpSurfaceProbe
     public static async Task RunAsync()
     {
         // --- 1) Configure the Serialization_Seam BEFORE the first (de)serialization (the options freeze
-        //        their resolver chain on first use). Chain the probe App_Json_Context ahead of the
-        //        reflection fallback, then REMOVE the reflection fallback so the chain is exactly
-        //        { VistaStaticJsonContext (shipped), ProbeHttpJsonContext (probe) } — no RUC resolver.
-        //        VistaJson.AddContext / DisableReflectionFallback are what IVistaEndpointBuilder's
-        //        AddVistaJsonContext(...) / DisableVistaReflectionSerializationFallback() call. ---
-        VistaJson.AddContext(ProbeHttpJsonContext.Default);
+        //        their resolver chain on first use). This phase (D125/D126) registers NO developer
+        //        App_Json_Context: the source-generated per-view contexts (Generated_View_Context) that the
+        //        ViewJsonContextGenerator emits into this assembly register themselves into the Core-resident
+        //        GeneratedJsonContextStore via their [ModuleInitializer]s at module load, and VistaJson.Options
+        //        drains that store into the chain automatically. We only REMOVE the reflection fallback so the
+        //        chain is exactly { VistaStaticJsonContext (shipped), Generated_View_Context(s) } — no
+        //        developer context, no RUC resolver. DisableReflectionFallback is what IVistaEndpointBuilder's
+        //        DisableVistaReflectionSerializationFallback() calls. ---
         VistaJson.DisableReflectionFallback();
 
         Console.WriteLine();
-        Console.WriteLine("AOT probe: generated typed Style B HTTP-surface round-trip exercised.");
+        Console.WriteLine(
+            "AOT probe: generated typed Style B HTTP-surface round-trip exercised (no developer context).");
 
         // --- 2) Resolve the generated invokers from the Core ViewInvokerStore. Their [ModuleInitializer]s
         //        registered them at module load; a miss means the ViewInvokerGenerator analyzer did not
@@ -230,17 +231,20 @@ internal static class HttpSurfaceProbe
         Console.WriteLine(
             "Generated invoker types/members carry no [RequiresUnreferencedCode]/[RequiresDynamicCode] (R8.2).");
 
-        // --- 4) Assert (R8.1/R8.2) the seam resolves each covered view DTO's JsonTypeInfo from a
-        //        source-gen context. The reflection fallback was removed above, so a successful resolve
-        //        can only come from VistaStaticJsonContext or the probe App_Json_Context — never the
-        //        DefaultJsonTypeInfoResolver. ---
-        AssertResolvedFromSourceGen(typeof(ViewListResult<ProbeWidgetRow>));
-        AssertResolvedFromSourceGen(typeof(ProbeWidgetRow));
-        AssertResolvedFromSourceGen(typeof(ProbeMemoCrud));
+        // --- 4) Assert (R8.1/R8.2) the seam resolves each covered per-view DTO's JsonTypeInfo from a
+        //        Generated_View_Context — NOT the reflection resolver (removed above) and NOT a developer
+        //        App_Json_Context (none registered). Each per-view DTO is checked twice: once that the seam
+        //        resolves it at all (a null resolve would mean nothing covers it), and once that a
+        //        Generated_View_Context drained from GeneratedJsonContextStore is the source. The fixed
+        //        VistaWriteResponse envelope stays on the shipped Static_Envelope_Context (R5.4). ---
+        AssertResolvedFromGeneratedContext(typeof(ViewListResult<ProbeWidgetRow>));
+        AssertResolvedFromGeneratedContext(typeof(ProbeWidgetRow));
+        AssertResolvedFromGeneratedContext(typeof(PagedResult<ProbeWidgetRow>));
+        AssertResolvedFromGeneratedContext(typeof(ProbeMemoCrud));
         AssertResolvedFromSourceGen(typeof(VistaWriteResponse)); // shipped Static_Envelope_Context
         Console.WriteLine(
-            "Serialization_Seam resolves view DTO JsonTypeInfo from source-gen contexts, reflection " +
-            "fallback removed (R8.1/R8.2).");
+            "Serialization_Seam resolves per-view DTO JsonTypeInfo from the Generated_View_Context(s) — " +
+            "no developer App_Json_Context, reflection fallback removed (R8.1/R8.2).");
 
         // --- 5) READ dispatch through the generated invoker (ProbeWidgetView). ---
         await RunReadRoundTripAsync(widgetInvoker).ConfigureAwait(false);
@@ -406,8 +410,9 @@ internal static class HttpSurfaceProbe
     }
 
     /// <summary>
-    /// Asserts the seam resolves <paramref name="runtimeType"/>'s <see cref="System.Text.Json.Serialization.Metadata.JsonTypeInfo"/>
-    /// with the reflection fallback removed, i.e. from a chained source-gen context (R8.1/R8.2).
+    /// Asserts the seam resolves <paramref name="runtimeType"/>'s <see cref="JsonTypeInfo"/> with the
+    /// reflection fallback removed, i.e. from a chained source-gen context (R8.1/R8.2). Used for the fixed
+    /// envelope types served by the shipped <c>Static_Envelope_Context</c>.
     /// </summary>
     private static void AssertResolvedFromSourceGen(Type runtimeType)
     {
@@ -418,6 +423,34 @@ internal static class HttpSurfaceProbe
                 $"The Serialization_Seam resolved no JsonTypeInfo for '{runtimeType}'. With the reflection " +
                 "fallback removed, a covered view DTO must resolve from a source-gen context (R8.1/R8.2).");
         }
+    }
+
+    /// <summary>
+    /// Asserts (R8.2) that a per-view DTO resolves specifically from a <c>Generated_View_Context</c> — not
+    /// a developer <c>App_Json_Context</c> (none is registered in this phase) and not the reflection
+    /// fallback (removed above). First confirms the seam resolves the type at all, then confirms one of the
+    /// generated per-view contexts drained from <see cref="GeneratedJsonContextStore"/> provides the
+    /// <see cref="JsonTypeInfo"/> for it — draining the store through the very same opaque-handle →
+    /// <see cref="IJsonTypeInfoResolver"/> cast the AspNetCore seam performs.
+    /// </summary>
+    private static void AssertResolvedFromGeneratedContext(Type runtimeType)
+    {
+        AssertResolvedFromSourceGen(runtimeType);
+
+        foreach (var handle in GeneratedJsonContextStore.All)
+        {
+            if (((IJsonTypeInfoResolver)handle).GetTypeInfo(runtimeType, VistaJson.Options) is not null)
+            {
+                return;
+            }
+        }
+
+        throw new InvalidOperationException(
+            $"No Generated_View_Context in GeneratedJsonContextStore provides a JsonTypeInfo for " +
+            $"'{runtimeType}'. With no developer App_Json_Context registered and the reflection fallback " +
+            "removed, the covered per-view DTO must be served by the source-generated per-view context " +
+            "(R8.2) — ensure the ViewJsonContextGenerator analyzer emitted it and its [ModuleInitializer] " +
+            "registered it into the store at module load.");
     }
 
     /// <summary>
