@@ -182,7 +182,21 @@ public class EfViewExecutor : IViewExecutor
     protected FilterCompiler FilterCompiler => _filterCompiler;
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("View execution resolves sort/filter/projection from metadata at runtime; use the source generator path for AOT.")]
+    /// <remarks>
+    /// AOT boundary (Decision Log D123): this facet prefers the AOT-clean compiled read path
+    /// (<see cref="ListCompiledAsync{TRow}"/>, Phase 2 / D118) and confines the reflection fallback to the
+    /// private <see cref="ListReflectionAsync{TRow}"/> helper, mirroring <c>WriteMapperResolver</c>. The
+    /// single call from here into that RUC helper is suppressed with the justification that it is
+    /// unreachable under trim/AOT once a compiled plan is registered, so the source-generated dispatch
+    /// invoker — which only rides the compiled branch — is not forced onto an RUC method (R2.4, R4.2).
+    /// </remarks>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification =
+            "The reflection fallback is reached only when no source-generated compiled plan is registered " +
+            "for the view. The AOT-clean read path registers a compiled plan, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated read path stays warning-free (Decision Log D123, R2.4).")]
     public async Task<ViewListResult<TRow>> ListAsync<TRow>(
         ViewMetadata view,
         ViewQueryRequest request,
@@ -194,12 +208,30 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(scope);
 
         // Source-generator Phase 2 (D118): when the resolved plan is a generated, non-RUC compiled plan,
-        // route through the AOT-clean compiled read path; otherwise keep the existing reflection path.
+        // route through the AOT-clean compiled read path; otherwise take the reflection fallback.
         if (TryResolveCompiledPlan(view) is { } compiledPlan)
         {
             return await ListCompiledAsync<TRow>(compiledPlan, view, request, scope, cancellationToken).ConfigureAwait(false);
         }
 
+        // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
+        return await ListReflectionAsync<TRow>(view, request, scope, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) List path: clamps paging, applies the server-trusted scope and the client
+    /// scope/filter/search channels, sorts, pages, and materializes one page, resolving sort/filter/
+    /// projection from metadata at runtime. Kept separate from <see cref="ListAsync{TRow}"/> so the
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> stays confined to the reflection fallback branch
+    /// (Decision Log D123). Behavior is identical to the former inline fallback.
+    /// </summary>
+    [RequiresUnreferencedCode("View execution resolves sort/filter/projection from metadata at runtime; use the source generator path for AOT.")]
+    private async Task<ViewListResult<TRow>> ListReflectionAsync<TRow>(
+        ViewMetadata view,
+        ViewQueryRequest request,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
         // Clamp/reject paging up front so an invalid "return all" request fails before any DB round-trip (R10.3).
         var pageSize = ResolvePageSize(request.PageSize, view.Limits);
         var pageIndex = request.Page < 0 ? 0 : request.Page;
@@ -261,7 +293,20 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("Detail key resolution and projection are built from metadata at runtime; use the source generator path for AOT.")]
+    /// <remarks>
+    /// AOT boundary (Decision Log D123): this facet prefers the AOT-clean compiled Detail path
+    /// (<see cref="DetailCompiledAsync{TRow}"/>, Phase 2 / D118) and confines the reflection fallback to
+    /// the private <see cref="DetailReflectionAsync{TRow}"/> helper, mirroring <c>WriteMapperResolver</c>.
+    /// The single call into that RUC helper is suppressed because it is unreachable under trim/AOT once a
+    /// compiled plan is registered (R2.4, R4.2).
+    /// </remarks>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification =
+            "The reflection fallback is reached only when no source-generated compiled plan is registered " +
+            "for the view. The AOT-clean read path registers a compiled plan, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated read path stays warning-free (Decision Log D123, R2.4).")]
     public async Task<TRow?> DetailAsync<TRow>(
         ViewMetadata view,
         object key,
@@ -278,6 +323,24 @@ public class EfViewExecutor : IViewExecutor
             return await DetailCompiledAsync<TRow>(compiledPlan, view, key, scope, cancellationToken).ConfigureAwait(false);
         }
 
+        // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
+        return await DetailReflectionAsync<TRow>(view, key, scope, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Detail-by-key path: reads the single row matching the view's key within the
+    /// server-trusted scope, building key resolution and projection from metadata at runtime. Kept
+    /// separate from <see cref="DetailAsync{TRow}"/> so the <see cref="RequiresUnreferencedCodeAttribute"/>
+    /// stays confined to the reflection fallback branch (Decision Log D123). Behavior is identical to the
+    /// former inline fallback.
+    /// </summary>
+    [RequiresUnreferencedCode("Detail key resolution and projection are built from metadata at runtime; use the source generator path for AOT.")]
+    private async Task<TRow?> DetailReflectionAsync<TRow>(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
         // Detail = List projection filtered by the view's key, with the server-trusted scope still
         // applied (Decision Log D49, §4.6). Reuse the same resolution seam as List.
         var scoped = ResolveScopedQueryable<TRow>(view, scope);
@@ -654,7 +717,22 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    /// <remarks>
+    /// AOT boundary (Decision Log D123): the port facet itself is not
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> so the source-generated write dispatch invoker can
+    /// call it without inheriting an <c>IL2026</c> warning. The runtime-entity bridge (which closes
+    /// <see cref="CreateCoreAsync{TEntity}"/> over <see cref="ViewMetadata.CrudEntityType"/> and resolves
+    /// the write mapper) is confined to the private <see cref="CreateReflectionAsync"/> helper, reached
+    /// through a justified suppression, mirroring <c>WriteMapperResolver</c>. The AOT-clean write path
+    /// rides the source-generated <c>WriteMapper</c> resolved by <c>WriteMapperResolver</c> (R3.4, R4.2).
+    /// </remarks>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification =
+            "The runtime-entity bridge is the reflection fallback for write dispatch; the AOT-clean write " +
+            "path resolves a source-generated write mapper, so the RUC branch is unreachable under " +
+            "trim/AOT and the generated write path stays warning-free (Decision Log D123, R3.4).")]
     public Task<object> CreateAsync<TCrud>(
         ViewMetadata view,
         TCrud model,
@@ -666,10 +744,27 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(scope);
 
+        return CreateReflectionAsync(view, model, scope, cancellationToken);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Create bridge: closes <see cref="CreateCoreAsync{TEntity}"/> over the view's
+    /// runtime <see cref="ViewMetadata.CrudEntityType"/> (known only at runtime) and invokes it — mirroring
+    /// how the read bridge closes over <see cref="ViewMetadata.QueryType"/> (R1.1, R1.3). Kept separate
+    /// from <see cref="CreateAsync{TCrud}"/> so the <see cref="RequiresUnreferencedCodeAttribute"/> stays
+    /// confined to the reflection fallback branch (Decision Log D123). Behavior is identical to the former
+    /// inline bridge.
+    /// </summary>
+    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    private Task<object> CreateReflectionAsync(
+        ViewMetadata view,
+        object model,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
         // Bridge from the port's generic-over-TCrud signature to the runtime entity type. The write body
         // works on ViewMetadata.CrudEntityType (the EF entity), which is known only at runtime, so close
-        // CreateCoreAsync<TEntity> over it and invoke — mirroring how the read bridge closes over
-        // view.QueryType (R1.1, R1.3).
+        // CreateCoreAsync<TEntity> over it and invoke.
         var entityType = RequireCrudEntityType(view);
         var closed = CreateCoreAsyncMethod.MakeGenericMethod(entityType);
         return (Task<object>)closed.Invoke(this, new object[] { view, model, scope, cancellationToken })!;
@@ -772,7 +867,22 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <inheritdoc />
-    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    /// <remarks>
+    /// AOT boundary (Decision Log D123): the port facet itself is not
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> so the source-generated write dispatch invoker can
+    /// call it without inheriting an <c>IL2026</c> warning. The runtime-entity bridge (which closes
+    /// <see cref="UpdateCoreAsync{TEntity}"/> over <see cref="ViewMetadata.CrudEntityType"/> and resolves
+    /// the write mapper) is confined to the private <see cref="UpdateReflectionAsync"/> helper, reached
+    /// through a justified suppression, mirroring <c>WriteMapperResolver</c>. The AOT-clean write path
+    /// rides the source-generated <c>WriteMapper</c> resolved by <c>WriteMapperResolver</c> (R3.4, R4.2).
+    /// </remarks>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification =
+            "The runtime-entity bridge is the reflection fallback for write dispatch; the AOT-clean write " +
+            "path resolves a source-generated write mapper, so the RUC branch is unreachable under " +
+            "trim/AOT and the generated write path stays warning-free (Decision Log D123, R3.4).")]
     public Task<bool> UpdateAsync<TCrud>(
         ViewMetadata view,
         object key,
@@ -787,6 +897,25 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(scope);
 
+        return UpdateReflectionAsync(view, key, model, scope, concurrencyToken, cancellationToken);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Update bridge: closes <see cref="UpdateCoreAsync{TEntity}"/> over the view's
+    /// runtime <see cref="ViewMetadata.CrudEntityType"/> (known only at runtime) and invokes it, exactly as
+    /// the Create bridge does (R2.1, R2.5). Kept separate from <see cref="UpdateAsync{TCrud}"/> so the
+    /// <see cref="RequiresUnreferencedCodeAttribute"/> stays confined to the reflection fallback branch
+    /// (Decision Log D123). Behavior is identical to the former inline bridge.
+    /// </summary>
+    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    private Task<bool> UpdateReflectionAsync(
+        ViewMetadata view,
+        object key,
+        object model,
+        IViewScope scope,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
         // Bridge from the port's generic-over-TCrud signature to the runtime entity type, exactly as
         // CreateAsync does. The update body operates on ViewMetadata.CrudEntityType (the EF entity), known
         // only at runtime, so close UpdateCoreAsync<TEntity> over it and invoke (R2.1, R2.5).

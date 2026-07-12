@@ -81,6 +81,14 @@ internal static class Program
         //    trim/AOT analyzer proves the generated write-mapper path is free of IL2026/IL3050.
         await GeneratedWriteMapperProbe.RunAsync().ConfigureAwait(false);
 
+        // 7) Phase 4 (spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3; D123/D124): dispatch
+        //    List/Detail and a write through the generated IViewInvoker (from ViewInvokerStore), bind a
+        //    write body and serialize responses through the Serialization_Seam using the shipped
+        //    VistaStaticJsonContext + a probe App_Json_Context with the reflection fallback removed, and
+        //    demonstrate the Style A coexistence boundary — so the trim/AOT analyzer proves the full typed
+        //    Style B HTTP round-trip is free of IL2026/IL3050.
+        await HttpSurfaceProbe.RunAsync().ConfigureAwait(false);
+
         return 0;
     }
 

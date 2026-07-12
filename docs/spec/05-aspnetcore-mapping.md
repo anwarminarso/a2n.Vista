@@ -127,37 +127,45 @@ app.Run();
 - `MapView<TView>()` maps a single explicit view (idempotent with `MapVistaViews`; dedup by view name).
 - Returns `IEndpointConventionBuilder` so consumers can attach standard ASP.NET conventions (rate limit, CORS, output cache) — **but not** `RequireAuthorization` per-view (auth goes through `IViewAuthorizer`, §6).
 
-### 5.2 Route conventions (derived, Spec 01 §12.3)
+### 5.2 Route conventions — action-style surface (D110, supersedes DR3)
 
-`root = RouteRoot` (default `/api/views`), `{v} = viewName`, `{key}` = primary key (Spec 03 `KeySelector`).
+**Routing model (D101/D103, model R).** A view's **full route** (`{route}`) is composed at
+**registration** time — the EF layer's default root (`/api/views`) or a `RouteGroup` prefix — and
+recorded verbatim in `ViewMetadata.Route`. `a2n.Vista.AspNetCore` is a **dumb mapper**: it reads
+`IViewRegistry` and mounts the **fixed facet sub-paths** under each view's own `{route}`. There is no
+per-view `Route()` on the HTTP side, and no route reconstruction here. This keeps the invariant **one
+view = one route prefix** (D103): internal vs external groups (different prefixes) work with no
+AspNetCore-side configuration, because the prefix already lives in `ViewMetadata.Route`.
 
-> **Reconciliation (2026-06-20) — Pillar 1 routes.** Implemented: `GET {root}/{v}` (List),
-> `GET {root}/{v}/{key}` (Detail), `POST {root}/{v}` (Create), `PUT {root}/{v}/{key}` (Update),
-> `DELETE {root}/{v}/{key}` (Delete). List reads `ViewQueryRequest` from the **query string** and
-> returns `ViewListResult<TRow>`→JSON. The `POST {root}/{v}/query` row in the table is the **Pillar 2
-> adapter form** (body + `Accept`), layering on top of the Pillar 1 routes without replacing them (DR3).
-> Pillar 1 write → **501** (writable) / **404** (read-only). Bulk/export/metadata/distinct = forward-looking.
+`{route}` = the view's full `ViewMetadata.Route` (e.g. `/api/views/orders`). The query and key travel in
+the **JSON request body** (D110), so composite keys and rich filter/search/sort/paging payloads need no
+URL-encoding gymnastics; reads never depend on the query string.
 
 | Facet | Method + Route | Requirement | Spec |
 |---|---|---|---|
-| List/query | `POST {root}/{v}/query` | always | 02, 04 |
-| List (DT parity) | `POST {root}/{v}/{suffix}` (e.g. `/datatable`) | adapter with a `RouteSuffix` | 04 §5.1 |
-| Detail by-key | `GET {root}/{v}/{key}` | always (List-by-PK fallback, Spec 01 §4.6/D49) | 02 §6.3 |
-| Metadata | `GET {root}/{v}/metadata` | always | §8 |
-| Metadata (adapter) | `GET {root}/{v}/metadata/{adapterId}` | an `IViewMetadataAdapter` exists | 04 §5.2 |
-| Export | `POST {root}/{v}/export?format=csv\|xlsx` | an exporter exists | §7.5, Spec 07 |
-| Create | `POST {root}/{v}` | `CrudType != null` | §7.2 |
-| Update | `PUT {root}/{v}/{key}` | `CrudType != null` | §7.3 |
-| Delete | `DELETE {root}/{v}/{key}` | `CrudType != null` | §7.4 |
-| Bulk update | `PATCH {root}/{v}/bulk` | CRUD + `AllowBulk` | §7.6 |
-| Bulk delete | `POST {root}/{v}/bulk-delete` | CRUD + `AllowBulk` | §7.6 |
-| Distinct (stub) | `GET {root}/{v}/distinct/{field}` | reserved (Spec 01 §14.3) | v1.x |
+| List | `POST {route}/list` | always | 02 |
+| Detail by-key | `POST {route}/detail` | always (key in body: scalar or name→value map) | 02 §6.3, D109 |
+| Metadata | `GET {route}/metadata` | always (cacheable; immutable after startup) | §8 |
+| Export | `POST {route}/export` | always (query in body; bounded by `MaxExportRows`) | §7.5, Spec 07 |
+| List (grid adapter) | `POST {route}/{suffix}` (e.g. `/datatable`) | an `IViewAdapter` with a `RouteSuffix` (D112) | 04 §5.1 |
+| Metadata (schema adapter) | `GET {route}/{suffix}` (e.g. `/querybuilder`) | an `IViewMetadataAdapter` with a `RouteSuffix` (D116) | 04 §5.2 |
+| Create | `POST {route}/create` | writable view (`CrudType != null`) | §7.2 |
+| Update | `POST {route}/update` | writable view (`CrudType != null`) | §7.3 |
+| Delete | `POST {route}/delete` | writable view (`CrudType != null`) | §7.4 |
 
 Design notes:
 
-- **List-query (`POST .../query`) is separated from Create (`POST .../`)** to avoid MVC/Minimal-API routing collision (Spec 01 D32). Both are `POST`, with different paths.
-- **`query` uses POST** (not GET) because the `FilterNode` tree (Spec 01 §8) is too complex for a query string and could exceed the URL limit.
-- Detail/Update/Delete use a single `{key}` in v1.0. Composite PKs → encoding in §7.7 (in line with Spec 03 §17 #3).
+- **Uniform action surface.** Every facet is `POST {route}/{action}` except the cacheable
+  `GET {route}/metadata`. This is the DynData-heritage surface (D98 migration ergonomics): predictable,
+  client-codegen-friendly, no verb/resource ambiguity.
+- **A read-only view maps only the read actions** (`list`/`detail`/`metadata`/`export`); the write
+  actions are **not mapped** for it (D38). A write action on a writable view returns **501** while DR7
+  stands (EF write wiring follows).
+- **`list`/`detail`/`export` use POST** because the `FilterNode` tree (Spec 01 §8) and composite keys are
+  too complex for a query string and could exceed the URL limit. `VistaQueryStringParser` is **retired**.
+- **Detail/Update/Delete carry the key in the body** as a scalar or a `{ field: value }` name→value map,
+  normalized against `ViewMetadata.KeyFields` by the engine (D109); no serializer type crosses into Core
+  (R2.6). Composite PKs need no path encoding.
 
 ### 5.3 Binding `HttpContext` → `AdapterRequest`
 

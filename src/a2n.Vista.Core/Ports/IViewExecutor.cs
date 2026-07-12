@@ -32,10 +32,17 @@ namespace a2n.Vista.Ports;
 /// <see cref="CancellationToken"/>.
 /// </para>
 /// <para>
-/// <b>AOT hygiene (R11.4).</b> Members are marked <see cref="RequiresUnreferencedCodeAttribute"/>
-/// because the current implementation drives sorting, filtering, projection, and key resolution from
-/// string/metadata at runtime (a reflection path). The AOT-clean route is the source generator
-/// (Pilar 3); these annotations are removed once it lands.
+/// <b>AOT hygiene (R11.4, Decision Log D123).</b> The generic read/write facets
+/// (<see cref="ListAsync{TRow}"/>, <see cref="DetailAsync{TRow}"/>, <see cref="CreateAsync{TCrud}"/>,
+/// <see cref="UpdateAsync{TCrud}"/>) are deliberately <em>not</em>
+/// <see cref="RequiresUnreferencedCodeAttribute"/>: the implementation prefers an AOT-clean branch (the
+/// generated compiled read plan / the generated write mapper) and confines the reflection fallback to a
+/// private <c>[RequiresUnreferencedCode]</c> helper reached through a justified suppression, mirroring
+/// <c>WriteMapperResolver</c>. This lets the source-generated HTTP dispatch invoker call these facets
+/// without inheriting an <c>IL2026</c> warning it would never actually hit on the clean path. The
+/// operator-visible RUC boundary remains at the ASP.NET Core <c>ViewRequestExecutor</c> entry point,
+/// whose reflection-fallback branch stays annotated and is the only path Style A / no-plan / uncovered
+/// views take. <see cref="DeleteAsync"/> is non-generic and keeps its annotation.
 /// </para>
 /// </remarks>
 public interface IViewExecutor
@@ -58,7 +65,6 @@ public interface IViewExecutor
     /// filtered total and whose <see cref="ViewListResult{TRow}.TotalRowsUnfiltered"/> carries the
     /// scope-only total.
     /// </returns>
-    [RequiresUnreferencedCode("View execution resolves sort/filter/projection from metadata at runtime; use the source generator path for AOT.")]
     Task<ViewListResult<TRow>> ListAsync<TRow>(
         ViewMetadata view,
         ViewQueryRequest request,
@@ -82,7 +88,6 @@ public interface IViewExecutor
     /// The projected row, or <see langword="null"/> when no row matches the key within the
     /// authorized scope.
     /// </returns>
-    [RequiresUnreferencedCode("Detail key resolution and projection are built from metadata at runtime; use the source generator path for AOT.")]
     Task<TRow?> DetailAsync<TRow>(
         ViewMetadata view,
         object key,
@@ -100,7 +105,6 @@ public interface IViewExecutor
     /// <param name="scope">The server-trusted row-filter scope (e.g. tenant ownership) to honor.</param>
     /// <param name="cancellationToken">Token used to cancel the operation.</param>
     /// <returns>The primary-key value of the newly created row.</returns>
-    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
     Task<object> CreateAsync<TCrud>(
         ViewMetadata view,
         TCrud model,
@@ -126,7 +130,6 @@ public interface IViewExecutor
     /// <see langword="true"/> when a row was updated; <see langword="false"/> when no row matched the
     /// key within the authorized scope.
     /// </returns>
-    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
     Task<bool> UpdateAsync<TCrud>(
         ViewMetadata view,
         object key,

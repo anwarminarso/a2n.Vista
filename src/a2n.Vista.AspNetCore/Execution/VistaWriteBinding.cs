@@ -1,5 +1,5 @@
-using System.Diagnostics.CodeAnalysis;
 using System.Text.Json;
+using System.Text.Json.Serialization.Metadata;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Write;
@@ -85,13 +85,24 @@ public static class VistaWriteBinding
                 "A write request body must be a JSON object.", WriteErrorCode.MalformedBody);
         }
 
-        return root.Deserialize<VistaWriteRequestBody>(VistaJson.Options) ?? new VistaWriteRequestBody();
+        // Resolve the envelope's JsonTypeInfo through the serialization seam and deserialize with the
+        // AOT-safe JsonTypeInfo overload. Routing through VistaJson.Options (web defaults +
+        // PropertyNameCaseInsensitive) is what makes the incoming "model"/"key" members bind to
+        // Model/Key; resolving VistaStaticJsonContext.Default directly would apply that context's own
+        // case-sensitive default options and drop a well-formed envelope. VistaWriteRequestBody is
+        // covered by the shipped Static_Envelope_Context, so the seam resolves its JsonTypeInfo from
+        // that context ahead of the reflection fallback — AOT-clean, never on the fallback (D124).
+        var typeInfo = (JsonTypeInfo<VistaWriteRequestBody>)VistaJson.Options.GetTypeInfo(typeof(VistaWriteRequestBody));
+        return root.Deserialize(typeInfo) ?? new VistaWriteRequestBody();
     }
 
     /// <summary>
     /// Binds the envelope's <see cref="VistaWriteRequestBody.Model"/> member to the view's typed write
-    /// model. The reflection bridge closes deserialization over the runtime <paramref name="crudType"/>
-    /// (the view's <c>CrudType</c>), mirroring the read bridge in <see cref="ViewRequestExecutor"/>.
+    /// model. Deserialization is routed through the Vista serialization seam (Decision Log D124): the
+    /// runtime <paramref name="crudType"/> (the view's <c>CrudType</c>) resolves its
+    /// <see cref="JsonTypeInfo"/> via <see cref="VistaJson.Options"/> and the model is deserialized with
+    /// the AOT-safe <see cref="JsonTypeInfo"/> overload — never the reflection
+    /// <c>Deserialize(object, Type, options)</c> overload.
     /// </summary>
     /// <param name="body">The parsed write envelope.</param>
     /// <param name="crudType">The view's <c>CrudType</c> (the <c>TCrud</c> contract) to bind into.</param>
@@ -101,9 +112,12 @@ public static class VistaWriteBinding
     /// <exception cref="VistaInvalidRequestException">
     /// The model is absent, null, or not a JSON object (Requirement R9.1).
     /// </exception>
-    [RequiresUnreferencedCode(
-        "Binds the write model by deserializing the JSON payload into the view's runtime CrudType; "
-        + "use the source generator path for AOT.")]
+    /// <remarks>
+    /// When a developer-authored <c>App_Json_Context</c> covers <c>TCrud</c>, binding is AOT-clean; when
+    /// no context covers it, resolution rides the seam's reflection fallback resolver — the single
+    /// <see cref="System.Diagnostics.CodeAnalysis.RequiresUnreferencedCodeAttribute"/> serialization
+    /// branch, confined to that resolver rather than this method (Requirements 5.3, 5.5).
+    /// </remarks>
     public static object BindModel(VistaWriteRequestBody body, Type crudType)
     {
         ArgumentNullException.ThrowIfNull(body);
@@ -127,9 +141,14 @@ public static class VistaWriteBinding
                 "The write 'model' must be a JSON object.", WriteErrorCode.MalformedBody);
         }
 
+        // Resolve TCrud's JsonTypeInfo through the seam and deserialize with the AOT-safe overload. The
+        // [RequiresUnreferencedCode] boundary now lives on the seam's reflection fallback resolver, not
+        // here, so a covered TCrud binds AOT-clean and the fallback carries the RUC (D124/R5.3/R5.5).
+        JsonTypeInfo typeInfo = VistaJson.Options.GetTypeInfo(crudType);
+
         try
         {
-            return model.Deserialize(crudType, VistaJson.Options)
+            return model.Deserialize(typeInfo)
                 ?? throw new VistaInvalidRequestException(
                     "The write 'model' payload was null.", WriteErrorCode.MalformedBody);
         }

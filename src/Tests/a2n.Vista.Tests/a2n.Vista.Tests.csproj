@@ -94,6 +94,15 @@
       can resolve each view's generated mapper and compare it against the ReflectionWriteMapper oracle.
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorWriteMapperSample\a2n.Vista.GeneratorWriteMapperSample.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated HTTP dispatch invokers for the three
+      representative typed Style B views (spec source-generator-http-surface, task 10.1). Referencing it
+      loads its [ModuleInitializer]-driven registrations into a2n.Vista.Ports.ViewInvokerStore so the
+      master oracle-parity property test (HttpSurfaceOracleParityPropertyTests, task 10.2 / Property 1)
+      can resolve each view's generated invoker and compare its dispatch + serialization against the
+      reflection oracle over random request shapes.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorHttpSurfaceSample\a2n.Vista.GeneratorHttpSurfaceSample.csproj" />
   </ItemGroup>
 
 </Project>

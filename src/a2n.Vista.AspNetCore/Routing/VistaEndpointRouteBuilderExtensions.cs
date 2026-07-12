@@ -195,7 +195,11 @@ public static class VistaEndpointRouteBuilderExtensions
 
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
         var result = await executor.ListAsync(http, view.Name, request).ConfigureAwait(false);
-        return Results.Ok(result);
+
+        // Serialize the boxed ViewListResult<TRow> through the seam by its runtime type (D124): resolve
+        // the JsonTypeInfo via VistaJson.Options and write with the AOT-safe overload. This replaces the
+        // framework Results.Ok(obj) pipeline while preserving the 200 status and byte-for-byte body (R5.2).
+        return VistaJsonWriter.Json(result, result.GetType());
     }
 
     /// <summary>Handles <c>POST {route}/detail</c>: read the key from the body; a missing row maps to 404.</summary>
@@ -204,11 +208,33 @@ public static class VistaEndpointRouteBuilderExtensions
     {
         var body = await ReadBodyAsync<VistaDetailRequestBody>(http).ConfigureAwait(false)
             ?? throw new VistaInvalidRequestException("A detail request requires a JSON body with a 'key'.");
-        var key = VistaKeyReader.Read(body.Key);
+
+        // A present-but-keyless envelope (for example `{}`) leaves Key at its default Undefined kind; an
+        // explicit `null` key is equally unusable. Both are malformed per R2.5 and must surface as the
+        // 400 contract rather than letting VistaKeyReader's raw JsonException escape as an unhandled 500.
+        if (body.Key.ValueKind is JsonValueKind.Undefined or JsonValueKind.Null)
+        {
+            throw new VistaInvalidRequestException("A detail request requires a 'key'.");
+        }
+
+        object key;
+        try
+        {
+            key = VistaKeyReader.Read(body.Key);
+        }
+        catch (JsonException ex)
+        {
+            // Keep VistaKeyReader serializer-neutral: it signals unreadable keys with JsonException; the
+            // handler translates that into the read-path 400 contract so no System.Text.Json type leaks.
+            throw new VistaInvalidRequestException($"The request 'key' is invalid: {ex.Message}");
+        }
 
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
         var row = await executor.DetailAsync(http, viewName, key).ConfigureAwait(false);
-        return row is null ? Results.NotFound() : Results.Ok(row);
+
+        // A missing row keeps the 404 contract; a present row is serialized through the seam by its
+        // runtime row type (D124), preserving the 200 status and byte-for-byte body (R5.2).
+        return row is null ? Results.NotFound() : VistaJsonWriter.Json(row, row.GetType());
     }
 
     /// <summary>Handles <c>GET {route}/metadata</c>: authorize, then return the serializable metadata.</summary>
@@ -304,9 +330,10 @@ public static class VistaEndpointRouteBuilderExtensions
 
         if (string.IsNullOrWhiteSpace(body.Format))
         {
-            // No format → preserve the JSON ViewListResult behavior.
+            // No format → preserve the JSON ViewListResult behavior, now serialized through the seam by
+            // its runtime type (D124): 200 status and byte-for-byte body unchanged (R5.2).
             var jsonResult = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
-            return Results.Ok(jsonResult);
+            return VistaJsonWriter.Json(jsonResult, jsonResult.GetType());
         }
 
         var writer = ResolveExportWriter(http, body.Format)

@@ -74,7 +74,13 @@ Three pillars (see `ROADMAP.md`):
   now AOT-clean for typed Style B (the reflection mapper is a fallback only) — see §2.13. The remaining
   reflection paths (Style A serialization/write; there is no typed-`TCrud` Style A write) stay
   `[RequiresUnreferencedCode]` until later phases. The **write path (M12, D119/D120)** is implemented on
-  the executor write facet — see §2.12.
+  the executor write facet — see §2.12. **Still to come (planned, not started):** the **HTTP-surface phase
+  (D123/D124, spec `source-generator-http-surface`)** closes the last large reflection surface for typed
+  Style B — a generated dispatch invoker (D123) + an AOT-clean serialization seam (D124) make the full
+  `request → authorize → execute → serialize` path IL2026/IL3050-clean; the ASP.NET Core layer today is
+  still entirely `[RequiresUnreferencedCode]` (see §2.5, `ViewRequestExecutor` `MakeGenericMethod` +
+  `VistaWriteBinding`). Followed by `JsonSerializerContext`/per-view `JsonTypeInfo`, OpenAPI, and Style A
+  coverage — see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -535,8 +541,9 @@ These record where the code intentionally differs from the early spec sketches. 
 - **DR1** `IViewRegistry`: `Add(ViewMetadata)`, `Register<TView>()` (RUC), `Get` **nullable** (miss→404),
   `All`. No `Register(Type)`/`RegisterAssembly` on the Core registry.
 - **DR2** DI is **two doors**: `AddVista` (EF — registration) + `AddVistaEndpoints` (AspNetCore — auth).
-- **DR3** Pillar 1 List = **`GET {root}/{viewName}`** (query string). `POST .../query` is the Pillar 2
-  adapter form (layers on top).
+- **DR3** ~~Pillar 1 List = `GET {root}/{viewName}` (query string).~~ **Superseded by D110**
+  (`http-surface-redesign`): the surface is action-style — List = `POST {route}/list` (query in the JSON
+  body); the Pillar 2 `POST .../query` form is unified into `list`. See §2.5, §5, and Spec 05 §5.2.
 - **DR4** `WithValidator`/`WithInterceptor` deferred (not in code).
 - **DR5** Style B `Register<TView>()` is **metadata-only** (not executable without an `IViewExecutionPlan`
   via `Register<TView>(plan)` or source-gen).
@@ -591,7 +598,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D120 | `write-path` spec / `01` §7 | **Landed (M12).** Write error-code vocabulary + concurrency signalling: `WriteErrorCode`/`WriteErrorCodes` on the shared RFC 7807 envelope (`extensions["code"]`), typed write exceptions mapped by `VistaProblemResults`; optimistic concurrency via `If-Match`/`ETag` (428 precondition gate, 409 mismatch/`SaveChanges` conflict). Bulk deferred (array → 400; `AllowBulk` enables no path). See §2.12. |
 | D121 | `source-generator-write-mapper` spec / `03` §15 | **Landed (M9 write-DSL phase).** The generated write mapper: a second `IIncrementalGenerator` (`WriteMapperGenerator`) emits, per analyzable typed Style B writable view, a reflection-free `WriteMapper` (`Action<object,object>` = casts + one whitelisted scalar assignment per safe `MapWritable` mapping, declaration-ordered, defense-in-depth) as `file static` C# + a `[ModuleInitializer]` filling the M12 `GeneratedWriteMapperStore` keyed by the view's runtime `Name`; `WriteMapperResolver` prefers it over `ReflectionWriteMapper` (RUC fallback) with **zero executor changes** → the typed Style B write path is now AOT-clean. `VISTA0033` (warning) marks an unanalyzable chain → silent reflection fallback. Builds on D117/D118. See §2.13. |
 | D122 | `source-generator-write-mapper` spec / `03` §13 | **Landed (M9 write-DSL phase).** Interim write-authoring startup guards promoted to **build-time** analyzer diagnostics: `VISTA0030` (zero mappings), `VISTA0031` (non-scalar/navigation target), `VISTA0032` (key-field/concurrency-token target) — all **errors** that gate emission; the mirroring fail-fast guards in `ViewBuilderOfTCrud.ValidateWriteFacet` were retired (the primary-key executability guard is retained). Adopts the code/PROJECT-STATUS `VISTA0030`–`VISTA0033` numbering; the frozen `03` §13 catalog's conflicting assignment is superseded. See §2.13. |
-| **D123+** | **next free** | Use for new decisions. |
+| D123 | `source-generator-http-surface` spec / `03` §15 | **Planned (M9 HTTP-surface phase; not started).** The generated typed HTTP **dispatch invoker**: a per-view, reflection-free `IViewInvoker` (Core port) that closes `IViewExecutor.List/Detail/Create/Update<T>` at compile time (no `MakeGenericMethod`, no `Task<TResult>.Result`/`ViewListResult<TRow>` reflection), registered via `[ModuleInitializer]` into a Core-resident, first-wins `ViewInvokerStore` keyed by the view's runtime `Name`; `ViewRequestExecutor` prefers it with the existing `MakeGenericMethod` path confined to an RUC reflection fallback (coexistence — Style A / unanalyzable views unchanged). Mechanism-only: no wire change; parity with the reflection oracle is the guard. Builds on D117/D118/D121. See §6 (Pillar 3 remaining). |
+| D124 | `source-generator-http-surface` spec / `03` §15 | **Planned (M9 HTTP-surface phase; not started).** The AOT-clean **serialization seam** (in `a2n.Vista.AspNetCore`, Core stays STJ-free): a single `TypeInfoResolverChain` over `VistaJson.Options` = a shipped hand-authored `Static_Envelope_Context` (fixed request/response envelopes + polymorphic `FilterNode`) → developer-authored `App_Json_Context`(s) chained via `AddVistaJsonContext(...)` → an opt-out reflection fallback (`DefaultJsonTypeInfoResolver`, the only RUC serialization branch). Every Vista response is written via `JsonTypeInfo` overloads (replacing `Results.Ok(obj)` for List/Detail/Export) and `VistaWriteBinding` deserializes through the seam. Per-view `JsonTypeInfo` is **not** auto-generated (generator-of-generator constraint); the generator emits `VISTA0041` guidance naming the exact `[JsonSerializable]` types, and `VISTA0040` flags an uncovered candidate. New diagnostic family begins at `VISTA0040`. See §6 (Pillar 3 remaining). |
+| **D125+** | **next free** | Use for new decisions. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -655,8 +664,14 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
 - **Source generator (Pillar 3)** — **Phase 1 landed (M9/D117, §2.10)**, **Phase 2 landed (D118, §2.11):**
   executable typed Style B plans + member-access for filter/sort + masking runtime + D105 PK derivation,
   and **the write-DSL phase landed (D121/D122, §2.13):** the generated write mapper + build-time
-  diagnostics (VISTA0030–0033). Remaining phases: `JsonSerializerContext`, OpenAPI, Style A
-  accessor/serialization, plus cross-assembly discovery (D97) and `MapView<TView>()` (DR10).
+  diagnostics (VISTA0030–0033). **Remaining phases (planned, not started):** the **HTTP-surface phase**
+  (`source-generator-http-surface`, **D123/D124**) — a generated Core-only dispatch invoker + a
+  `ViewInvokerStore` (D123) plus an AOT-clean serialization seam in AspNetCore (D124: `TypeInfoResolverChain`
+  = shipped `Static_Envelope_Context` → developer `App_Json_Context` via `AddVistaJsonContext` → reflection
+  fallback), diagnostics `VISTA0040`/`VISTA0041`; then `JsonSerializerContext`/per-view `JsonTypeInfo`,
+  OpenAPI, and Style A accessor/serialization; plus cross-assembly discovery (D97) and `MapView<TView>()`
+  (DR10). **Dependency note:** M17 (TS client) and M18 (OpenAPI) depend on this HTTP-surface phase (the
+  serialization seam + AOT-clean metadata surface), not only on `JsonSerializerContext`.
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)

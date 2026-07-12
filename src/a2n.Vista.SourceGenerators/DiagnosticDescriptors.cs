@@ -169,5 +169,46 @@ namespace a2n.Vista.SourceGenerators
             isEnabledByDefault: true,
             description: "To emit a reflection-free write mapper the source generator reproduces a view's MapWritable chain as compile-time source. It supports chains of simple member-selection mappings. A chain it cannot reproduce (a selector that is not a simple member selection, or an unrecognized chain shape) is skipped: no write mapper is generated, the view remains functional, and its write path uses the runtime reflection-based mapper. Simplify the MapWritable selectors to simple member selections to get the generated write mapper. Severity is Warning because the view still works via the fallback.",
             helpLinkUri: HelpLinkBase + "VISTA0033.md");
+
+        /// <summary>
+        /// VISTA0040 (info): a Style B view is recognized as an HTTP-surface base candidate but cannot
+        /// receive a generated dispatch invoker because its projected row type (<c>TQuery</c>) — or a
+        /// writable view's write model (<c>TCrud</c>) — is anonymous or <c>object</c> rather than a
+        /// named type. No invoker is emitted for the view; it stays fully functional on the reflection
+        /// dispatch fallback and only the AOT-clean HTTP surface is missed. The build succeeds. Severity
+        /// is Info because an uncovered view is a valid, working view (M9 HTTP-surface phase, R1.1, R1.3,
+        /// R9.1, R9.4, D123).
+        /// </summary>
+        public static readonly DiagnosticDescriptor HttpSurfaceCandidateUncovered = new DiagnosticDescriptor(
+            id: "VISTA0040",
+            title: "Style B view cannot receive a generated HTTP dispatch invoker",
+            messageFormat: "View '{0}' has an anonymous or 'object' row type (or write model) and cannot receive a generated HTTP dispatch invoker; it falls back to reflection dispatch and only the AOT-clean HTTP surface is missed",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "The Vista source generator emits a reflection-free HTTP dispatch invoker for a typed Style B view whose projected row type (TQuery) is a named type (and, when writable, whose TCrud is a named type). A view whose TQuery — or writable TCrud — is anonymous or 'object' cannot be dispatched without reflection, so no invoker is generated: the view stays fully functional through the reflection dispatch fallback and only the AOT-clean HTTP path is missed. Give the view a named row (and write) type to receive the generated invoker. Severity is Info because the view still works via the fallback.",
+            helpLinkUri: HelpLinkBase + "VISTA0040.md");
+
+        /// <summary>
+        /// VISTA0041 (info): serialization guidance for a covered typed Style B view. Because a source
+        /// generator cannot feed the built-in System.Text.Json generator, Vista cannot auto-generate a
+        /// working per-view serialization context; instead the developer authors a
+        /// <c>JsonSerializerContext</c> and registers it via <c>AddVistaJsonContext(...)</c> to make the
+        /// view's HTTP (de)serialization AOT-clean. This diagnostic names the exact
+        /// <c>[JsonSerializable]</c> types to include for the view (<c>TRow</c>,
+        /// <c>ViewListResult&lt;TRow&gt;</c>, <c>PagedResult&lt;TRow&gt;</c>, and — when writable —
+        /// <c>TCrud</c>) so authoring the context is mechanical. The build succeeds whether or not a
+        /// context is supplied; until one is registered the view (de)serializes through the reflection
+        /// fallback resolver (M9 HTTP-surface phase, R5.4, R9.2, R9.4, D124).
+        /// </summary>
+        public static readonly DiagnosticDescriptor HttpSurfaceSerializationGuidance = new DiagnosticDescriptor(
+            id: "VISTA0041",
+            title: "Serialization guidance for a covered Style B view",
+            messageFormat: "For AOT-clean serialization of view '{0}', include these types via [JsonSerializable] in an App_Json_Context registered with AddVistaJsonContext(...): {1}",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "A Roslyn source generator cannot consume the output of another source generator, so Vista cannot auto-generate a working System.Text.Json serialization context for a view. To make a covered typed Style B view's HTTP (de)serialization AOT-clean, author a JsonSerializerContext listing the view's DTOs via [JsonSerializable] and register it with AddVistaJsonContext(...). This diagnostic names the exact types to include: TRow, ViewListResult<TRow>, PagedResult<TRow>, and — for a writable view — TCrud. The build succeeds regardless; until a context is registered the view (de)serializes through the reflection fallback resolver. Severity is Info because it is guidance, not an error.",
+            helpLinkUri: HelpLinkBase + "VISTA0041.md");
     }
 }

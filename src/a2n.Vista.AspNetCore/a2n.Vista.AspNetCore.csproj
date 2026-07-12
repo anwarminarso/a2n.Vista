@@ -16,4 +16,15 @@
     <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!--
+      White-box access for the serialization-seam unit examples (spec source-generator-http-surface,
+      task 7.6): the tests assert the shipped Static_Envelope_Context (VistaStaticJsonContext) covers each
+      fixed envelope type and that the reflection-fallback opt-out removes the reflection branch. Both the
+      context and the VistaJson seam are internal, so the test assembly needs visibility to inspect them
+      directly rather than only through the public endpoint surface.
+    -->
+    <InternalsVisibleTo Include="a2n.Vista.Tests" />
+  </ItemGroup>
+
 </Project>

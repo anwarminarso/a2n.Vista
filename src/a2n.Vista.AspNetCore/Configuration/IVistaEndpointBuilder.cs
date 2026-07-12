@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using a2n.Vista.AspNetCore.Authorization;
 
 namespace a2n.Vista.AspNetCore.Configuration;
@@ -62,4 +63,39 @@ public interface IVistaEndpointBuilder
     /// <param name="maxAgeSeconds">The <c>max-age</c> in seconds (default 60).</param>
     /// <returns>This builder, for chaining.</returns>
     IVistaEndpointBuilder EnableMetadataCaching(int maxAgeSeconds = 60);
+
+    /// <summary>
+    /// Chains a developer-authored <c>App_Json_Context</c> (a source-generated
+    /// <see cref="JsonSerializerContext"/> listing a view's DTOs via <c>[JsonSerializable]</c>) into the
+    /// Vista serialization seam (Decision Log D124). The context is inserted <b>ahead of</b> the
+    /// reflection fallback, so once it is registered the runtime types it covers (a view's row type,
+    /// <c>ViewListResult&lt;TRow&gt;</c>, <c>PagedResult&lt;TRow&gt;</c>, and — for a writable view — its
+    /// CRUD type) (de)serialize AOT-clean. The generator emits <c>VISTA0041</c> naming exactly which
+    /// types to include.
+    /// </summary>
+    /// <param name="context">The developer-authored source-generated context to chain in.</param>
+    /// <returns>This builder, for chaining.</returns>
+    /// <remarks>
+    /// Call this at the composition root, before the first request serializes a response — the seam's
+    /// resolver chain freezes on first use. It is safe to register several contexts and to register the
+    /// same context twice (the duplicate is ignored). Where the framework <c>Results</c> path is still
+    /// used, the context is mirrored into the ASP.NET Core <c>JsonOptions</c> resolver chain so both
+    /// paths resolve identically.
+    /// </remarks>
+    IVistaEndpointBuilder AddVistaJsonContext(JsonSerializerContext context);
+
+    /// <summary>
+    /// Removes the reflection fallback resolver from the Vista serialization seam (Decision Log D124,
+    /// R5.5), leaving the source-generated contexts as the only resolvers. Use this in a fully
+    /// AOT/trim-clean application whose views are all covered typed Style B with registered
+    /// <c>App_Json_Context</c>s; after opting out, a runtime type that no chained context covers can no
+    /// longer be (de)serialized.
+    /// </summary>
+    /// <returns>This builder, for chaining.</returns>
+    /// <remarks>
+    /// The reflection fallback (<c>DefaultJsonTypeInfoResolver</c>) is the seam's only trim/AOT-unsafe
+    /// (RUC) serialization branch; disabling it is the switch that makes the serialization path provably
+    /// reflection-free. Call it at the composition root before the first serialization.
+    /// </remarks>
+    IVistaEndpointBuilder DisableVistaReflectionSerializationFallback();
 }

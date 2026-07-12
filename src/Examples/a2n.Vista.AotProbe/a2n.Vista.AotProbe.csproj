@@ -12,8 +12,21 @@
         DetailCompiledAsync — the *non-RUC* compiled List and Detail read path. Routing through these
         helpers (rather than the public RUC ListAsync/DetailAsync) keeps the analyzed surface exactly the
         generated Style B path, so a green build proves it is free of IL2026 (RequiresUnreferencedCode)
-        and IL3050 (RequiresDynamicCode). Style A keeps its permanent RUC serialization annotation
-        unchanged (D96 / R5.3) — this probe neither references nor alters it.
+        and IL3050 (RequiresDynamicCode).
+
+      * Phase 3 write-mapper path (Spec source-generator-write-mapper, Task 11.1, R10.1-R10.6): the
+        generated WriteMapper resolved through WriteMapperResolver and applied to an entity.
+
+      * Phase 4 HTTP-surface round-trip (Spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3;
+        D123/D124): the generated IViewInvoker (resolved from a2n.Vista.Core's ViewInvokerStore) dispatches
+        List + Detail (read-only view) and Create + Update (writable view) over the *non-RUC* executor
+        facets, a write body is bound through the seam (VistaWriteBinding.BindModel), and every response is
+        serialized through the Serialization_Seam (VistaJson.Options + TypeInfoResolverChain) using the
+        shipped VistaStaticJsonContext plus a probe App_Json_Context, with the reflection fallback resolver
+        removed (DisableReflectionFallback). A green build proves this full typed Style B round-trip is free
+        of IL2026/IL3050. A Style A (central-template, anonymous) view is present to demonstrate the
+        coexistence boundary: it has no generated invoker and keeps its permanent RUC path (D96 / R8.3),
+        isolated behind a narrowly-scoped suppression — it is not required to be AOT-clean.
 
     A green build IS the verification. No native toolchain is required: <IsAotCompatible>true</IsAotCompatible>
     enables BOTH the trim analyzer and the AOT analyzer, which surface IL2026/IL3050 during `dotnet build`.
@@ -45,6 +58,17 @@
   <ItemGroup>
     <!-- The covered export path lives in Core: ExportColumns + ViewAccessorRegistry + CsvViewExportWriter. -->
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+
+    <!--
+      Phase 4 (spec source-generator-http-surface, Task 11.1, R8.1/R8.2/R8.3; Decision Log D123/D124):
+      the AOT-clean serialization seam lives in the ASP.NET Core layer (VistaJson.Options +
+      TypeInfoResolverChain, the shipped VistaStaticJsonContext, VistaJsonWriter, and the
+      VistaWriteBinding.BindModel write-body binder). Referencing it lets the probe bind a write body and
+      serialize List/Detail/write responses through the seam using the Static_Envelope_Context plus a
+      probe-authored App_Json_Context, with the reflection fallback resolver removed — so a green build
+      proves the full typed Style B dispatch + serialization round-trip is free of IL2026/IL3050. The
+      generated dispatch invoker itself is Core-only; only the serialization seam pulls in AspNetCore. -->
+    <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
 
     <!--
       Phase 2 (spec style-b-executable, Task 11.1, R5.1/R5.4/R5.5/R1.7): the generated Style B

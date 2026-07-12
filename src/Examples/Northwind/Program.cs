@@ -46,7 +46,17 @@ builder.Services.AddVista(vista =>
 // environment that is a fail-closed startup error unless open access is opted into explicitly (D94),
 // so we call AllowAnonymousAccess() to make the open posture a deliberate, documented choice. A real
 // app gates access via UseAuthorizer<T>() instead.
-builder.Services.AddVistaEndpoints(v => v.AllowAnonymousAccess());
+//
+// AddVistaJsonContext chains the developer-authored App_Json_Context for the typed Style B view
+// (vWritableMemo) into the Vista serialization seam ahead of the reflection fallback (Decision Log
+// D124). Combined with the generated dispatch invoker (ViewInvokerStore, D123) that closes
+// List/Detail/Create/Update over MemoRow/MemoWriteModel at compile time, the vWritableMemo HTTP path
+// then runs reflection-free. NorthwindJsonContext lists exactly the types the generator's VISTA0041
+// guidance names for that view. The Style A views (vProductCategory, vOrderDetail) project anonymous
+// rows and stay on the reflection serialization fallback by design (D96).
+builder.Services.AddVistaEndpoints(v => v
+    .AllowAnonymousAccess()
+    .AddVistaJsonContext(a2n.Vista.Examples.Northwind.Views.NorthwindJsonContext.Default));
 
 // Register the jQuery DataTables.NET adapter (Decision Log D112). Each view then also exposes
 // POST {route}/datatable for DataTables server-side requests.

@@ -138,11 +138,11 @@ Selection guidance (use-case):
 
 A single **View** is one named *resource* (e.g. `"vProductCategory"`) that has up to three **facets**:
 
-| Facet | Cardinality | Typing | Endpoint (see 12.3) |
+| Facet | Cardinality | Typing | Endpoint (action-style, D110 — see 12.3 / Spec 05 §5.2) |
 |-------|-------------|--------|------------------------|
-| **List** | many, paged | anonymous / typed | `POST /api/views/{name}/query` |
-| **Detail** | one, by-key | anonymous / typed | `GET /api/views/{name}/{key}` |
-| **Write** | one (create/update/delete) | **typed only** | `POST/PUT/DELETE /api/views/{name}` |
+| **List** | many, paged | anonymous / typed | `POST {route}/list` (query in the JSON body) |
+| **Detail** | one, by-key | anonymous / typed | `POST {route}/detail` (key in the JSON body) |
+| **Write** | one (create/update/delete) | **typed only** | `POST {route}/{create\|update\|delete}` |
 
 Rules:
 
@@ -522,12 +522,14 @@ Each view's route is derived from `{root}/{viewName}`. **Verb-to-facet in Pillar
 `DELETE {root}/{viewName}/{key}` (Delete). There is no per-view `Route()`; `viewName` comes from
 `AddView("...")` / `Named("...")`.
 
-> **Reconciliation note.** Pillar 1 maps List to **`GET {root}/{viewName}`** (query string),
-> not `POST {root}/{viewName}/query`. The `POST .../query` form (body filter + response shape
-> via `Accept`) is the **Pillar 2 adapter form** that layers on top of this route without changing it
-> (DR3). `MapVistaViews()` uses one generic route per verb that resolves the view by name at
-> request time; `MapView(string viewName)` maps a single view (not `MapView<TView>()` — that needs
-> compile-time type→name resolution from the Pillar 3 source generator).
+> **Reconciliation note (superseded by D110).** The verb-to-facet sketch above is the early Pillar 1
+> shape. The **live surface is action-style** (D110, `http-surface-redesign`, Spec 05 §5.2), superseding
+> DR3: the full `{route}` is composed at **registration** into `ViewMetadata.Route` (D101/D103), and the
+> mapper mounts the fixed facet sub-paths under it — `POST {route}/list`, `POST {route}/detail`,
+> `GET {route}/metadata`, `POST {route}/export`, and `POST {route}/{create|update|delete}` for writable
+> views. The query and key travel in the **JSON body** (composite keys as a name→value map). `MapVistaViews()`
+> maps every registered view at its own `ViewMetadata.Route`; `MapView(string viewName)` maps a single view
+> (not `MapView<TView>()` — that needs compile-time type→name resolution from the Pillar 3 source generator).
 
 #### Authorization — a single door (`IViewAuthorizer`)
 
@@ -1028,27 +1030,35 @@ Note: filter/sort/search are **not gone** (unlike the early spec version, which 
 
 ### 12.3 Endpoint
 
-Vista separates **List** (read many) from **Create** (write one). **Pillar 1** maps List to
-`GET {root}/{viewName}` (paging/sort via query string) and Create to `POST {root}/{viewName}` — different
-paths, no routing collision. The `POST {root}/{viewName}/query` form (body filter + `Accept`
-negotiation) is the **Pillar 2 adapter layer** that layers on top of the Pillar 1 route.
+> **Superseded by D110 (action-style surface).** The verb/resource sketch that once lived here is
+> superseded by `http-surface-redesign` (D110, supersedes DR3). The **authoritative endpoint mapping is
+> Spec 05 §5.2**. The live surface is uniform **action-style**: `POST {route}/list`,
+> `POST {route}/detail`, `GET {route}/metadata`, `POST {route}/export`, and
+> `POST {route}/{create|update|delete}` for writable views, with the query and key in the **JSON body**.
+> The full `{route}` is composed at **registration** into `ViewMetadata.Route` (D101/D103); the mapper
+> mounts the fixed facet sub-paths under it (one view = one route prefix). Grid adapters mount at
+> `POST {route}/{suffix}` (D112); metadata schema adapters at `GET {route}/{suffix}` (D116).
 
-| DynData | Vista (Pillar 1) |
+DynData's action endpoints map to the Vista action surface almost one-to-one (D98 migration ergonomics),
+where `{route}` is the view's registered route (default `/api/views/{viewName}`):
+
+| DynData | Vista (action-style, D110) |
 |---------|-------|
-| `POST /dyndata/{controller}/{viewName}/datatable` | `POST /api/views/{viewName}/query` — **Pillar 2 adapter form** (response shape via `Accept`/route) |
-| `POST /dyndata/{controller}/{viewName}/list` | `GET /api/views/{viewName}` (Pillar 1, paging/sort from the query string; shape `ViewListResult`→JSON) |
-| `POST /dyndata/{controller}/{viewName}/export` | `POST /api/views/{viewName}/export?format=csv\|xlsx` (forward-looking) |
-| `POST /dyndata/{controller}/{viewName}/read` | `GET /api/views/{viewName}/{key}` |
-| `POST /dyndata/{controller}/{viewName}/create` | `POST /api/views/{viewName}` (if the view is writable; Pillar 1 → 501) |
-| `POST /dyndata/{controller}/{viewName}/update` | `PUT /api/views/{viewName}/{key}` (Pillar 1 → 501; concurrency: `If-Match`) |
-| `POST /dyndata/{controller}/{viewName}/delete` | `DELETE /api/views/{viewName}/{key}` (Pillar 1 → 501; concurrency: `If-Match`) |
-| `GET /dyndata/{controller}/{viewName}/metadata` | `GET /api/views/{viewName}/metadata` (forward-looking) |
-| `GET /dyndata/{controller}/{viewName}/metadataQB` | Adapter-specific output (`a2n.Vista.Adapters.QueryBuilder` → jQuery-QueryBuilder schema). |
-| `GET /dyndata/{controller}/{viewName}/dropdown` | Out of v1.0. Contract stub: `GET /api/views/{viewName}/distinct/{field}` is reserved (see Section 14). |
+| `POST /dyndata/{controller}/{viewName}/list` | `POST {route}/list` (query in the JSON body; shape `ViewListResult`→JSON) |
+| `POST /dyndata/{controller}/{viewName}/datatable` | `POST {route}/datatable` — grid adapter form (D112), an `IViewAdapter` with `RouteSuffix` |
+| `POST /dyndata/{controller}/{viewName}/export` | `POST {route}/export` (query in the body; bounded by `MaxExportRows`) |
+| `POST /dyndata/{controller}/{viewName}/read` | `POST {route}/detail` (key in the body: scalar or name→value map) |
+| `POST /dyndata/{controller}/{viewName}/create` | `POST {route}/create` (writable view; → 501 while DR7 stands) |
+| `POST /dyndata/{controller}/{viewName}/update` | `POST {route}/update` (writable view; → 501; concurrency: `If-Match`) |
+| `POST /dyndata/{controller}/{viewName}/delete` | `POST {route}/delete` (writable view; → 501; concurrency: `If-Match`) |
+| `GET /dyndata/{controller}/{viewName}/metadata` | `GET {route}/metadata` (cacheable) |
+| `GET /dyndata/{controller}/{viewName}/metadataQB` | `GET {route}/querybuilder` — metadata schema adapter (D116) |
+| `GET /dyndata/{controller}/{viewName}/dropdown` | Out of v1.0. Contract stub: `GET {route}/distinct/{field}` is reserved (see Section 14). |
 
-> **Pillar 1 write status.** The Create/Update/Delete routes are already mapped, but the EF write
-> execution is not yet implemented → it returns **501 Not Implemented** (writable view) or **404**
-> (read-only view, R3.3). The surface was deliberately stabilized first; write wiring follows (DR7).
+> **Write status.** The Create/Update/Delete actions are mapped for writable views, but the EF write
+> execution is not yet implemented → they return **501 Not Implemented** (writable view) or are **not
+> mapped** for a read-only view (404, R3.3). The surface was deliberately stabilized first; write wiring
+> follows (DR7).
 
 ### 12.4 The `LinqExtension.cs` & `AnonymousType.cs` functions — **NOT** ported
 
@@ -1149,7 +1159,7 @@ Prefixed `DR` so they do not collide with the `D51+` numbering used by Spec 02�
 |---|-----------|--------|---------|
 | DR1 | `IViewRegistry`: primary sink `Add(ViewMetadata)`, `Register<TView>()` (RUC), `Get` **nullable** (miss→null→404), `All`. No `Register(Type)`/`RegisterAssembly` in Core. | **Decided** | §5.3. Refines the non-null `Get` sketch. |
 | DR2 | DI **two doors**: `AddVista` (`IVistaBuilder`, EF package — `RouteRoot`, `RegisterTemplate<TTemplate,TDbContext>`, `Register<TView>`, `Register<TView>(plan)`) + `AddVistaEndpoints` (`IVistaEndpointBuilder`, AspNetCore package — `RouteRoot`, `UseAuthorizer<T>`). | **Decided** | §5.3, §5.6. EF & AspNetCore do not reference each other (D48); `RegisterTemplate` requires an explicit `TDbContext`. |
-| DR3 | Pillar 1 List = **`GET {root}/{viewName}`** (query string), not `POST .../query`. `POST .../query` (body + `Accept`) is the Pillar 2 adapter form that layers on top. | **Decided** | §5.6, §12.3. |
+| DR3 | ~~Pillar 1 List = **`GET {root}/{viewName}`** (query string), not `POST .../query`.~~ **Superseded by D110** (`http-surface-redesign`, Spec 05 §5.2): the surface is now **action-style** — List = `POST {route}/list` (query in the JSON body); the Pillar 2 `POST .../query` form is unified into `list`; grid adapters mount at `POST {route}/{suffix}` (D112). | **Superseded by D110** | §5.6, §12.3; Spec 05 §5.2. |
 | DR4 | `WithValidator`/`WithInterceptor` (on `ICrudBuilder`/`ICrudFacetBuilder`) **deferred** — not in Pillar 1 code yet. | **Decided: deferred** | §5.2, §5.5. v1.x forecast. |
 | DR5 | Style B `Register<TView>()` = **metadata-only** (executable when + `IViewExecutionPlan` via `Register<TView>(plan)` / source-gen). Style A `RegisterTemplate` produces metadata + plan. | **Decided** | §5.3. The Style B builder does not yet route the source/projection to EF. |
 | DR6 | `IViewExecutor.ListAsync` returns `ViewListResult<TRow>(PagedResult<TRow> Page, long TotalRowsUnfiltered)`. **Replaces** the proposed `ViewQueryResult<T>` of Spec 02. | **Decided** | §10.1. |

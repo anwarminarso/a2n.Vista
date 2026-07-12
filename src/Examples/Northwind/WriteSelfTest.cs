@@ -94,6 +94,16 @@ public static class WriteSelfTest
         // it only reports which mapper origin the Create/Update/Delete below run through.
         var usingGenerated = GeneratedWriteMapperStore.TryGet(view.Name, out _);
         Console.WriteLine($"WriteMapper: {(usingGenerated ? "GENERATED (source generator)" : "reflection fallback")}");
+
+        // Confirm the generated HTTP DISPATCH invoker is in effect for this Style B view (Decision Log
+        // D123). The ViewInvokerGenerator emits a [ModuleInitializer] into this assembly that registers a
+        // reflection-free IViewInvoker (closing List/Detail/Create/Update over MemoRow/MemoWriteModel at
+        // compile time) into the Core-resident ViewInvokerStore keyed by the view's runtime Name, before
+        // DI — so ViewRequestExecutor prefers it over MakeGenericMethod dispatch on the HTTP surface. This
+        // is a diagnostic report of the invoker origin only; the write operations below still call the
+        // Core executor directly and are unaffected (mirrors the WriteMapper line above).
+        var usingGeneratedInvoker = ViewInvokerStore.TryGet(view.Name, out _);
+        Console.WriteLine($"ViewInvoker: {(usingGeneratedInvoker ? "GENERATED (source generator)" : "reflection fallback")}");
         Console.WriteLine();
 
         var failures = 0;

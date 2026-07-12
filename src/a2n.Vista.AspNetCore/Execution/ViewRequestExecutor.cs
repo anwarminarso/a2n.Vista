@@ -45,13 +45,19 @@ namespace a2n.Vista.AspNetCore.Execution;
 /// "AspNetCore creates one per request" contract), so there is no DI-lifetime coupling on the scope.
 /// </para>
 /// <para>
-/// <b>Reflection bridge (R11.4).</b> <see cref="IViewExecutor.ListAsync{TRow}"/> and
-/// <see cref="IViewExecutor.DetailAsync{TRow}"/> are generic over the projected row type, but a view's
-/// row type is only known at runtime (<see cref="ViewMetadata.QueryType"/>, often an anonymous type from
-/// Gaya A). The bridge closes the generic method with that runtime type via
-/// <see cref="MethodInfo.MakeGenericMethod"/> and returns the result as <see cref="object"/> for the
-/// endpoint to serialize. This is the same deferred-reflection path used across Pilar 1; it is marked
-/// <see cref="RequiresUnreferencedCodeAttribute"/> and is replaced by the source generator (Pilar 3).
+/// <b>Generated invoker preferred, reflection confined (Decision Log D123).</b> After the one-door
+/// pipeline, each read/write facet resolves a source-generated <see cref="IViewInvoker"/> from
+/// <see cref="ViewInvokerStore"/> by the view's runtime <see cref="ViewMetadata.Name"/> and, on a hit,
+/// dispatches through it — reflection-free and AOT-clean (R4.1). On a miss it falls back to the
+/// deferred-reflection bridge: <see cref="IViewExecutor.ListAsync{TRow}"/> /
+/// <see cref="IViewExecutor.DetailAsync{TRow}"/> / <see cref="IViewExecutor.CreateAsync{TCrud}"/> /
+/// <see cref="IViewExecutor.UpdateAsync{TCrud}"/> are generic over a type only known at runtime
+/// (<see cref="ViewMetadata.QueryType"/>/<c>CrudType</c>), so the bridge closes them via
+/// <see cref="MethodInfo.MakeGenericMethod"/>. That reflection lives in the private
+/// <c>*ReflectionAsync</c> helpers, which carry <see cref="RequiresUnreferencedCodeAttribute"/>; the
+/// public facets no longer do (the RUC is confined to the fallback branch, R4.2). The endpoint does not
+/// branch on invoker origin beyond the resolve step, so the observable result is identical (R4.3).
+/// <see cref="DeleteAsync"/> is non-generic and stays a direct executor call.
 /// </para>
 /// </remarks>
 public sealed class ViewRequestExecutor
@@ -97,7 +103,13 @@ public sealed class ViewRequestExecutor
     /// </returns>
     /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
     /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated read path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<object> ListAsync(HttpContext http, string viewName, ViewQueryRequest request)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -105,9 +117,14 @@ public sealed class ViewRequestExecutor
 
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
 
-        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
-        var task = (Task)closed.Invoke(executor, [view, request, scope, http.RequestAborted])!;
-        return await AwaitResultAsync(task).ConfigureAwait(false)
+        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
+            return result.BoxedResult;
+        }
+
+        return await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
     }
 
@@ -123,7 +140,13 @@ public sealed class ViewRequestExecutor
     /// <returns>The type-erased list result (rows + recordsFiltered + recordsTotal).</returns>
     /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
     /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> and reflects over ViewListResult<TRow>; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated adapter path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<AdapterListResult> ListForAdapterAsync(HttpContext http, string viewName, ViewQueryRequest request)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -131,9 +154,15 @@ public sealed class ViewRequestExecutor
 
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
 
-        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
-        var task = (Task)closed.Invoke(executor, [view, request, scope, http.RequestAborted])!;
-        var boxed = await AwaitResultAsync(task).ConfigureAwait(false)
+        // Prefer the generated invoker: its ViewInvocationListResult carries rows + both totals without
+        // reflecting over ViewListResult<TRow> (replacing ToAdapterResult, D123 R2.2/R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
+            return new AdapterListResult(result.Rows, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+        }
+
+        var boxed = await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
 
         return ToAdapterResult(boxed);
@@ -174,7 +203,13 @@ public sealed class ViewRequestExecutor
     /// <param name="viewName">The registered view name.</param>
     /// <param name="request">The neutral query (filter/search/sort/scope) to export.</param>
     /// <returns>The view metadata and the materialized rows (bounded by <c>MaxExportRows</c>).</returns>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> and reflects over ViewListResult<TRow>; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated export path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<(ViewMetadata View, IReadOnlyList<object?> Rows)> ExportRowsAsync(
         HttpContext http,
         string viewName,
@@ -186,9 +221,15 @@ public sealed class ViewRequestExecutor
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
 
         var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
-        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
-        var task = (Task)closed.Invoke(executor, [view, exportRequest, scope, http.RequestAborted])!;
-        var boxed = await AwaitResultAsync(task).ConfigureAwait(false)
+
+        // Prefer the generated invoker: consume the materialized rows without ViewListResult<TRow> reflection.
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
+            return (view, result.Rows);
+        }
+
+        var boxed = await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
 
         return (view, ToAdapterResult(boxed).Rows);
@@ -206,7 +247,13 @@ public sealed class ViewRequestExecutor
     /// </returns>
     /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
     /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.DetailAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated detail path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<object?> DetailAsync(HttpContext http, string viewName, object key)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -214,9 +261,13 @@ public sealed class ViewRequestExecutor
 
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Detail).ConfigureAwait(false);
 
-        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
-        var task = (Task)closed.Invoke(executor, [view, key, scope, http.RequestAborted])!;
-        return await AwaitResultAsync(task).ConfigureAwait(false);
+        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            return await invoker.DetailAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
+        }
+
+        return await DetailReflectionAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -243,7 +294,13 @@ public sealed class ViewRequestExecutor
     /// <param name="viewName">The registered view name.</param>
     /// <param name="request">The neutral query (filter/sort) to export.</param>
     /// <returns>The boxed <see cref="a2n.Vista.Ports.ViewListResult{TRow}"/> for the view's row type.</returns>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated export path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<object> ExportAsync(HttpContext http, string viewName, ViewQueryRequest request)
     {
         ArgumentNullException.ThrowIfNull(http);
@@ -252,9 +309,15 @@ public sealed class ViewRequestExecutor
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
 
         var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
-        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
-        var task = (Task)closed.Invoke(executor, [view, exportRequest, scope, http.RequestAborted])!;
-        return await AwaitResultAsync(task).ConfigureAwait(false)
+
+        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
+            return result.BoxedResult;
+        }
+
+        return await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
     }
 
@@ -273,18 +336,28 @@ public sealed class ViewRequestExecutor
     /// <returns>The non-null primary-key value of the newly inserted row (a scalar or a composite-key map).</returns>
     /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
     /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.CreateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated write path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<object> CreateAsync(HttpContext http, string viewName, object model)
     {
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(model);
 
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Create).ConfigureAwait(false);
-        var crudType = RequireCrudType(view);
+        RequireCrudType(view);
 
-        var closed = CreateAsyncMethod.MakeGenericMethod(crudType);
-        var task = (Task)closed.Invoke(executor, [view, model, scope, http.RequestAborted])!;
-        return await AwaitResultAsync(task).ConfigureAwait(false)
+        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            return await invoker.CreateAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false);
+        }
+
+        return await CreateReflectionAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' Create execution returned no primary key.");
     }
 
@@ -306,7 +379,13 @@ public sealed class ViewRequestExecutor
     /// <returns><see langword="true"/> when a row was updated; <see langword="false"/> when no row matched within scope.</returns>
     /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/> (→ 404).</exception>
     /// <exception cref="VistaForbiddenException">The authorizer denied the request (→ 403).</exception>
-    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.UpdateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' may break when trimming",
+        Justification =
+            "The reflection fallback is reached only when no source-generated invoker is registered for " +
+            "the view. Covered typed Style B views register a generated invoker, so the RUC branch is " +
+            "unreachable under trim/AOT and the generated write path stays warning-free (Decision Log D123, R4.2).")]
     public async Task<bool> UpdateAsync(
         HttpContext http,
         string viewName,
@@ -319,11 +398,15 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(model);
 
         var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Update).ConfigureAwait(false);
-        var crudType = RequireCrudType(view);
+        RequireCrudType(view);
 
-        var closed = UpdateAsyncMethod.MakeGenericMethod(crudType);
-        var task = (Task)closed.Invoke(executor, [view, key, model, scope, concurrencyToken, http.RequestAborted])!;
-        var result = await AwaitResultAsync(task).ConfigureAwait(false)
+        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            return await invoker.UpdateAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
+        }
+
+        var result = await UpdateReflectionAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false)
             ?? throw new InvalidOperationException($"View '{viewName}' Update execution returned no result.");
         return (bool)result;
     }
@@ -431,5 +514,85 @@ public sealed class ViewRequestExecutor
         var resultProperty = task.GetType().GetProperty(nameof(Task<object>.Result))
             ?? throw new InvalidOperationException("Expected a Task<TResult> but found no Result property.");
         return resultProperty.GetValue(task);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) List dispatch, reached only on a <see cref="ViewInvokerStore"/> miss (Style A,
+    /// anonymous/<see cref="object"/> row types, or a view without a generated invoker). Closes the generic
+    /// <see cref="IViewExecutor.ListAsync{TRow}"/> over the view's runtime row type via
+    /// <see cref="MethodInfo.MakeGenericMethod"/> and awaits the boxed result. Kept separate from the public
+    /// facets so the <see cref="RequiresUnreferencedCodeAttribute"/> stays confined to the fallback branch
+    /// (Decision Log D123, R4.2). Behavior is identical to the former inline dispatch.
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.ListAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    private static async Task<object?> ListReflectionAsync(
+        IViewExecutor executor,
+        ViewMetadata view,
+        ViewQueryRequest request,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, [view, request, scope, cancellationToken])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Detail dispatch, reached only on a <see cref="ViewInvokerStore"/> miss. Closes
+    /// the generic <see cref="IViewExecutor.DetailAsync{TRow}"/> over the view's runtime row type and awaits
+    /// the boxed row (or <see langword="null"/>). Kept separate so the RUC stays confined (D123, R4.2).
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.DetailAsync<TRow> closed over the view's runtime row type; use the source generator path for AOT.")]
+    private static async Task<object?> DetailReflectionAsync(
+        IViewExecutor executor,
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, [view, key, scope, cancellationToken])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Create dispatch, reached only on a <see cref="ViewInvokerStore"/> miss. Closes
+    /// the generic <see cref="IViewExecutor.CreateAsync{TCrud}"/> over the view's runtime <c>CrudType</c> and
+    /// awaits the boxed primary key. Kept separate so the RUC stays confined (D123, R4.2).
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.CreateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    private static async Task<object?> CreateReflectionAsync(
+        IViewExecutor executor,
+        ViewMetadata view,
+        object model,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var crudType = RequireCrudType(view);
+        var closed = CreateAsyncMethod.MakeGenericMethod(crudType);
+        var task = (Task)closed.Invoke(executor, [view, model, scope, cancellationToken])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Update dispatch, reached only on a <see cref="ViewInvokerStore"/> miss. Closes
+    /// the generic <see cref="IViewExecutor.UpdateAsync{TCrud}"/> over the view's runtime <c>CrudType</c> and
+    /// awaits the boxed boolean outcome. Row identity comes solely from <paramref name="key"/> and the
+    /// concurrency token is passed through unchanged. Kept separate so the RUC stays confined (D123, R4.2).
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes the generic IViewExecutor.UpdateAsync<TCrud> closed over the view's runtime CrudType; use the source generator path for AOT.")]
+    private static async Task<object?> UpdateReflectionAsync(
+        IViewExecutor executor,
+        ViewMetadata view,
+        object key,
+        object model,
+        IViewScope scope,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        var crudType = RequireCrudType(view);
+        var closed = UpdateAsyncMethod.MakeGenericMethod(crudType);
+        var task = (Task)closed.Invoke(executor, [view, key, model, scope, concurrencyToken, cancellationToken])!;
+        return await AwaitResultAsync(task).ConfigureAwait(false);
     }
 }

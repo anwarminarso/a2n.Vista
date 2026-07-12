@@ -37,5 +37,14 @@ namespace a2n.Vista.SourceGenerators
         /// source-generator-write-mapper R11.x, mirroring Phase 1/2).
         /// </summary>
         public const string WriteMapperModel = "WriteMapperModel";
+
+        /// <summary>
+        /// The stage that yields the equatable <c>ViewInvokerModel</c> per discovered typed Style B
+        /// HTTP-surface candidate (the dispatch-invoker generator's semantic transform output after
+        /// filtering). When an unrelated edit leaves a view's invoker model unchanged, this stage's
+        /// outputs are served from cache, proving the equatable model for the HTTP-surface pipeline
+        /// (source-generator-http-surface R7.2, mirroring Phase 1/2/3).
+        /// </summary>
+        public const string ViewInvokerModel = "ViewInvokerModel";
     }
 }

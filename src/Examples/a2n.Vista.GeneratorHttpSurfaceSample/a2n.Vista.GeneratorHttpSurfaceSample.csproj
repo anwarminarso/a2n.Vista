@@ -1,0 +1,54 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Real generator consumer for the Phase 4 HTTP-SURFACE dispatch invoker (spec
+    source-generator-http-surface, task 10.1; Decision Log D123/D124). This is the HTTP-surface analogue
+    of the Phase 2 a2n.Vista.StyleBExecSample and the write-DSL a2n.Vista.GeneratorWriteMapperSample: it
+    references BOTH Core and the EF layer AND the source generator (as an analyzer), so the
+    ViewInvokerGenerator emits — INTO this assembly, per covered view — a reflection-free
+    <View>_VistaViewInvoker.g.cs holding an IViewInvoker (closed-generic List/Detail/Create/Update, direct
+    await, no MakeGenericMethod) plus a [ModuleInitializer] that registers it into a2n.Vista.Core's
+    a2n.Vista.Ports.ViewInvokerStore keyed by the view's runtime Name.
+
+    The whole point is COMPILE ONCE, QUANTIFY OVER REQUESTS: the master oracle-parity property test
+    (task 10.2, Property 1) resolves each view's GENERATED invoker from the store and compares its
+    dispatch + serialization, over random request shapes, against the reflection oracle — never
+    re-compiling per iteration. The AOT probe (task 11.x) likewise rides these compiled-once views.
+
+    Three representative, EF-aware typed Style B views are declared here (see HttpSurfaceFixtures.cs):
+      * a read-only SINGLE-KEY view (View<TRow>),
+      * a read-only COMPOSITE-KEY view (View<TRow>, two-field key),
+      * a WRITABLE view with an optimistic-CONCURRENCY TOKEN (View<TRow, TCrud> + WithConcurrencyToken).
+    Each ships a probe/sample App_Json_Context ([JsonSerializable] over TRow, ViewListResult<TRow>,
+    PagedResult<TRow>, and — for the writable view — TCrud), the exact set the generator's VISTA0041
+    guidance names, so the developer-authored serialization contexts chain into the Serialization_Seam.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so every generated invoker is proven to compile on every supported consumer TFM.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorHttpSurfaceSample</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorHttpSurfaceSample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The View<TQuery> / View<TQuery, TCrud> bases + the authoring DSL, ViewListResult<TRow>,
+         PagedResult<TRow>, and the ViewInvokerStore the module initializer targets all live in Core;
+         the EF layer is referenced so the views are genuinely EF-aware (the compiled read/write path
+         the generated invoker rides at runtime), mirroring the Phase 2 / write-DSL fixtures. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it. Because Core AND EF are referenced above, the ViewInvokerGenerator recognizes the
+      typed Style B views declared here and emits a real generated dispatch invoker + registration for
+      each covered one (VISTA0041 guidance is reported for each, VISTA0040 for any uncovered candidate).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

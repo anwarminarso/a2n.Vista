@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -100,7 +101,7 @@ public sealed class FilterNodeJsonConverter : JsonConverter<FilterNode>
         JsonValueKind.String => value.GetString(),
         JsonValueKind.True => true,
         JsonValueKind.False => false,
-        JsonValueKind.Number => value.TryGetInt64(out var l) ? l : value.GetDouble(),
+        JsonValueKind.Number => value.TryGetInt64(out var l) ? (object)l : value.GetDouble(),
         JsonValueKind.Array => ReadValueArray(value),
         _ => throw new JsonException($"Unsupported filter value kind '{value.ValueKind}'."),
     };
@@ -129,7 +130,7 @@ public sealed class FilterNodeJsonConverter : JsonConverter<FilterNode>
                 writer.WriteString("field", leaf.Field);
                 writer.WriteString("op", leaf.Op.ToString());
                 writer.WritePropertyName("value");
-                JsonSerializer.Serialize(writer, leaf.Value, options);
+                WriteValue(writer, leaf.Value);
                 writer.WriteEndObject();
                 break;
 
@@ -165,5 +166,93 @@ public sealed class FilterNodeJsonConverter : JsonConverter<FilterNode>
 
         writer.WriteEndArray();
         writer.WriteEndObject();
+    }
+
+    /// <summary>
+    /// Writes a neutral leaf value (string/integer/floating-point/decimal/bool/null/list) directly to the
+    /// <see cref="Utf8JsonWriter"/> without reflection, so the converter is compatible with a source-gen
+    /// <see cref="JsonSerializerContext"/>. The switch mirrors the neutral CLR value space produced by
+    /// <c>ReadValue</c> (string, <see cref="long"/>, <see cref="double"/>, <see cref="bool"/>, null, and
+    /// lists of those), and preserves byte-for-byte parity with the previous reflection-based
+    /// <c>JsonSerializer.Serialize(writer, value, options)</c> call for those values.
+    /// </summary>
+    private static void WriteValue(Utf8JsonWriter writer, object? value)
+    {
+        switch (value)
+        {
+            case null:
+                writer.WriteNullValue();
+                break;
+
+            case string s:
+                writer.WriteStringValue(s);
+                break;
+
+            case bool b:
+                writer.WriteBooleanValue(b);
+                break;
+
+            // Signed/unsigned integral values that fit a 64-bit signed range.
+            case long l:
+                writer.WriteNumberValue(l);
+                break;
+
+            case int i:
+                writer.WriteNumberValue(i);
+                break;
+
+            case short sh:
+                writer.WriteNumberValue(sh);
+                break;
+
+            case sbyte sb:
+                writer.WriteNumberValue(sb);
+                break;
+
+            case byte by:
+                writer.WriteNumberValue(by);
+                break;
+
+            case ushort us:
+                writer.WriteNumberValue(us);
+                break;
+
+            case uint ui:
+                writer.WriteNumberValue(ui);
+                break;
+
+            case ulong ul:
+                writer.WriteNumberValue(ul);
+                break;
+
+            // Floating-point and exact decimal values.
+            case double d:
+                writer.WriteNumberValue(d);
+                break;
+
+            case float f:
+                writer.WriteNumberValue(f);
+                break;
+
+            case decimal m:
+                writer.WriteNumberValue(m);
+                break;
+
+            // Lists/arrays of neutral values (e.g. the operands of an 'in' or 'between' leaf).
+            case IEnumerable enumerable:
+                writer.WriteStartArray();
+                foreach (var item in enumerable)
+                {
+                    WriteValue(writer, item);
+                }
+
+                writer.WriteEndArray();
+                break;
+
+            default:
+                throw new JsonException(
+                    $"Unsupported filter value type '{value.GetType().Name}'. Filter leaf values must be a " +
+                    "string, integer, floating-point number, decimal, boolean, null, or a list of those.");
+        }
     }
 }
