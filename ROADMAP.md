@@ -165,7 +165,9 @@ README message:
 
 > For the detailed, authoritative snapshot see `docs/PROJECT-STATUS.md`; for the milestone tracker with
 > progress bars and the dependency graph see `docs/MILESTONES.md`. Build is green on net8/9/10 with
-> **206 tests/TFM** + 21 generator tests, and the Northwind read + write self-tests pass.
+> **267 tests/TFM** + 64 generator tests, the AOT probe is clean (zero IL2026/IL3050 on the full generated
+> Style B HTTP round-trip), and the Northwind read + write self-tests pass (write now reports both
+> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`).
 
 **Done (v0.x foundation):**
 
@@ -176,12 +178,12 @@ README message:
    - **EntityFrameworkCore** — View execution (List + Detail, deterministic paging, filter/sort/search, composite keys, provider-aware) and the write facet (Create/Update/Delete with mass-assignment whitelist, optimistic concurrency, single `SaveChanges`); `IQueryDialect` port + Npgsql dialect; startup PK auto-derivation (D105) and provider guard.
    - **AspNetCore** — action-style endpoint mapping (`POST list/detail/export/create/update/delete` + `GET metadata`), RFC 7807 error mapping, secure-by-default one-door auth (fail-closed in non-Development).
 4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: the **DataTables.NET** reference adapter, the pluggable **export pipeline** (CSV/XLSX), and the **QueryBuilder metadata-schema** emitter.
-5. **Pillar 3 — source generator:** Phase 1 (shape-driven export accessors), Phase 2 (executable typed Style B via generated `ICompiledViewExecutionPlan` + masking runtime), and the write-DSL phase (the generated write mapper) have landed — the typed Style B read + write path is AOT-clean.
-6. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper).
+5. **Pillar 3 — source generator:** Phase 1 (shape-driven export accessors), Phase 2 (executable typed Style B via generated `ICompiledViewExecutionPlan` + masking runtime), the write-DSL phase (the generated write mapper), and the HTTP-surface phase (a generated Core-only dispatch invoker + `ViewInvokerStore` and an AOT-clean serialization seam) have landed — the **full** typed Style B `request → authorize → execute → serialize` path is now AOT-clean, with reflection kept only as a fallback for Style A / uncovered views.
+6. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper *and* the generated dispatch invoker).
 
 **Next:**
 
-1. The remaining source-generator phases (Pillar 3): `JsonSerializerContext` generation, compile-time OpenAPI, and Style A (anonymous) accessor/serialization coverage.
+1. The remaining source-generator phases (Pillar 3): per-view `JsonTypeInfo` auto-generation (`JsonSerializerContext`-equivalent, which makes the developer-authored `App_Json_Context` optional), compile-time OpenAPI, and Style A (anonymous) accessor/serialization coverage.
 2. A TypeScript client generator from `ViewMetadata`.
 3. Observability (D100 — OpenTelemetry) and versioning/deprecation (D99).
 4. The remaining reference adapters (AG Grid, MudBlazor first; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — eight are still empty scaffolds.

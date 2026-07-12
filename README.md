@@ -8,15 +8,16 @@ Vista is the design successor to [`a2n.DynData`](https://github.com/anwarminarso
 
 ## Status
 
-**Pre-alpha — v0.x (Foundation), in progress.** The three core packages are working:
+**v0.x (Foundation), in progress.** Build is green on .NET 8/9/10; the Northwind read **and** write self-tests pass. The core packages are working end to end:
 
-- **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, filter contract, and the `IViewExecutor`/`IViewScope` ports.
-- **EntityFrameworkCore** — executes Views over EF Core: List + Detail-by-key, paging, filter/sort/search, provider-aware.
-- **AspNetCore** — generic endpoint mapping (`MapVistaViews`), RFC 7807 error mapping, optional fail-open authorizer with a startup warning.
+- **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, the filter contract, the `IViewExecutor`/`IViewScope` ports, and the write seam (`WriteMapper`/`IWriteFacetRegistry`).
+- **EntityFrameworkCore** — executes Views over EF Core: List + Detail-by-key, deterministic paging, filter/sort/search, composite keys, provider-aware (`IQueryDialect` + optional Npgsql), and the write facet (Create/Update/Delete with a `MapWritable` whitelist, optimistic concurrency, single `SaveChanges`).
+- **AspNetCore** — action-style endpoint mapping (`POST list/detail/export/create/update/delete` + `GET metadata`), RFC 7807 error mapping, and secure-by-default one-door authorization (fail-closed at startup in non-Development).
+- **SourceGenerators (Pillar 3)** — four phases landed: shape-driven export accessors, executable typed Style B (`ICompiledViewExecutionPlan` + masking runtime + single-source PK auto-derivation), the generated write mapper, and the HTTP-surface phase (a generated Core-only dispatch invoker + an AOT-clean serialization seam). The **full typed Style B `request → authorize → execute → serialize` path is now AOT-clean** (IL2026/IL3050-free); reflection remains only as a fallback for Style A / anonymous / uncovered views.
 
-Runnable example: [`src/Examples/Northwind`](./src/Examples/Northwind) — the read-only `vProductCategory` View over the real Northwind database, with an end-to-end self-test (`dotnet run -- selftest`).
+Runnable example: [`src/Examples/Northwind`](./src/Examples/Northwind) — read-only and writable Views over the real Northwind database, with an end-to-end self-test (`dotnet run -- selftest`) that exercises the generated dispatch and serialization.
 
-Not started / skeleton only: the source generator (Pillar 3), the UI adapters (Pillar 2, client half), and the TypeScript client generator.
+Not started / skeleton only: the remaining UI adapters (Pillar 2, client half — DataTables.NET is real; AG Grid, MudBlazor, Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL are scaffolds), the TypeScript client generator, and the remaining source-generator phases (per-view `JsonTypeInfo`/`JsonSerializerContext`, compile-time OpenAPI, Style A serialization coverage).
 
 Specs under refinement live in [`docs/spec/`](./docs/spec/).
 

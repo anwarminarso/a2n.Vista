@@ -1,11 +1,20 @@
 # a2n.Vista — Milestones & Roadmap Tracker
 
 > Status: **LIVING DOCUMENT** — update as milestones land.
-> Tracking reconciliation 2026-07-12: recorded the **M9 HTTP-surface phase (M9-P4, D123/D124, spec
-> `source-generator-http-surface`)** as a distinct, not-yet-started M9 phase (it was previously folded
-> under an unnamed "remaining M9 work"), and clarified that M17/M18 depend on it. No code landed in this
-> reconciliation.
-> Last updated: 2026-07-09 (`source-generator-write-mapper` **LANDED**: M9 write-DSL phase, D121 + D122.
+> Last updated: 2026-07-12 (`source-generator-http-surface` **LANDED**: M9 HTTP-surface phase (M9-P4),
+> D123 (the generated dispatch invoker) + D124 (the AOT-clean serialization seam). A third incremental
+> generator (`ViewInvokerGenerator`) now emits, per covered typed Style B view, a reflection-free
+> `IViewInvoker` + a `[ModuleInitializer]` filling a Core-resident `ViewInvokerStore`, so
+> `ViewRequestExecutor` prefers the generated dispatch over `MakeGenericMethod`/`ViewListResult<TRow>`
+> reflection (RUC confined to the fallback). AspNetCore gains a unified serialization seam — a
+> `TypeInfoResolverChain` over `VistaJson.Options` = shipped `VistaStaticJsonContext` → developer
+> `App_Json_Context`(s) via `AddVistaJsonContext(...)` → opt-out reflection fallback — with a shared
+> `VistaJsonWriter`; List/Detail/Export and write binding now (de)serialize through it. Core stays
+> STJ/EF/HTTP-free. Mechanism-only (no wire change); byte-for-byte parity with the reflection oracle is
+> the guard (master Property 1). Non-blocking diagnostics `VISTA0040`/`VISTA0041`. Build green net8/9/10,
+> **267 tests/TFM** + **64 generator tests** (0 failed/skipped), AOT probe clean (zero IL2026/IL3050),
+> Northwind read + write self-tests PASS — write now reports `ViewInvoker: GENERATED`. See §2.14.
+> Prior: 2026-07-09 (`source-generator-write-mapper` **LANDED**: M9 write-DSL phase, D121 + D122.
 > A second incremental generator (`WriteMapperGenerator`) now emits a reflection-free `WriteMapper` per
 > analyzable typed Style B writable view into the M12 `GeneratedWriteMapperStore` — the write path is now
 > AOT-clean for typed Style B (reflection mapper is a fallback only). The interim write-authoring startup
@@ -39,17 +48,18 @@
 Pillar 1  — View engine            ██████████ 100%   done (read + write/CRUD)
 Pillar 2  — server half (engine)   ██████████ 100%   done & hardened
 Pillar 2  — client half (adapters) ██░░░░░░░░  ~15%   only DataTables real (+ export + QB schema); 8 grid adapters are empty scaffolds
-Pillar 3  — source generator       ██████░░░░  ~60%   Phase 1 (export accessors) + Phase 2 (executable Style B + masking + D105) + write-DSL (generated write mapper)
+Pillar 3  — source generator       ████████░░  ~78%   Phase 1 (export accessors) + Phase 2 (executable Style B + masking + D105) + write-DSL (generated write mapper) + HTTP-surface (dispatch invoker + serialization seam)
 ```
 
-Rough progress toward **v1.0 (production-ready): ~74%**. Foundation, the full server-half query engine,
+Rough progress toward **v1.0 (production-ready): ~80%**. Foundation, the full server-half query engine,
 the HTTP action surface, the first grid adapter, the export pipeline, the QueryBuilder schema emitter,
 **source-generator Phase 1** (shape-driven export accessors), **Phase 2** (executable typed Style B via
 generated `ICompiledViewExecutionPlan`, single-source PK auto-derivation, masking runtime), the
-**write path / CRUD (M12)**, and the **generated write mapper (M9 write-DSL, D121/D122)** are done — the
-typed Style B write path is now AOT-clean. The heavy remaining work is the rest of the source generator
-(the **HTTP-surface phase** D123/D124 — dispatch invoker + serialization seam, spec written; then JSON
-contexts, OpenAPI, Style A), and the ecosystem (more adapters, TS client, observability, versioning, CI).
+**write path / CRUD (M12)**, the **generated write mapper (M9 write-DSL, D121/D122)**, and the
+**HTTP-surface phase (M9-P4, D123/D124)** are done — the full typed Style B `request → authorize →
+execute → serialize` path is now AOT-clean (IL2026/IL3050-free). The heavy remaining work is the rest of
+the source generator (per-view `JsonTypeInfo` auto-generation, OpenAPI, Style A coverage) and the
+ecosystem (more adapters, TS client, observability, versioning, CI).
 
 > **Adapter reality check (from the source tree):** of the ten projects under `src/Adapters/`, only
 > **DataTables.NET** and the **Npgsql dialect** contain real implementations. The other eight
@@ -77,6 +87,15 @@ contexts, OpenAPI, Style A), and the ecosystem (more adapters, TS client, observ
 | **M13** | Masking runtime — apply `MaskField` transforms on materialization (post-projection, in-memory, SQL unchanged), fail-closed; AOT-clean generated `MaskAccessor` + RUC fallback | `style-b-executable` | D118 |
 | **M12** | Write path / CRUD — Create/Update/Delete on the `IViewExecutor` write facet (DR8), replacing the DR7 501 stub. `MapWritable` mass-assignment whitelist (default-deny), protected keys + concurrency token, optimistic concurrency (`If-Match`/`ETag`), server-trusted scope, single `SaveChanges`, minimal write responses, RFC 7807 write-error vocabulary. Reflection write mapper behind a fixed-signature seam (`WriteMapperResolver`) the future generated mapper fills; `[RequiresUnreferencedCode]` confined to the reflection branch. Bulk deferred (array body → 400). | `write-path` | D119, D120 |
 | **M9-P3** | Source Generator, write-DSL phase — the **generated write mapper**. A second `IIncrementalGenerator` (`WriteMapperGenerator`) statically analyzes each analyzable typed Style B writable view's `MapWritable` chain and emits a reflection-free `WriteMapper` (`Action<object,object>` = casts + one whitelisted scalar assignment per safe mapping, declaration-ordered, defense-in-depth) + a `[ModuleInitializer]` filling the M12 `GeneratedWriteMapperStore`; `WriteMapperResolver` prefers it over `ReflectionWriteMapper` with **zero executor changes** → typed Style B write is now AOT-clean. Interim startup guards promoted to build-time diagnostics `VISTA0030`/`0031`/`0032` (errors, gate emission) + `VISTA0033` (unanalyzable → warning + reflection fallback). | `source-generator-write-mapper` | D121, D122 |
+| **M9-P4** | Source Generator, HTTP-surface phase — closes the last large reflection surface for typed Style B. **D123:** a third `IIncrementalGenerator` (`ViewInvokerGenerator`) emits, per covered view, a Core-only reflection-free `IViewInvoker` (closes `ListAsync<TRow>`/`DetailAsync<TRow>`/`CreateAsync<TCrud>`/`UpdateAsync<TCrud>` at compile time, awaits directly — no `MakeGenericMethod`/`Task.Result`/`ViewListResult<TRow>` reflection) + a `[ModuleInitializer]` filling a Core-resident, first-wins `ViewInvokerStore`; `ViewRequestExecutor` prefers it and confines `[RequiresUnreferencedCode]` to private `*ReflectionAsync` fallback helpers (the executor read facets' RUC was relaxed accordingly). **D124:** an AOT-clean serialization seam in AspNetCore — a `TypeInfoResolverChain` over `VistaJson.Options` (shipped `VistaStaticJsonContext` → developer `App_Json_Context`(s) via `AddVistaJsonContext(...)` → opt-out `DefaultJsonTypeInfoResolver` fallback), a reflection-free `FilterNodeJsonConverter`, and a shared `VistaJsonWriter`; List/Detail/Export responses and `VistaWriteBinding` now (de)serialize through it (byte-for-byte parity). Core stays STJ/EF/HTTP-free. Non-blocking diagnostics `VISTA0040` (uncovered candidate) + `VISTA0041` (serialization guidance). Per-view `JsonTypeInfo` auto-generation is a **non-goal** here (generator-of-generator constraint) — deferred. | `source-generator-http-surface` | D123, D124 |
+
+**Verified at M9-P4 (D123/D124, 2026-07-12):** solution build green on net8/9/10 (0 warnings besides a
+pre-existing unrelated CS8619 in the DataTablesNet adapter), **267 tests passing per TFM** in
+`a2n.Vista.Tests` + **64** in `a2n.Vista.SourceGenerators.Tests` (0 failed, 0 skipped), AOT probe clean
+(zero IL2026/IL3050 on the full generated Style B HTTP round-trip), Northwind **read + write** self-tests
+PASS — the write self-test now reports `ViewInvoker: GENERATED (source generator)` alongside `WriteMapper:
+GENERATED`. The master oracle-parity property (Property 1) proves the generated dispatch + serialization
+is byte-for-byte equivalent to the reflection path for every request shape.
 
 **Verified at M9-P3 (D121/D122, 2026-07-09):** solution build green on net8/9/10 (0 warnings), **206
 tests passing per TFM** in `a2n.Vista.Tests` + **21** in `a2n.Vista.SourceGenerators.Tests` (0 failed, 0
@@ -98,17 +117,17 @@ List/Detail path).
 
 🔴 = critical path (the linchpin and what it unblocks). 🟡 = in progress. 🔵 = ready to start now.
 
-> **`source-generator-write-mapper` (M9 write-DSL, D121/D122) has LANDED** — the generated write mapper
-> fills the M12 seam, so the typed Style B write path is now AOT-clean (reflection mapper is a fallback
-> only) and the interim startup guards are build-time diagnostics. **`write-path` (M12, D119/D120)**
-> delivered the write facet earlier; **`style-b-executable` (D118)** delivered **M10 + M11 + M13**. Typed
-> Style B views are now fully executable read + write via generated code, with single-source PK
-> auto-derivation (D105) and the masking runtime live.
+> **`source-generator-http-surface` (M9-P4, D123/D124) has LANDED** — the generated dispatch invoker +
+> AOT-clean serialization seam make the full typed Style B HTTP round-trip (`request → authorize →
+> execute → serialize`) IL2026/IL3050-clean; the reflection path is now a permanent fallback (Style A /
+> unanalyzable / uncovered views). Earlier M9 phases also landed: **write-DSL** (`source-generator-write-mapper`,
+> D121/D122 — the generated write mapper), **Phase 2** (`style-b-executable`, D118 — **M10 + M11 + M13**),
+> and **Phase 1** (`source-generator`, D117 — export accessors); **`write-path` (M12, D119/D120)** delivered
+> the write facet. Typed Style B views are now fully executable read + write **and** AOT-clean end to end.
 
 | # | Milestone | Depends on | Notes |
 |---|-----------|-----------|-------|
-| **M9** 🟡 | **Source Generator (Pillar 3)** — compile-time accessors/metadata + execution plan + write mapper + HTTP dispatch/serialization + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Phase 1 landed** (`source-generator`, D117): incremental generator + shape-driven export accessors. **Phase 2 landed** (`style-b-executable`, D118): executable typed Style B plans (member-access, typed sort appliers), masking runtime, D105 PK derivation. **Write-DSL phase landed** (`source-generator-write-mapper`, D121/D122): the generated write mapper (`MapWritable` DSL analysis → reflection-free `WriteMapper`) + build-time diagnostics — the typed Style B write path is now AOT-clean. **Remaining phases:** **HTTP-surface (`source-generator-http-surface`, D123/D124 — spec written, not started; see M9-P4 below)**, then `JsonSerializerContext`/per-view `JsonTypeInfo`, OpenAPI, Style A (anonymous) coverage. |
-| **M9-P4** 🔵 | **Source Generator, HTTP-surface phase** — the last large reflection surface for typed Style B. A generated Core-only, reflection-free **dispatch invoker** (`IViewInvoker`) per view registered into a Core-resident `ViewInvokerStore` replaces `ViewRequestExecutor`'s `MakeGenericMethod`/`ViewListResult<TRow>` reflection (D123); an AOT-clean **serialization seam** in AspNetCore (a `TypeInfoResolverChain` = shipped `Static_Envelope_Context` → developer `App_Json_Context` via `AddVistaJsonContext` → opt-out reflection fallback) replaces the `Results.Ok(obj)`/reflection-STJ path (D124). Mechanism-only (no wire change; parity with the reflection oracle is the guard); Core stays STJ-free. Diagnostics `VISTA0040`/`VISTA0041`. Per-view `JsonTypeInfo` auto-generation is a **non-goal** here (generator-of-generator constraint) — deferred. | M9-P2 (D118), M12/M9-P3 (write), M4 (D110 action surface) | **Spec written, not started** (`source-generator-http-surface`). Prerequisite for AOT-clean M17/M18. |
+| **M9** 🟡 | **Source Generator (Pillar 3)** — compile-time accessors/metadata + execution plan + write mapper + HTTP dispatch/serialization + `JsonSerializerContext`; removes the `[RequiresUnreferencedCode]` reflection paths (AOT-clean) | M1 | **Phase 1 landed** (`source-generator`, D117): incremental generator + shape-driven export accessors. **Phase 2 landed** (`style-b-executable`, D118): executable typed Style B plans (member-access, typed sort appliers), masking runtime, D105 PK derivation. **Write-DSL phase landed** (`source-generator-write-mapper`, D121/D122): the generated write mapper + build-time diagnostics. **HTTP-surface phase landed** (`source-generator-http-surface`, D123/D124): the generated dispatch invoker (`IViewInvoker` + Core `ViewInvokerStore`) + AOT-clean serialization seam — the full typed Style B HTTP round-trip is now IL2026/IL3050-clean (see M9-P4 in §2). **Remaining phases:** per-view `JsonTypeInfo` auto-generation (`JsonSerializerContext`), OpenAPI, Style A (anonymous) coverage. |
 | **M14** | **Observability (D100)** — OpenTelemetry `ActivitySource`/`Meter`/`ILogger`, health checks | M1 | Cross-cutting; parallelizable |
 | **M15** | **Versioning & deprecation (D99)** — policy + wire-version seam (route groups as the vehicle) | M4 | Seam already exists |
 | **M16** | **More grid adapters** — AG Grid, MudBlazor, OData, Telerik, Syncfusion, TanStack, PrimeNG, GraphQL | M5, M8 | Repetitive once the contract is mature |
@@ -118,8 +137,11 @@ List/Detail path).
 
 > **Landed (was remaining):** **M10** Style B executable, **M11** D105 single-source PK auto-derivation,
 > **M13** masking runtime (all `style-b-executable`, D118), **M12** write path / CRUD
-> (`write-path`, D119/D120), and **M9-P3** the generated write mapper
-> (`source-generator-write-mapper`, D121/D122). See §2.
+> (`write-path`, D119/D120), **M9-P3** the generated write mapper
+> (`source-generator-write-mapper`, D121/D122), and **M9-P4** the HTTP-surface phase — generated dispatch
+> invoker + AOT-clean serialization seam (`source-generator-http-surface`, D123/D124). See §2. **M17** (TS
+> client) and **M18** (OpenAPI) are now unblocked on the AOT-clean surface, pending the remaining M9 phases
+> (per-view `JsonTypeInfo`, OpenAPI emitter, Style A coverage).
 >
 > **Bulk write ops** remain deferred to a later phase (v1.x): a bulk/array body is currently rejected with
 > HTTP 400, and the `AllowBulk` authoring flag enables no execution path yet (Requirement 15).
@@ -131,9 +153,10 @@ List/Detail path).
 ### v0.x — Foundation
 - Done: **M1–M8**, first reference adapter (**M5**), export (**M7**), metadata schema (**M8**),
   **M9 source-generator Phase 1** (export accessors), **M10/M11/M13** via source-generator Phase 2
-  (executable Style B, D105 PK auto-derivation, masking runtime), and **M9-P3** the source-generator
-  write-DSL phase (generated write mapper, D121/D122).
-- Remaining: the **rest of M9** (M9-P4 HTTP-surface D123/D124, then JSON contexts, OpenAPI, Style A),
+  (executable Style B, D105 PK auto-derivation, masking runtime), **M9-P3** the source-generator
+  write-DSL phase (generated write mapper, D121/D122), and **M9-P4** the source-generator HTTP-surface
+  phase (dispatch invoker + serialization seam, D123/D124).
+- Remaining: the **rest of M9** (per-view `JsonTypeInfo`/`JsonSerializerContext`, OpenAPI, Style A),
   **M19** (CI).
 
 ### v1.0 — Production-ready
@@ -156,7 +179,8 @@ serialization all fall into place.
 M9 Source Generator 🟡
      │  Phase 1 ✓ (export accessors)   Phase 2 ✓ (executable Style B + D105 + masking)
      │  write-DSL ✓ (generated write mapper, D121/D122)
-     │  M9-P4 🔵 HTTP-surface (dispatch invoker + serialization seam, D123/D124) — spec written
+     │  M9-P4 ✓ HTTP-surface (dispatch invoker + serialization seam, D123/D124)
+     │  remaining: per-view JsonTypeInfo/JsonSerializerContext · OpenAPI emitter · Style A coverage
      ┌───────────────────┼────────────────────┐
      ▼                    ▼                    ▼
 M10 Style B ✓        M14 Observability     M15 Versioning
@@ -166,7 +190,7 @@ M10 Style B ✓        M14 Observability     M15 Versioning
 M11 D105 ✓  M12 Write/CRUD ✓  M13 Masking ✓
                  │
                  ▼ (write mapper now generated ✓)
-   M16 adapters · M19 CI  ·  M9-P4 ─▶ M17 TS client · M18 OpenAPI
+   M16 adapters · M19 CI  ·  M9-P4 ✓ ─▶ M17 TS client · M18 OpenAPI
 ```
 
 How we keep it fast, integrated, and high-quality:
@@ -208,10 +232,21 @@ now build-time diagnostics (`VISTA0030`/`0031`/`0032` errors + `VISTA0033` fallb
 build green net8/9/10 (0 warnings), 206 tests/TFM + 21 generator tests, Northwind write self-test reports
 `WriteMapper: GENERATED`.
 
-**Remaining M9 phases:** the **HTTP-surface phase** (`source-generator-http-surface`, D123/D124 — spec
-written, not started: the generated dispatch invoker + AOT-clean serialization seam that make the typed
-Style B HTTP round-trip IL2026/IL3050-clean; see M9-P4 in §3), then `JsonSerializerContext`/per-view
-`JsonTypeInfo`, OpenAPI, and Style A (anonymous) coverage.
+**HTTP-surface phase** (`source-generator-http-surface`, D123/D124, 2026-07-12): a third
+`IIncrementalGenerator` (`ViewInvokerGenerator`) emits a Core-only reflection-free `IViewInvoker` +
+`[ModuleInitializer]` per covered typed Style B view into a Core-resident `ViewInvokerStore`;
+`ViewRequestExecutor` prefers it over `MakeGenericMethod`/`ViewListResult<TRow>` reflection with the RUC
+confined to private `*ReflectionAsync` fallbacks (D123). AspNetCore gains a unified serialization seam — a
+`TypeInfoResolverChain` over `VistaJson.Options` (shipped `VistaStaticJsonContext` → developer
+`App_Json_Context`(s) via `AddVistaJsonContext(...)` → opt-out reflection fallback), a reflection-free
+`FilterNodeJsonConverter`, and a shared `VistaJsonWriter`; List/Detail/Export + write binding
+(de)serialize through it (D124). Core stays STJ/EF/HTTP-free; mechanism-only (no wire change), parity with
+the reflection oracle proven byte-for-byte (master Property 1). Non-blocking diagnostics
+`VISTA0040`/`VISTA0041`. Verified build green net8/9/10, **267 tests/TFM** + 64 generator tests, AOT probe
+clean, Northwind read + write self-tests PASS (`ViewInvoker: GENERATED`).
+
+**Remaining M9 phases:** per-view `JsonTypeInfo` auto-generation (`JsonSerializerContext` — the
+generator-of-generator constraint makes this its own phase), OpenAPI, and Style A (anonymous) coverage.
 
 **M12 (`write-path`, D119/D120) has LANDED (2026-07-07).** Writable Style B views execute
 Create/Update/Delete through the `IViewExecutor` write facet (DR8): a default-deny `MapWritable`
@@ -223,10 +258,12 @@ write-DSL phase fills with a generated mapper — zero executor changes at that 
 `[RequiresUnreferencedCode]` is confined to the reflection branch. Bulk ops are deferred (array body →
 400). Verified build green net8/9/10, **204 tests/TFM**, Northwind write self-test PASS.
 
-**Next up — the M9 HTTP-surface phase and parallelizable v1.0 workstreams:** **M9-P4**
-(`source-generator-http-surface`, D123/D124 — the generated dispatch invoker + AOT-clean serialization
-seam; spec written, ready to start), plus **M14** observability, **M15** versioning, **M19** CI, and the
-two flagship **M16** adapters (AG Grid + MudBlazor) — the eight adapter scaffolds under `src/Adapters/`
-are still empty. **M17** TS client and **M18** OpenAPI depend on **M9-P4** (the serialization seam +
-AOT-clean surface) and the further M9 phases (`JsonSerializerContext`/per-view `JsonTypeInfo`, OpenAPI
-emitter, Style A coverage) — the executable/write generator work is done.
+**M9-P4 (`source-generator-http-surface`, D123/D124) has LANDED (2026-07-12).** The full typed Style B
+HTTP round-trip is now AOT-clean, so the reflection dispatch/serialization path is a permanent fallback
+only (Style A, anonymous/`object` row types, or unanalyzable views).
+
+**Next up — the remaining M9 phases and parallelizable v1.0 workstreams:** per-view `JsonTypeInfo`
+auto-generation (`JsonSerializerContext`), the OpenAPI emitter, and Style A coverage; plus **M14**
+observability, **M15** versioning, **M19** CI, and the two flagship **M16** adapters (AG Grid + MudBlazor)
+— the eight adapter scaffolds under `src/Adapters/` are still empty. **M17** TS client and **M18** OpenAPI
+are now unblocked on the AOT-clean surface + serialization seam (M9-P4), pending those remaining M9 phases.

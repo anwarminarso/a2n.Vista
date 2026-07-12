@@ -9,6 +9,28 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **SourceGenerators / AspNetCore / Core** — Pillar 3, HTTP-surface phase
+  (Decision Log D123/D124): the last large reflection surface for typed Style B
+  is closed, so the full `request → authorize → execute → serialize` path is now
+  trim/AOT-clean (IL2026/IL3050-free). **D123** — a third incremental generator
+  (`ViewInvokerGenerator`) emits, per covered typed Style B view, a Core-only
+  reflection-free `IViewInvoker` that closes `IViewExecutor.List/Detail/Create/
+  Update<T>` at compile time (no `MakeGenericMethod`, no `Task<TResult>.Result`
+  or `ViewListResult<TRow>` reflection) plus a `[ModuleInitializer]` filling a
+  Core-resident, first-wins `ViewInvokerStore`; `ViewRequestExecutor` prefers the
+  generated invoker and confines `[RequiresUnreferencedCode]` to private
+  `*ReflectionAsync` fallbacks. **D124** — a unified serialization seam in
+  `a2n.Vista.AspNetCore`: a `TypeInfoResolverChain` over `VistaJson.Options`
+  (shipped `VistaStaticJsonContext` → developer `App_Json_Context`(s) via
+  `AddVistaJsonContext(...)` → an opt-out reflection fallback), a reflection-free
+  `FilterNodeJsonConverter`, and a shared `VistaJsonWriter`; List/Detail/Export
+  responses and write-model binding now (de)serialize through it. `a2n.Vista.Core`
+  gains no System.Text.Json/EF/ASP.NET Core dependency. Mechanism-only — no wire
+  change; byte-for-byte parity with the reflection path is the guard. Non-blocking
+  diagnostics `VISTA0040` (uncovered candidate → reflection fallback) and
+  `VISTA0041` (serialization guidance naming the exact `[JsonSerializable]` types);
+  help docs under `docs/diagnostics/`. Per-view `JsonTypeInfo` auto-generation is a
+  documented non-goal of this phase (generator-of-generator constraint).
 - **SourceGenerators** — Pillar 3, write-DSL phase (Decision Log D121/D122): a
   second incremental generator (`WriteMapperGenerator`) that statically analyzes
   each analyzable typed Style B writable view's `MapWritable` chain and emits a
@@ -92,5 +114,15 @@ While the version is `0.x`, anything may change between releases.
   in non-Development environments unless `AllowAnonymousAccess()` is called.
 - **Masking** (Decision Log D95): a `MaskField`'d field defaults to
   non-filterable and non-searchable unless explicitly opted back in.
+
+### Fixed
+- **AspNetCore** — `FilterNode` leaf values that are JSON integers now round-trip
+  as `long` instead of being boxed as `double`, preserving int64 precision (values
+  above 2^53). Surfaced by the polymorphic-round-trip property test added with the
+  HTTP-surface phase.
+- **AspNetCore** — write requests are no longer mis-classified as `400` when they
+  should be authorized/denied: the write envelope is deserialized through the
+  case-insensitive serialization seam so the `model`/`key` members bind correctly,
+  restoring the `403`-before-`400` ordering for denied writes.
 
 [Unreleased]: https://github.com/anwarminarso/a2n.Vista/commits
