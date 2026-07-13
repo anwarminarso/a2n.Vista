@@ -11,6 +11,10 @@
 	"settings": {
 		"kiroAgent.trustedCommands": [
 			"*"
-		]
+		],
+		"chat.tools.terminal.autoApprove": {
+			
+			"/.*/": true
+		}
 	}
 }

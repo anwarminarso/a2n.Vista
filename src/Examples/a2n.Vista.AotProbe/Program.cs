@@ -99,6 +99,16 @@ internal static class Program
         //    RUC DtoSchemaGenerator is never reached on it.
         OpenApiDescriptorProbe.Run();
 
+        // 9) M9 Style A coverage (spec style-a-coverage, Task 9.1, R9.1/R9.2/R9.3; D129/D130): drive the
+        //    COVERED named-row Style A view (export via the generated accessor + read-DTO serialization
+        //    through the seam using the generated per-view context) AOT-clean, and the D96 asymmetry case
+        //    (writable anonymous-row view: bind + serialize the named TCrud through the generated context
+        //    AOT-clean WHILE the anonymous read row stays on the RUC reflection path by design, isolated
+        //    behind a narrowly-scoped suppression). A green build proves the covered Style A slice is free
+        //    of IL2026/IL3050 while the anonymous read-row path is legitimately RUC and not required to be
+        //    AOT-clean. Runs after the Phase 5 probe so the seam's reflection fallback is already removed.
+        StyleACoverageProbe.Run();
+
         return 0;
     }
 

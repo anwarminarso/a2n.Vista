@@ -115,6 +115,20 @@
       against the reflection oracle over random DTO values. Sibling tasks 8.3/9.3 reuse this reference.
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorJsonContextSample\a2n.Vista.GeneratorJsonContextSample.csproj" />
+    <!--
+      EF + source-generator consumer hosting the REAL generated Style A shape-driven artifacts for the three
+      representative Style A (ViewTemplate<TDbContext> + AddView) views WITH NO developer App_Json_Context
+      (spec style-a-coverage, task 8.1; D129/D130). Referencing it loads its [ModuleInitializer]-driven
+      registrations into a2n.Vista.Metadata.ViewAccessorRegistry (export accessors) and
+      a2n.Vista.Metadata.GeneratedJsonContextStore (per-view JsonTypeInfo) so the seam-resolution property
+      test (task 6.2 / Property 4), the master oracle-parity property test (task 8.2 / Property 1), the
+      round-trip property test (task 8.3 / Property 2), and the export-accessor value-parity property test
+      (task 8.4 / Property 3) can resolve each covered view's generated context/accessor by its constant
+      view name and compare against the reflection oracle over random DTO values. It also exercises the D96
+      asymmetry: its writable anonymous-row view is covered for TCrud serialization only (its read row stays
+      on the reflection path by design).
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorStyleASample\a2n.Vista.GeneratorStyleASample.csproj" />
   </ItemGroup>
 
 </Project>

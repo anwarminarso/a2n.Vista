@@ -1,0 +1,79 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Real generator consumer for the M9 Style A (anonymous) coverage phase (spec style-a-coverage,
+    task 8.1; Decision Log D129/D130). This is the STYLE A analogue of the Phase 5
+    a2n.Vista.GeneratorJsonContextSample (typed Style B): it references BOTH Core and the EF layer AND
+    the source generator (as an analyzer), so the fifth incremental generator (StyleAShapeGenerator, D129)
+    emits — INTO this assembly, per COVERED view — the shape-driven Style A artifacts and their
+    [ModuleInitializer]s that register them into a2n.Vista.Core's EXISTING stores at module load:
+      * a `file static` <Template>_<View>_VistaAccessors.g.cs export accessor map (for a named-TRow view)
+        registered into a2n.Vista.Metadata.ViewAccessorRegistry (D117), and
+      * a `file sealed` <Template>_<View>_VistaJsonContext.g.cs holding a
+        System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver (built via JsonMetadataServices, NOT
+        the [JsonSerializable] attribute route) registered into a2n.Vista.Metadata.GeneratedJsonContextStore
+        (D125), keyed by the CONSTANT AddView name (the D129 difference from D125's `new View().Name` — a
+        Style A view is an AddView call site, not a class, so there is nothing to instantiate).
+
+    THE WHOLE POINT — NO DEVELOPER App_Json_Context. Like the Phase 5 JsonTypeInfo sample (and unlike the
+    Phase 4 HTTP-surface sample), this assembly declares NONE. The representative views prove the covered
+    Style A slice is AOT-clean for serialization/export WITHOUT any hand-authored context, while the
+    anonymous-read view demonstrates the permanent by-design RUC boundary (D96/D130): its read row is
+    unnameable in generated source, so only its (named) TCrud write model is covered (VISTA0061 for the
+    read side, VISTA0060 for the write side — the D96 asymmetry within one view).
+
+    THE STYLE A DIFFERENCE — a real ViewTemplate<TDbContext> + AddView<TRow>(...) CALL SITES. Unlike the
+    Style B fixtures (class-per-view View<TRow> / View<TRow, TCrud> subclasses), Style A views are AddView
+    invocations inside a template's Configure override, expressed against a real EF DbContext (mirroring
+    the Northwind ViewTemplate<NorthwindDbContext> example). This assembly therefore defines a minimal EF
+    StyleASampleDbContext (the transitive Microsoft.EntityFrameworkCore from the EF layer supplies the
+    DbContext/DbSet types) and a single GeneratorStyleASampleViews : ViewTemplate<StyleASampleDbContext>
+    template registering the three representative views.
+
+    COMPILE ONCE, QUANTIFY OVER VALUES: the master oracle-parity property test (task 8.2, Property 1), the
+    round-trip property test (task 8.3, Property 2), and the export-accessor value-parity property test
+    (task 8.4, Property 3) compile this fixture set ONCE, resolve each covered view's GENERATED context /
+    accessor map from the stores, and compare its (de)serialization / field read — over random DTO VALUES —
+    against the reflection oracle. They never re-compile per iteration. The AOT probe (task 9.1) drives the
+    same fixtures to prove the covered slice is IL2026/IL3050-clean while the anonymous read row stays RUC.
+
+    Three representative Style A views are declared here (see StyleAFixtures.cs):
+      * a read-only NAMED-TRow view whose TRow spans the emittable-shape spectrum: a scalar (int), a
+        nullable value type (int?), an enum, a collection (IReadOnlyList<string>), and a byte[] member,
+      * a writable NAMED-TRow view whose TCrud is a record with required + init-only members (the R3.4
+        parameterized/init construction path), and
+      * a writable ANONYMOUS-TRow view with a named TCrud (the D96 asymmetry case).
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override —
+    so every generated artifact is proven to compile on every supported consumer TFM (matching the test
+    project, which multi-targets the same set).
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.GeneratorStyleASample</RootNamespace>
+    <AssemblyName>a2n.Vista.GeneratorStyleASample</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- The ViewTemplate<TDbContext> base + the AddView/WithCrud authoring DSL, ViewListResult<TRow>,
+         PagedResult<TRow>, and the ViewAccessorRegistry / GeneratedJsonContextStore the module
+         initializers target all live in Core; the EF layer is referenced so the template is authored
+         against a genuine EF DbContext (the DbContext/DbSet types arrive transitively from
+         Microsoft.EntityFrameworkCore), mirroring the Northwind ViewTemplate<NorthwindDbContext> example
+         and the Phase 5 fixture. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
+
+    <!--
+      Reference the generator as an ANALYZER only (no runtime assembly dependency) — exactly how a real
+      consumer wires it. Because Core AND EF are referenced above, the StyleAShapeGenerator recognizes the
+      AddView call sites declared here and emits a real generated accessor map + per-view JsonTypeInfo
+      context + registration for each COVERED one (VISTA0060 is reported per covered view; VISTA0061 for
+      the anonymous-read view's read side).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
+  </ItemGroup>
+
+</Project>

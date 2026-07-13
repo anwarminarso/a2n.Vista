@@ -253,5 +253,99 @@ namespace a2n.Vista.SourceGenerators
             isEnabledByDefault: true,
             description: "To emit a reflection-free per-view serialization context the generator must build every DTO member's JsonTypeInfo via System.Text.Json.Serialization.Metadata.JsonMetadataServices. A DTO with a member the analyzer cannot fully resolve reflection-free (a member requiring a bespoke/custom converter, an unsupported polymorphic shape, or an unresolved generic) is not covered: correctness (byte-for-byte parity with the reflection oracle) beats coverage, so no best-effort context that could drift from the wire is emitted. The view stays fully functional and (de)serializes through the developer App_Json_Context / reflection fallback resolver; only the AOT-clean per-view serialization is missed. Simplify the offending DTO member to an emittable shape to receive the generated context. Severity is Warning because the view still works via the fallback.",
             helpLinkUri: HelpLinkBase + "VISTA0051.md");
+
+        // ------------------------------------------------------------------------------------------------
+        // Style A coverage family (VISTA0060–VISTA0063) — M9 Style A coverage, Decision Log D129/D130.
+        //
+        // These surface, non-blockingly, exactly where the permanent by-design RUC boundary lands for each
+        // Style A (ViewTemplate<TDbContext> + AddView<TRow>(...)) view. An uncovered Style A view is a
+        // valid, working view served by the reflection fallback — only the AOT-clean auto-generation is
+        // missed — so every diagnostic in this family is Info or Warning, never Error (R8.5).
+        // ------------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// VISTA0060 (info): a Style A view (an <c>a2n.Vista.Authoring.ViewTemplate&lt;TDbContext&gt;</c>
+        /// <c>AddView&lt;TRow&gt;(name, projection)</c> call site) is <c>covered</c> for shape-driven
+        /// generation. The generator emits one or more reflection-free artifacts for it, and this
+        /// diagnostic names the exact set produced: export accessors (when <c>TRow</c> is a named type),
+        /// read-DTO <c>JsonTypeInfo</c> (when <c>TRow</c> is named and its DTOs are all emittable), and/or
+        /// write-model <c>TCrud</c> <c>JsonTypeInfo</c> (when the view is writable via
+        /// <c>WithCrud&lt;TCrud, TEntity&gt;()</c> and <c>TCrud</c> is emittable). Anything not listed
+        /// stays on the reflection path by design. The build succeeds. Severity is Info because it is
+        /// confirmation, not an error (M9 Style A coverage, R8.1, R8.5, D129/D130).
+        /// </summary>
+        public static readonly DiagnosticDescriptor StyleAViewCovered = new DiagnosticDescriptor(
+            id: "VISTA0060",
+            title: "Style A view covered by generated shape-driven artifacts",
+            messageFormat: "Style A view '{0}' is covered by generated artifacts: {1}",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "The Vista source generator recognizes Style A views (ViewTemplate<TDbContext>.AddView<TRow>(name, projection) call sites) and, for the nameable subset, emits the same shape-driven artifacts it emits for typed Style B — export accessors, read-DTO JsonTypeInfo, and write-model TCrud JsonTypeInfo — registered into the existing Core stores. This diagnostic confirms a view is covered and names the exact artifact set generated for it: export accessors (a named TRow), read-DTO JsonTypeInfo (a named TRow whose DTOs are all emittable), and/or TCrud JsonTypeInfo (a writable view whose TCrud is emittable). Anything not listed stays on the reflection path by design. Severity is Info because it is confirmation, not an error.",
+            helpLinkUri: HelpLinkBase + "VISTA0060.md");
+
+        /// <summary>
+        /// VISTA0061 (info): a Style A view has an <c>Anonymous_Type</c> / <c>object</c> read row
+        /// (<c>TRow</c>), so its read serialization and export stay on the reflection path — permanently
+        /// <c>[RequiresUnreferencedCode]</c> by design (D96/D130). A C# anonymous type has no
+        /// source-writable name (its metadata name is not valid C# and is not stable across assemblies),
+        /// so the generator cannot emit an export accessor, a member-access expression, or a
+        /// <c>JsonTypeInfo</c> for it. This is not a fixable warning: it is the deliberate, permanent AOT
+        /// asymmetry of Style A. The view's write model (<c>TCrud</c>, always a named type) is unaffected
+        /// and may still be covered. The build succeeds. Severity is Info because the view is valid and
+        /// working; only AOT-clean read auto-generation is unavailable by design (M9 Style A coverage,
+        /// R1.4, R8.2, R8.5, D96/D130).
+        /// </summary>
+        public static readonly DiagnosticDescriptor StyleAAnonymousRowStaysReflection = new DiagnosticDescriptor(
+            id: "VISTA0061",
+            title: "Style A anonymous read row stays on the reflection path (RUC by design)",
+            messageFormat: "Style A view '{0}' has an anonymous or 'object' read row type; its read serialization and export stay on the reflection path (RequiresUnreferencedCode) by design (D96) because an anonymous row type cannot be named in generated source",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "Style A projections are typically anonymous. A C# anonymous type has no source-writable name (its metadata name is not valid C# and is not stable across assemblies), so the generator cannot emit an export accessor, a member-access expression, or a JsonTypeInfo for an anonymous row type. A Style A view whose read row TRow is anonymous or 'object' therefore keeps its read serialization and export on the reflection path — permanently RequiresUnreferencedCode by design (D96/D130). This is not something to fix; it is the deliberate, permanent AOT asymmetry of Style A. The write model of a writable view (TCrud, always a named type) is unaffected and can still be covered. Project into a named row type (a DTO/record) if you want the read-side artifacts generated. Severity is Info because the view is valid and working; only AOT-clean read auto-generation is unavailable by design.",
+            helpLinkUri: HelpLinkBase + "VISTA0061.md");
+
+        /// <summary>
+        /// VISTA0062 (info): a Style A <c>AddView</c> <c>name</c> argument is not a compile-time constant
+        /// string, so the generator cannot key any artifact statically for that call site (the runtime
+        /// name is unknowable at compile time, and a wrong key would silently miss). No artifact is
+        /// emitted for the call site and the view stays on the reflection path. Use a compile-time
+        /// constant string literal (or <c>const</c>) for the <c>AddView</c> name to make the view
+        /// eligible for generated artifacts. The build succeeds. Severity is Info because the view is
+        /// valid and working via the reflection fallback (M9 Style A coverage, R1.2, R8.3, R8.5, D129).
+        /// </summary>
+        public static readonly DiagnosticDescriptor StyleANonConstantViewName = new DiagnosticDescriptor(
+            id: "VISTA0062",
+            title: "Style A AddView name is not a compile-time constant",
+            messageFormat: "An AddView call site in template '{0}' uses a name that is not a compile-time constant; generated artifacts cannot be keyed statically, so the view stays on the reflection path",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Info,
+            isEnabledByDefault: true,
+            description: "The generator keys every Style A artifact statically by the AddView view name. When the name argument is not a compile-time constant string, there is no stable key to register the artifact under — the runtime name is unknowable at compile time, so a wrong key would silently miss — so the generator emits nothing for that call site and the view stays on the reflection path. Use a compile-time constant string literal (or a const) for the AddView name to make the view eligible for generated artifacts. Severity is Info because the view is valid and working via the reflection fallback.",
+            helpLinkUri: HelpLinkBase + "VISTA0062.md");
+
+        /// <summary>
+        /// VISTA0063 (warning): a covered candidate Style A DTO (a named <c>TRow</c> for the read side, or
+        /// a <c>TCrud</c> for the write side) has a member whose shape the generator cannot emit
+        /// reflection-free via <c>JsonMetadataServices</c> (for example a member requiring a bespoke/custom
+        /// converter, an unsupported polymorphic shape, or an unresolved generic). Because correctness
+        /// (byte-for-byte parity with the reflection oracle) beats coverage, no best-effort
+        /// <c>JsonTypeInfo</c> is emitted for that DTO; the view falls back to the developer
+        /// <c>App_Json_Context</c> / reflection for it (a named-<c>TRow</c> view still receives its export
+        /// accessor map). The build succeeds. Severity is Warning (never Error) — matching
+        /// <see cref="JsonContextMemberNotEmittable"/> (VISTA0051), the typed Style B counterpart — because
+        /// the view still works via the fallback and only the AOT-clean per-DTO serialization is missed
+        /// (M9 Style A coverage, R1.7, R8.4, R8.5, D129/D130).
+        /// </summary>
+        public static readonly DiagnosticDescriptor StyleADtoMemberNotEmittable = new DiagnosticDescriptor(
+            id: "VISTA0063",
+            title: "Style A DTO member cannot be emitted reflection-free",
+            messageFormat: "Style A view '{0}' has a DTO member the Vista source generator cannot emit reflection-free ({1}); no JsonTypeInfo is generated for that DTO and it falls back to the developer App_Json_Context / reflection",
+            category: Category,
+            defaultSeverity: DiagnosticSeverity.Warning,
+            isEnabledByDefault: true,
+            description: "To emit a reflection-free JsonTypeInfo the generator must build every DTO member's metadata via System.Text.Json.Serialization.Metadata.JsonMetadataServices. A candidate Style A DTO (a named TRow, or a TCrud) with a member the analyzer cannot fully resolve reflection-free (a member requiring a bespoke/custom converter, an unsupported polymorphic shape, or an unresolved generic) is not covered for serialization: correctness (byte-for-byte parity with the reflection oracle) beats coverage, so no best-effort context that could drift from the wire is emitted for that DTO. The view stays fully functional and (de)serializes that DTO through the developer App_Json_Context / reflection fallback; a named-TRow view still receives its export accessor map. Simplify the offending member to an emittable shape to receive the generated context. Severity is Warning because the view still works via the fallback, matching VISTA0051 (the typed Style B counterpart).",
+            helpLinkUri: HelpLinkBase + "VISTA0063.md");
     }
 }
