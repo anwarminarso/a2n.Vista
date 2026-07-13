@@ -21,6 +21,12 @@
     <!-- SQLite provider (read-only Northwind sample). EF Core itself flows transitively
          through the a2n.Vista.EntityFrameworkCore project reference. -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+
+    <!-- In-process test host used by the OpenAPI self-test (OpenApiSelfTest) to issue a real
+         GET /openapi/v1.json against the mapped Serve_Endpoint and to compare a representative existing
+         endpoint response with vs. without the emitter registered (Requirements 10.1, 11.1). Version is
+         pinned per-TFM in Directory.Packages.props (net8.0 -> 8.0.11). -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
   </ItemGroup>
 
   <ItemGroup>
@@ -30,6 +36,7 @@
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+    <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
 
     <!--

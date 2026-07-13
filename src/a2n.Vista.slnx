@@ -4,6 +4,7 @@
     <Project Path="a2n.Vista.Core/a2n.Vista.Core.csproj" />
     <Project Path="a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj" />
     <Project Path="a2n.Vista.Newtonsoft/a2n.Vista.Newtonsoft.csproj" />
+    <Project Path="a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj" />
     <Project Path="a2n.Vista.SourceGenerators/a2n.Vista.SourceGenerators.csproj" />
     <Project Path="Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj" />
   </Folder>

@@ -35,6 +35,8 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="9.0.4" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="9.0.6" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="9.0.6" />
+    <!-- Built-in ASP.NET Core OpenAPI pipeline (net9+ only); pulls Microsoft.OpenApi 1.6.x transitively. -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="9.0.6" />
   </ItemGroup>
   <ItemGroup Condition="'$(TargetFramework)' == 'net10.0'">
     <PackageVersion Include="Microsoft.EntityFrameworkCore" Version="10.0.0" />
@@ -43,6 +45,8 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
+    <!-- Built-in ASP.NET Core OpenAPI pipeline (net10); pulls Microsoft.OpenApi 2.x transitively. -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
   </ItemGroup>
 
 </Project>

@@ -92,6 +92,13 @@ internal static class Program
         //    context now optional.
         await HttpSurfaceProbe.RunAsync().ConfigureAwait(false);
 
+        // 8) Phase 6 (spec openapi-emitter, Task 11.1, R13.2/R13.3/R13.4; D127): build an envelopes +
+        //    FilterNode-only OpenAPI document from the reflection-free descriptors and the metadata-driven
+        //    operation structure (no DTO reflection), and serialize it through the source-gen context. A
+        //    green build proves the emitter's structure/descriptor path is free of IL2026/IL3050, and the
+        //    RUC DtoSchemaGenerator is never reached on it.
+        OpenApiDescriptorProbe.Run();
+
         return 0;
     }
 

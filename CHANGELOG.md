@@ -9,6 +9,38 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **OpenApi** — a new opt-in `a2n.Vista.OpenApi` package that emits an accurate,
+  deterministic **OpenAPI v3.x document** for every Vista View mapped to HTTP
+  (Decision Log D127/D128; M18). It is a pure downstream consumer of the
+  metadata model and the serialization seam and modifies neither. **D127** — a
+  runtime, metadata-driven `VistaOpenApiDocumentBuilder` turns each
+  `ViewMetadata` from `IViewRegistry` into the fixed operation set
+  (`list`/`detail`/`metadata`/`export` for every view, plus
+  `create`/`update`/`delete` when writable), over a hand-authored
+  `OpenApiDocument` object model serialized byte-stably through its own
+  source-gen `JsonSerializerContext`. Path/operation structure, security
+  requirements, RFC 7807 error responses, and the polymorphic `FilterNode`
+  `oneOf` schema are reflection-free; the Vista envelopes and `ProblemDetails`
+  are hand-authored descriptors; only per-view `TRow`/`TCrud`/nested-POCO
+  schemas come from a single `[RequiresUnreferencedCode]` `DtoSchemaGenerator`
+  branch (the D96 AOT asymmetry), which emits a permissive `{}` schema plus a
+  non-fatal notice for an unresolvable member rather than omitting it or
+  throwing. Property names, enum-as-string, nullability, and BCL scalar
+  type/format all track the seam options so schemas match the wire. **D128** —
+  opt-in serving: `AddVistaOpenApi(configure?)` registers the builder, validated
+  `VistaOpenApiOptions` (title, version, OpenAPI version, security scheme,
+  endpoint path), and a build-once document cache; `MapVistaOpenApi()` maps
+  `GET /openapi/v1.json` (configurable) returning the cached document inside the
+  host auth pipeline (bypasses nothing). On net9.0/net10.0 an optional
+  `VistaOpenApiDocumentTransformer` merges the Vista paths/components into an
+  app's built-in `Microsoft.AspNetCore.OpenApi` pipeline document. The emitter is
+  **off by default** and additive-only — every existing response is byte-for-byte
+  unchanged. Correctness rests on two oracles: the live route table (endpoint
+  parity) and the live serializer (schema/wire parity, validated
+  instance-against-schema), with determinism as the stabilizer.
+  `a2n.Vista.Core`/`EntityFrameworkCore`/`AspNetCore` gain no dependency on the
+  new package. Adapter-endpoint documentation is out of scope for v1 (an
+  extension hook only).
 - **SourceGenerators / AspNetCore / Core** — Pillar 3, per-view `JsonTypeInfo`
   phase (Decision Log D125/D126): serialization is now fully self-service for
   typed Style B — a developer no longer has to author and register an
