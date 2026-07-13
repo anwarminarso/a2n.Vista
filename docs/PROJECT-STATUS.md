@@ -1,7 +1,55 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-12 (`source-generator-json-typeinfo` **LANDED**: M9 per-view `JsonTypeInfo` phase
+> Last updated: 2026-07-13 (`style-a-coverage` **LANDED** — the **final planned M9 Source Generator
+> phase**: Style A (central-template) coverage, D129 (recognition of `ViewTemplate<TDbContext>.AddView<TRow>`
+> **invocation** call sites + shape-driven emission for the *nameable* Style A subset) + D130 (the reaffirmed
+> permanent by-design `[RequiresUnreferencedCode]` boundary for anonymous projections + the non-blocking
+> coverage diagnostics + the AOT-probe asymmetry demonstration). A fifth incremental generator
+> (`StyleAShapeGenerator`) is the first to key off an **invocation** (not a class declaration): for a covered
+> view it emits — into the template's own assembly, keyed by the **constant** `AddView` name — (a) export
+> accessors for a **named** `TRow`, (b) read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/
+> `PagedResult<TRow>`) for a named `TRow`, and (c) write-model `TCrud` `JsonTypeInfo` for **any** writable
+> view (`TCrud` is always named, D38) — all **shape-only** (no projection reconstruction), registered into
+> the **existing** `ViewAccessorRegistry` (D117) and `GeneratedJsonContextStore` (D125). **No new store, no
+> new seam:** the D126 drain and the `ExportColumns.Value(...)` export seam pick up Style A entries unchanged.
+> An **anonymous** read `TRow` is unnameable in generated source, so its read serialization/export stay RUC
+> **forever** (D96/D130, `VISTA0061`); the write side of the same view still binds AOT-clean — the D96
+> asymmetry *within one view*. Non-blocking diagnostics `VISTA0060` (covered, Info), `VISTA0061` (anonymous
+> read → RUC by design, Info), `VISTA0062` (non-constant name, Info), `VISTA0063` (non-emittable member,
+> Warning). Mechanism-only (no wire change); byte-for-byte parity with the reflection oracle is the guard
+> (master Property 1 + round-trip Property 2 + accessor Property 3). Build green net8/9/10, **448 tests/TFM
+> (net8) / 450 tests/TFM (net9/net10)** in `a2n.Vista.Tests` + **112 generator tests** (0 failed/skipped),
+> AOT probe clean on the covered named-row export + read-DTO serialization + the writable anonymous-row
+> `TCrud` write binding (while its anonymous read row legitimately stays RUC), Northwind read + write +
+> OpenAPI self-tests PASS unchanged (no regression). See §2.17.
+> Prior: 2026-07-13 (`openapi-emitter` **LANDED**: M18 — the OpenAPI emitter, D127 (the runtime,
+> metadata-driven `VistaOpenApiDocumentBuilder` + a new opt-in `a2n.Vista.OpenApi` package with its own
+> deterministically serializable OpenAPI object model) + D128 (the opt-in serve endpoint
+> `AddVistaOpenApi()`/`MapVistaOpenApi()` + an optional `Microsoft.AspNetCore.OpenApi` pipeline provider on
+> net9/net10). The new package references `a2n.Vista.AspNetCore` and is a pure downstream consumer of two
+> already-landed foundations it never modifies: the metadata model (`ViewMetadata`/`IViewRegistry`, the
+> endpoint-parity oracle) and the serialization seam (`VistaJson.Options`, the schema/wire-parity oracle).
+> `VistaOpenApiDocumentBuilder` turns each registered `ViewMetadata` into the fixed operation set
+> (`list`/`detail`/`metadata`/`export` for every view + `create`/`update`/`delete` iff `!IsReadOnly`) over a
+> hand-authored `OpenApiDocument` object model serialized byte-stably through its own source-gen
+> `JsonSerializerContext`. Structure (paths, operationIds, per-facet security, RFC 7807 error responses, the
+> polymorphic `FilterNode` `oneOf`), the Vista envelope descriptors, and `ProblemDetails` are all
+> **reflection-free (AOT-clean)**; only per-view `TRow`/`TCrud`/nested-POCO schemas come from the single
+> `[RequiresUnreferencedCode]` `DtoSchemaGenerator` branch (D96 asymmetry), which emits a permissive `{}`
+> schema + a non-fatal notice for an unresolvable member (never omits, never throws). Property names /
+> enum-as-string / nullability / BCL formats track the seam so schemas match the wire. Serving is opt-in and
+> **off by default** (`GET /openapi/v1.json`, inside the host auth pipeline); the emitter is additive-only —
+> every existing response is byte-for-byte unchanged; Core/EF/AspNetCore gain no dependency on the new
+> package; adapter-endpoint documentation is deferred (extension hook only). Correctness rests on two oracles
+> (endpoint parity from the route table; schema/wire parity validated instance-against-schema) with
+> determinism as the stabilizer; **no new VISTA diagnostics** (unresolvable-member notices go through
+> `ILogger`). Build green net8/9/10 (0 warnings), **431 tests/TFM (net8) / 433 tests/TFM (net9/net10)** in
+> `a2n.Vista.Tests` + **89 generator tests** unchanged (0 failed/skipped), AOT probe clean on an
+> envelopes+`FilterNode`-only document (the RUC `DtoSchemaGenerator` is not reached on that path), Northwind
+> read + write self-tests PASS **and** a new OpenAPI self-test PASSES (`GET /openapi/v1.json` → 200, `openapi
+> 3.0.4`, 15 paths, endpoint parity with 0 missing/phantom, byte-for-byte coexistence). See §2.16.
+> Prior: 2026-07-12 (`source-generator-json-typeinfo` **LANDED**: M9 per-view `JsonTypeInfo` phase
 > (M9-P5) — D125 (the generated per-view `JsonTypeInfo` provider + Core-resident, serializer-neutral
 > `GeneratedJsonContextStore`) + D126 (the seam integration that auto-chains the generated contexts,
 > making the developer `App_Json_Context` optional). A fourth incremental generator
@@ -118,8 +166,12 @@ Three pillars (see `ROADMAP.md`):
   `JsonMetadataServices`, not `[JsonSerializable]`) registered into a Core-resident, serializer-neutral
   `GeneratedJsonContextStore`, and the AspNetCore seam auto-chains it — making the developer
   `App_Json_Context` **optional** so an app of covered typed Style B views is AOT-clean for serialization
-  with no hand-authored context — see §2.15. **Still to come (planned, not started):** OpenAPI (M18) and
-  Style A (anonymous) serialization coverage (permanently RUC by D96) — see §6.
+  with no hand-authored context — see §2.15. **OpenAPI emitter landed (M18, D127/D128, spec
+  `openapi-emitter`):** a new opt-in `a2n.Vista.OpenApi` package emits a deterministic OpenAPI v3.x document
+  for every mapped view from `ViewMetadata` (structure reflection-free; per-view DTO schemas the one RUC
+  branch), served off-by-default at `GET /openapi/v1.json`, additive-only and byte-for-byte non-regressing —
+  see §2.16. **Still to come (planned, not started):** Style A (anonymous) serialization coverage
+  (permanently RUC by D96; spec `style-a-coverage`) — see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -133,6 +185,10 @@ Packages / layering (Decision D48, enforced):
   `AddVistaNpgsql()`; keeps the Npgsql dependency out of Core/EF.
 - `a2n.Vista.AspNetCore` — HTTP: action-style endpoint mapping, JSON envelopes + polymorphic
   `FilterNode` converter, `IViewAuthorizer`, error model. **No EF reference.**
+- `a2n.Vista.OpenApi` — **optional, opt-in** OpenAPI v3.x emitter (M18, D127/D128). References
+  `a2n.Vista.AspNetCore`; on net9/net10 pulls `Microsoft.AspNetCore.OpenApi` for the optional pipeline
+  provider. No other Vista package references it; it is a read-only downstream consumer of `ViewMetadata` +
+  the serialization seam.
 - EF and AspNetCore do **not** reference each other; they meet at Core ports.
 
 ---
@@ -635,10 +691,169 @@ open for finalization. The opaque-handle Core store was chosen over a new `a2n.V
 package (keeps the one-Core-store-per-phase pattern and the view assembly free of a new Vista reference; the
 cost is one unchecked cast at the AspNetCore drain, covered by a layering test).
 
-**Still deferred after this phase:** OpenAPI/Swagger (M18) and TypeScript client (M17) — both downstream
-consumers of the metadata + generated JSON contexts, now fully unblocked; Style A (anonymous) AOT
-serialization (permanently RUC by D96); custom-converter synthesis for arbitrary member types; and **bulk**
-write (v1.x).
+**Still deferred after this phase:** ~~OpenAPI/Swagger (M18)~~ — **DONE (2026-07-13, D127/D128; see
+§2.16).** Remaining: TypeScript client (M17) — a downstream consumer of the metadata + generated JSON
+contexts + the OpenAPI document, now fully unblocked; Style A (anonymous) AOT serialization (permanently
+RUC by D96); custom-converter synthesis for arbitrary member types; and **bulk** write (v1.x).
+
+### 2.16 `openapi-emitter` — M18 OpenAPI emitter (landed; spec `.kiro/specs/openapi-emitter`)
+The OpenAPI emitter (**D127** the runtime, metadata-driven document builder + the new opt-in
+`a2n.Vista.OpenApi` package with its own deterministically serializable OpenAPI object model, **D128** the
+opt-in serve endpoint + the optional ASP.NET Core OpenAPI pipeline provider). It emits an accurate,
+complete, standards-conformant **OpenAPI v3.x** document for every Vista View mapped to HTTP, unblocking
+Swagger UI, OpenAPI codegen, and the M17 TypeScript client. It is a pure **downstream consumer** of two
+already-landed foundations it never modifies — the metadata model (`ViewMetadata`/`IViewRegistry`) and the
+serialization seam (`VistaJson.Options`, D124/D126) — and is **off by default**. Build green net8/9/10
+(0 warnings), **431 tests/TFM (net8) / 433 tests/TFM (net9/net10)** in `a2n.Vista.Tests` (0 failed/skipped;
+the +2 on net9/net10 are the ASP.NET Core OpenAPI pipeline-provider tests) + **89 generator tests**
+unchanged, AOT probe clean on an envelopes+`FilterNode`-only document, Northwind read + write + **OpenAPI**
+self-tests PASS. The reflection serializer + the live route table are the **behavioral oracles**;
+correctness rests on two parity disciplines (endpoint parity + schema/wire parity) with determinism as the
+stabilizer.
+
+- **New opt-in package (D48 layering)** — `src/a2n.Vista.OpenApi/` multi-targets net8.0/9.0/10.0 and
+  references only `a2n.Vista.AspNetCore`; on net9.0/net10.0 it additionally references
+  `Microsoft.AspNetCore.OpenApi` (TFM-guarded — the package does not exist for net8.0). No other Vista
+  package references it (`a2n.Vista.Core`/`EntityFrameworkCore`/`AspNetCore` gain no OpenAPI dependency); an
+  app opts in explicitly.
+- **The two parity oracles.** (1) **Endpoint parity** — the live route table (`IViewRegistry`) is the
+  oracle: the emitted operation set for a view equals exactly the HTTP endpoints Vista maps for it
+  (`list`/`detail`/`metadata`/`export` always + `create`/`update`/`delete` iff `!IsReadOnly`), each on
+  `ViewMetadata.Route`, correct method, unique `operationId = {view}_{facet}`, no path parameters (key/query
+  ride in the body). (2) **Schema/wire parity** — the live serializer (the seam) is the oracle: every
+  component schema describes the JSON the seam actually emits (camelCase names, enum-as-string, correct
+  nullability, BCL type/format), verified **instance-against-schema**. Determinism (byte-for-byte, order
+  independent of registration) is the stabilizer.
+- **D127 — runtime, metadata-driven builder** (`VistaOpenApiDocumentBuilder`): builds from
+  `IViewRegistry`/`ViewMetadata`, not by reflecting endpoint delegates (the Vista surface is a small fixed
+  set of envelope-bodied actions whose meaning lives in metadata, so metadata is *more accurate*). A fixed
+  facet→(method, path, request, success, errors, when) table is the single endpoint-parity source; structure
+  (paths/operationIds/parameters/security/error responses/`$ref`s) is **AOT-clean and reflection-free**. The
+  hand-authored `OpenApiDocument` object model (records under `Model/`) uses ordinal-ordered collections and
+  its own source-gen `JsonSerializerContext` for AOT-clean, byte-stable output (chosen over a
+  `Microsoft.OpenApi` dependency).
+- **Reflection-free descriptors** — hand-authored `OpenApiSchema` values for the fixed Vista envelopes
+  (`VistaListRequestBody`/`VistaDetailRequestBody`/`VistaWriteRequestBody`/`VistaWriteResponse`/
+  `VistaMetadataResponse`/`VistaFieldMetadataResponse`/`ViewListResult<TRow>`/`PagedResult<TRow>`) +
+  `ProblemDetails`, and the polymorphic `FilterNode` as a `oneOf` of the leaf/and/or/not schemas with a
+  discriminator + recursive `$ref`, matching `FilterNodeJsonConverter`. Property names are authored under
+  (and parity-checked against) the seam's naming policy.
+- **The one RUC branch (D96 asymmetry)** — `DtoSchemaGenerator` reflects over per-view `TRow`/`TCrud`/
+  nested-POCO CLR types under the seam options to produce wire-matching schemas (enum→string+members,
+  nullable→`nullable`, BCL scalar→`type`/`format`, collection→`array`+`items`, single-level nested POCO→its
+  own component + `$ref`). An unresolvable member yields a permissive `{}` schema + a **non-fatal notice**
+  (via `ILogger`) — never omitted, never thrown — so document validity beats one member's completeness. All
+  reflection is confined to this `[RequiresUnreferencedCode]` branch. **No new `VISTA####` diagnostics** —
+  the emitter is not a source generator.
+- **Security + errors** — when not anonymous (`VistaEndpointOptions.AllowAnonymous == false`) the configured
+  (or default HTTP `bearer`) scheme is emitted and attached to every operation; when anonymous, none. Every
+  body operation documents `400`, every operation `403` (when not anonymous), detail/update/delete `404`,
+  and update/delete `428`/`409` for a token-bearing writable view — all referencing the single
+  `ProblemDetails` schema with media type `application/problem+json`; metadata `If-None-Match`/`ETag`/`304`
+  is documented when caching is enabled, and write `ETag` headers on update.
+- **D128 — opt-in serving** — `AddVistaOpenApi(configure?)` registers the builder, validated
+  `VistaOpenApiOptions` (title; `DocumentVersion` defaulting to the assembly informational version;
+  `OpenApiVersion` default `3.0.4`; `EndpointPath` default `/openapi/v1.json`; `Security`;
+  `IncludeAdapterEndpoints=false`), and a build-once `VistaOpenApiDocumentCache` (all singletons); options
+  are validated **at registration** (fail-fast `ArgumentException`). `MapVistaOpenApi()` maps
+  `GET {EndpointPath}` returning the cached JSON as `application/json` **inside** the host auth pipeline
+  (bypasses nothing; does not call `AllowAnonymous()`). Both APIs carry `[RequiresUnreferencedCode]` (honest
+  RUC propagation; the build is deferred to first request). On net9.0/net10.0 an optional
+  `VistaOpenApiDocumentTransformer` merges the Vista `paths`/`components` into an app's built-in
+  `Microsoft.AspNetCore.OpenApi` pipeline document; net8.0 keeps only the Vista serve endpoint.
+- **Additive-only, no wire change (R10)** — only the serve endpoint is added; every existing response is
+  byte-for-byte unchanged; with neither call made, nothing is added. Adapter-endpoint documentation
+  (D111–D116) is **out of scope for v1** (extension hook only) — no adapter path appears in the document.
+- **Verification** — the two master parity properties (endpoint parity over random registries; DTO +
+  envelope schema/wire parity instance-against-schema) plus referential-integrity, OpenAPI-3.x-validity,
+  determinism/order-independence, security-posture, error-response, and adapter-endpoint-absence properties
+  (CsCheck via TUnit, ≥100 iterations); the AOT probe extended to an envelopes+`FilterNode`-only document
+  (the RUC `DtoSchemaGenerator` is not reached on that path); layering/packaging guards; and the Northwind
+  net8.0 OpenAPI self-test (`GET /openapi/v1.json` → 200, `openapi 3.0.4`, 15 paths, endpoint parity with 0
+  missing/phantom, byte-for-byte coexistence). Representative fixtures live in the test project
+  (`src/Tests/a2n.Vista.Tests/OpenApi/EmitterFixtures.cs` + `RegistryGenerators.cs`).
+
+**One assumption to confirm in a later review:** decision numbers **D127/D128**; the default OpenAPI version
+`3.0.4` (vs 3.1); the default HTTP `bearer` security scheme and `/openapi/v1.json` serve endpoint; the
+hand-authored object model (vs a `Microsoft.OpenApi` dependency); DTO schema generation being reflection-
+based/RUC in v1 (a `JsonTypeInfo`-driven reflection-free path deferred); adapter endpoints out of scope for
+v1; and single-level nested-POCO schema depth (matching the D125 posture).
+
+**Still deferred after this phase:** Style A (anonymous) serialization coverage (permanently RUC by D96;
+spec `style-a-coverage`), the M17 **TypeScript client** (now fully unblocked on this document + the generated
+per-view contexts), reflection-free DTO schemas via `JsonTypeInfo` (v1 does not claim them), grid-adapter
+endpoint documentation, and **bulk** write (v1.x).
+
+### 2.17 `style-a-coverage` — M9 Source Generator, Style A coverage (landed; spec `.kiro/specs/style-a-coverage`)
+The **final planned M9 Source Generator phase** (**D129** Style A recognition + shape-driven emission for the
+nameable subset, **D130** the reaffirmed permanent by-design RUC boundary + the coverage diagnostics + the
+AOT-probe asymmetry demonstration). Build green net8/9/10, **448 tests/TFM (net8) / 450 tests/TFM
+(net9/net10)** in `a2n.Vista.Tests` + **112 generator tests** (0 failed/skipped), AOT probe clean on the
+covered slice, Northwind read + write + OpenAPI self-tests PASS unchanged. The reflection path is the
+**Behavioral_Oracle**; byte-for-byte / value-for-value parity is the master guard.
+
+- **The wall that bounds scope (why coverage is narrow, not broad).** A C# **anonymous type has no
+  source-writable name** (`<>f__AnonymousType0` is not valid C# and is not stable across assemblies), so a
+  generator cannot emit `((AnonymousRow)row).Field` accessors, `Expression<Func<AnonymousRow,T>>`, or
+  `JsonTypeInfo<AnonymousRow>`. This is the exact wall that made Phases 1–5 skip Style A; **D96 keeps it
+  permanent.** This phase covers only the parts of Style A that *are* nameable and surfaces the rest as an
+  explicit, non-blocking, by-design RUC boundary.
+- **What is nameable (the honest, bounded feasibility).** Reading `src/a2n.Vista.Core/Authoring/`: the read
+  `TRow` of `AddView<TRow>(name, projection)` may be **named** (generatable) or **anonymous** (not); the
+  write `TCrud` of a chained `.WithCrud<TCrud, TEntity>()` is **always named** (the authoring surface forbids
+  an anonymous write model, D38), so **the write model of *every* writable Style A view is nameable** — the
+  broadest, most valuable win. The view name must be a **compile-time constant** to key artifacts statically.
+- **The fifth incremental generator** (`StyleAShapeGenerator`, `a2n.Vista.SourceGenerators`, `netstandard2.0`,
+  references no a2n.Vista project, FQN recognition): the first generator to key off an
+  **`InvocationExpressionSyntax`** (an `AddView` call) rather than a class declaration. Semantic transform
+  keeps invocations resolving to `a2n.Vista.Authoring.IViewTemplateBuilder<TDbContext>.AddView<TRow>` whose
+  enclosing type derives `ViewTemplate<TDbContext>`, walks a chained `WithCrud<TCrud, TEntity>()`, and
+  produces a fully equatable `StyleAViewModel` (reusing `EquatableArray<T>`/`LocationInfo`, tracked via
+  `TrackingNames.StyleAViewModel`) so an unrelated edit does not regenerate every view's artifacts.
+- **Shape-only artifacts (no projection reconstruction), reusing the prior emitters.** For a covered view it
+  emits — into the **template's own assembly**, keyed by the **constant** `AddView` name (the D129 difference
+  from D125's `new View().Name` keying): (a) a `file static` **export accessor map** (cast + member read) +
+  `[ModuleInitializer]` → `ViewAccessorRegistry` (D117 shape) for a **named** `TRow`; (b) a `file sealed`
+  per-view **`IJsonTypeInfoResolver`** built via `JsonMetadataServices` (NOT `[JsonSerializable]`) covering
+  `TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>` **when `TRow` is named + emittable** and `TCrud`
+  **when writable + emittable**, + `[ModuleInitializer]` → `GeneratedJsonContextStore` (D125 shape). The
+  Emittable_Shape set is inherited verbatim from D125 (single-level nested POCO depth); a non-emittable member
+  falls back (`VISTA0063`) rather than emitting a best-effort context that could drift from the oracle —
+  correctness beats coverage.
+- **No new store, no new seam.** Only new store *entries* (keyed by Style A view names) are added: the
+  existing `a2n.Vista.AspNetCore` D126 drain chains a Style A context unchanged, and
+  `ExportColumns.Value(view.Name, row, field)` prefers a Style A accessor unchanged. `a2n.Vista.Core` gains
+  no `System.Text.Json`/EF/ASP.NET Core dependency; generated code is emitted into the template assembly with
+  no ASP.NET Core dependency.
+- **The D96 asymmetry, demonstrated within one view.** For a writable view with an **anonymous** read row and
+  a named `TCrud`, the write body binds **AOT-clean** through the generated `TCrud` `JsonTypeInfo` while the
+  anonymous read row can only serialize through the RUC reflection path — no read-side artifact is generated
+  for it (`VISTA0061`). The AOT probe (`a2n.Vista.AotProbe`, IL2026/IL3050-as-errors) drives exactly this:
+  named-row export + read-DTO serialization AOT-clean, the writable anonymous-row `TCrud` write AOT-clean,
+  and the anonymous read row isolated behind a narrowly-scoped suppression whose sole purpose is to
+  *demonstrate* (not remove) the boundary.
+- **Diagnostics (all non-blocking, category `a2n.Vista.SourceGenerators`, help pages under
+  `docs/diagnostics/`, recorded in `AnalyzerReleases.Unshipped.md`):** `VISTA0060` (Info — covered view,
+  naming the exact artifact set), `VISTA0061` (Info — anonymous/`object` read row → read stays RUC by design,
+  D96), `VISTA0062` (Info — non-constant `AddView` name → cannot key statically), `VISTA0063` (Warning —
+  non-emittable DTO member → no `JsonTypeInfo` for that DTO, view falls back, build succeeds).
+- **Verification** — the master oracle-parity property (Property 1: serialize + deserialize byte-for-byte vs
+  the reflection oracle), the DTO round-trip (Property 2), export-accessor value parity (Property 3), seam
+  resolution + developer-context optionality (Property 4), reflection-free/attribute-free/`JsonMetadataServices`
+  source (Property 5), deterministic emission (Property 6), store first-wins idempotence for Style A keys
+  (Property 7), and diagnostic conformance + the `VISTA0060` coverage set (Property 8) — CsCheck via TUnit,
+  ≥100 iterations over compile-once representative fixtures (`a2n.Vista.GeneratorStyleASample`: a read-only
+  named-row view, a writable named-row view whose `TCrud` uses record/init-only/required members, and a
+  writable anonymous-row view with a named `TCrud`); generator-driver/snapshot tests for the recognition +
+  coverage matrix; generator + runtime packaging/layering guards; and the AOT probe + non-regression run.
+
+**Assumptions confirmed for this spec (per "code is the source of truth"):** decision numbers **D129/D130**;
+diagnostic ids **VISTA0060–VISTA0063** (with `VISTA0063` = Warning, the rest Info). Deferred (not requirements
+here): making anonymous Style A serialization AOT-clean (impossible + D96); Style A filter/sort member-access
+/ executable-plan generation (the Phase-2 plan bundles a compile-time projection Style A expresses as a
+runtime delegate); anonymous-projection promotion to a generated named type; custom-converter synthesis. With
+this phase landed, **M9 (the Source Generator, Pillar 3) is complete** — every planned generator phase has
+shipped.
 
 ---
 
@@ -656,8 +871,11 @@ Under `docs/spec/` (all **English** after the 2026-06-20 migration; see §4 lang
   see §2.11), **the write-DSL phase has landed** (D121/D122, `source-generator-write-mapper` — the
   generated write mapper + build-time diagnostics; see §2.13), and **the HTTP-surface phase has landed**
   (D123/D124, `source-generator-http-surface` — the generated dispatch invoker + AOT-clean serialization
-  seam; see §2.14). The rest (per-view `JsonTypeInfo` auto-generation, OpenAPI, Style A) is still
-  forward-looking. Note: this spec's §13 diagnostic catalog is **superseded** on the generator diagnostic
+  seam; see §2.14), and **the per-view `JsonTypeInfo` phase has landed** (D125/D126,
+  `source-generator-json-typeinfo`; see §2.15). The **OpenAPI emitter** shipped separately as the opt-in
+  `a2n.Vista.OpenApi` package (M18, D127/D128, `openapi-emitter` — a metadata/seam consumer, not a source
+  generator; see §2.16). The rest (Style A coverage) is still forward-looking. Note: this spec's §13
+  diagnostic catalog is **superseded** on the generator diagnostic
   numbering — the landed code uses `VISTA0030`–`VISTA0033` (write-DSL) and `VISTA0040`/`VISTA0041`
   (HTTP-surface) per §2.13/§2.14 (code is the source of truth).
 - `04-adapter-contract.md` — Pillar 2 adapters. Status: **DESIGN INTENT (frozen)**.
@@ -803,7 +1021,11 @@ These record where the code intentionally differs from the early spec sketches. 
 | D124 | `source-generator-http-surface` spec / `03` §15 | **Landed (M9 HTTP-surface phase, 2026-07-12).** The AOT-clean **serialization seam** (in `a2n.Vista.AspNetCore`, Core stays STJ-free): a single `TypeInfoResolverChain` over `VistaJson.Options` = a shipped hand-authored `VistaStaticJsonContext` (fixed request/response envelopes + the now reflection-free polymorphic `FilterNode`) → developer-authored `App_Json_Context`(s) chained via `AddVistaJsonContext(...)` → an opt-out reflection fallback (`DefaultJsonTypeInfoResolver`, the only RUC serialization branch, removable via `DisableVistaReflectionSerializationFallback()`). Every Vista response is written via the shared `VistaJsonWriter`/`JsonTypeInfo` overloads (replacing `Results.Ok(obj)` for List/Detail/Export) and `VistaWriteBinding` deserializes through the seam (byte-for-byte parity). Per-view `JsonTypeInfo` is **not** auto-generated (generator-of-generator constraint); the generator emits `VISTA0041` guidance naming the exact `[JsonSerializable]` types, and `VISTA0040` flags an uncovered candidate. New diagnostic family begins at `VISTA0040`. See §2.14. |
 | D125 | `source-generator-json-typeinfo` spec / `03` §15 | **Landed (M9 per-view `JsonTypeInfo` phase, 2026-07-12).** The generated **per-view `JsonTypeInfo` provider**: a fourth `IIncrementalGenerator` (`ViewJsonContextGenerator`) emits, per covered typed Style B view, a reflection-free `file sealed IJsonTypeInfoResolver` built by hand via `System.Text.Json.Serialization.Metadata.JsonMetadataServices` (NOT the `[JsonSerializable]` attribute route — the generator-of-generator constraint) providing the `JsonTypeInfo` for `TRow`, `ViewListResult<TRow>`, `PagedResult<TRow>`, and — when writable — `TCrud`, plus the collection/nullable/enum/leaf metadata those DTOs reach (so they resolve with no reflection fallback); a `[ModuleInitializer]` fills the new Core-resident, serializer-neutral `GeneratedJsonContextStore` (opaque `object` handles → `a2n.Vista.Core` gains no System.Text.Json dependency), keyed by the view's runtime `Name`. Non-blocking diagnostic `VISTA0050` (covered) + `VISTA0051` (non-emittable member → fallback). Builds on D117/D118/D121/D123/D124. See §2.15. |
 | D126 | `source-generator-json-typeinfo` spec / `03` §15 | **Landed (M9 per-view `JsonTypeInfo` phase, 2026-07-12).** The **seam integration**: `a2n.Vista.AspNetCore` drains `GeneratedJsonContextStore` and chains each generated context into the existing `TypeInfoResolverChain` ahead of the developer `App_Json_Context`(s) and the opt-out reflection fallback (keeping `VistaStaticJsonContext` first), making the developer `App_Json_Context` **optional** without changing the seam config, the dispatch invoker (D123), or the `AddVistaJsonContext(...)`/`DisableVistaReflectionSerializationFallback()` APIs. The single unchecked opaque-handle → `IJsonTypeInfoResolver` cast at the drain is the contract boundary (layering-tested). Mechanism-only: no wire change; byte-for-byte parity with the reflection oracle (Property 1 + round-trip Property 2). See §2.15. |
-| **D127+** | **next free** | Use for new decisions. |
+| D127 | `openapi-emitter` spec / M18 | **Landed (M18 OpenAPI emitter, 2026-07-13).** The runtime, metadata-driven OpenAPI v3.x document builder + the new opt-in `a2n.Vista.OpenApi` package (references `a2n.Vista.AspNetCore`; multi-targets net8/9/10) with its own hand-authored, deterministically serializable `OpenApiDocument` object model (source-gen `JsonSerializerContext`). `VistaOpenApiDocumentBuilder` emits, per registered `ViewMetadata`, the fixed operation set (`list`/`detail`/`metadata`/`export` + `create`/`update`/`delete` iff `!IsReadOnly`) via a fixed facet→operation table; structure + envelope/`FilterNode`/`ProblemDetails` descriptors are reflection-free (AOT-clean), and only per-view DTO schemas come from the one `[RequiresUnreferencedCode]` `DtoSchemaGenerator` branch (D96 asymmetry; unresolvable member → permissive `{}` + `ILogger` notice). Two oracles (route table = endpoint parity; seam = schema/wire parity) with determinism the stabilizer. Additive-only, off by default; Core/EF/AspNetCore gain no dependency. **No new `VISTA####` diagnostics.** See §2.16. |
+| D128 | `openapi-emitter` spec / M18 | **Landed (M18 OpenAPI emitter, 2026-07-13).** The opt-in serve endpoint + the optional ASP.NET Core OpenAPI pipeline provider: `AddVistaOpenApi(configure?)` (validated `VistaOpenApiOptions` + build-once `VistaOpenApiDocumentCache`, all singletons; fail-fast validation) and `MapVistaOpenApi()` (`GET /openapi/v1.json` by default, returning the cached document inside the host auth pipeline — bypasses nothing). On net9.0/net10.0 a TFM-guarded `VistaOpenApiDocumentTransformer` merges the Vista `paths`/`components` into an app's built-in `Microsoft.AspNetCore.OpenApi` document; net8.0 keeps only the Vista serve endpoint. Both public APIs carry `[RequiresUnreferencedCode]`. See §2.16. |
+| D129 | `style-a-coverage` spec / `03` §15 | **Landed (M9 Style A coverage, 2026-07-13).** Style A recognition + shape-driven emission for the nameable subset: a fifth `IIncrementalGenerator` (`StyleAShapeGenerator`, `netstandard2.0`, FQN recognition, no Vista project ref) — the first to key off an **`InvocationExpressionSyntax`** — recognizing `ViewTemplate<TDbContext>.AddView<TRow>(...)` call sites (walking a chained `WithCrud<TCrud, TEntity>()`). For a covered view it emits, into the template's own assembly keyed by the **constant** `AddView` name: (a) export accessors for a **named** `TRow` → `ViewAccessorRegistry` (D117); (b) read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`) for a named `TRow`, and (c) write-model `TCrud` `JsonTypeInfo` for **any** writable view (`TCrud` always named, D38) → `GeneratedJsonContextStore` (D125), both via `JsonMetadataServices`. All **shape-only** (no projection reconstruction); Emittable_Shape inherited from D125. **No new store, no new seam** — the D126 drain and the `ExportColumns.Value(...)` export seam pick up Style A entries unchanged. Mechanism-only; byte-for-byte parity with the reflection oracle is the guard. Builds on D117/D125/D126. See §2.17. |
+| D130 | `style-a-coverage` spec / `03` §15 | **Landed (M9 Style A coverage, 2026-07-13).** The reaffirmed permanent by-design RUC boundary: an **anonymous** read `TRow` is unnameable in generated source, so its read serialization/export stay `[RequiresUnreferencedCode]` **forever** (reaffirms D96) — surfaced by non-blocking `VISTA0061`; `VISTA0060` (covered, Info), `VISTA0062` (non-constant name, Info), `VISTA0063` (non-emittable member, Warning) complete the family. The AOT probe **demonstrates** the asymmetry (anonymous read RUC vs named-row / `TCrud` / Style B AOT-clean) within one view rather than removing it. Diagnostic family begins at `VISTA0060`. See §2.17. |
+| **D131+** | **next free** | Use for new decisions. `style-a-coverage` (D129/D130) was the last planned M9 phase. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -871,12 +1093,13 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
   dispatch invoker + `ViewInvokerStore` (D123) plus an AOT-clean serialization seam in AspNetCore (D124:
   `TypeInfoResolverChain` = shipped `VistaStaticJsonContext` → developer `App_Json_Context` via
   `AddVistaJsonContext` → opt-out reflection fallback), diagnostics `VISTA0040`/`VISTA0041` — the full
-  typed Style B HTTP round-trip is now IL2026/IL3050-clean. **Remaining phases (planned, not started):**
-  per-view `JsonTypeInfo` auto-generation (`JsonSerializerContext`-equivalent via `JsonMetadataServices`;
-  precluded from the clean STJ route by the generator-of-generator constraint), OpenAPI, and Style A
-  accessor/serialization; plus cross-assembly discovery (D97) and `MapView<TView>()` (DR10). **Dependency
-  note:** M17 (TS client) and M18 (OpenAPI) build on the landed HTTP-surface phase (the serialization seam
-  + AOT-clean metadata surface) plus those remaining phases.
+  typed Style B HTTP round-trip is now IL2026/IL3050-clean. **The per-view `JsonTypeInfo` phase landed
+  (D125/D126, §2.15)** (`JsonSerializerContext`-equivalent via `JsonMetadataServices`), making the developer
+  `App_Json_Context` optional. **The OpenAPI emitter landed (M18, D127/D128, §2.16)** as the separate opt-in
+  `a2n.Vista.OpenApi` package (a metadata/seam consumer, not a source generator). **Remaining (planned, not
+  started):** Style A accessor/serialization coverage (spec `style-a-coverage`); plus cross-assembly
+  discovery (D97) and `MapView<TView>()` (DR10). **Dependency note:** M17 (TS client) builds on the landed
+  serialization seam + AOT-clean metadata surface + the generated per-view contexts + the OpenAPI document.
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
@@ -981,8 +1204,20 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `DependencyInjection/VistaAdapterServiceCollectionExtensions.cs` → `AddVistaAdapter<T>()` +
   `AddVistaMetadataAdapter<T>()`; `DependencyInjection/VistaExportServiceCollectionExtensions.cs` →
   `AddVistaExportWriter<T>()`; `ViewRequestExecutor.ExportRowsAsync`).
+- OpenAPI emitter (M18/D127/D128): `src/a2n.Vista.OpenApi/` (opt-in package, refs `a2n.Vista.AspNetCore`):
+  `VistaOpenApiDocumentBuilder.cs` (metadata-driven, structure reflection-free), `VistaOpenApiDocumentCache.cs`
+  (build-once), `VistaOpenApiOptions.cs` (+ `VistaSecurityScheme`, fail-fast `Validate()`),
+  `VistaOpenApiServiceCollectionExtensions.cs` → `AddVistaOpenApi(configure?)`,
+  `VistaOpenApiEndpointRouteBuilderExtensions.cs` → `MapVistaOpenApi()`, `FacetOperation.cs` (the
+  facet→operation table = the endpoint-parity source), `Model/` (`OpenApiModel.cs`, `OpenApiCollections.cs`
+  — the hand-authored object model), `Schema/`+`Schemas/` (envelope/`FilterNode`/`ProblemDetails`
+  descriptors + the RUC `DtoSchemaGenerator`), `Serialization/` (the source-gen `JsonSerializerContext`),
+  and `AspNetCorePipeline/` (`VistaOpenApiDocumentTransformer.cs` + `VistaOpenApiPipeline*Extensions.cs` —
+  the optional net9/net10 `Microsoft.AspNetCore.OpenApi` provider, TFM-guarded). Both public APIs carry
+  `[RequiresUnreferencedCode]`; the emitter adds **no** `VISTA####` diagnostics (unresolvable-member notices
+  go through `ILogger`).
 - Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
-  `vOrderDetail`, `SelfTest.cs`); `src/Examples/a2n.Vista.GeneratorSample/` (a real consumer assembly that
+  `vOrderDetail`, `SelfTest.cs`, `OpenApiSelfTest.cs` — the M18 OpenAPI self-test); `src/Examples/a2n.Vista.GeneratorSample/` (a real consumer assembly that
   exercises the generator end to end; referenced by the test project) and `src/Examples/a2n.Vista.AotProbe/`
   (net8, `IsAotCompatible`, IL2026/IL3050-as-errors build proving the generated-accessor export path **and**
   the generated Style B List/Detail compiled path are trim/AOT-clean — `StyleBProbeView.cs` +
@@ -1003,4 +1238,12 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   generator snapshot/golden tests in `src/Tests/a2n.Vista.SourceGenerators.Tests/`
   (`ViewAccessorGeneratorTests`, `ViewExecutionPlanGeneratorTests`, `GeneratorDiagnosticsTests`,
   `GeneratorTestHarness`, `SnapshotDeterminismPropertyTests`; **D121/D122:** `WriteMapperRecognitionTests`,
-  `WriteMapperGeneratorPackagingTests`).
+  `WriteMapperGeneratorPackagingTests`). **M18 OpenAPI (D127/D128):** `src/Tests/a2n.Vista.Tests/OpenApi/`
+  (`EmitterFixtures.cs` + `RegistryGenerators.cs`; the parity/structure properties
+  `EndpointParityPropertyTests`, `DtoSchemaWireParityPropertyTests`, `EnvelopeFilterNodeWireParityPropertyTests`,
+  `ReferentialIntegrityPropertyTests`, `OpenApiValidityPropertyTests`, `DeterminismPropertyTests`,
+  `SecurityPosturePropertyTests`, `ErrorResponsePropertyTests`, `OperationIdUniquenessPropertyTests`,
+  `AdapterEndpointAbsencePropertyTests`; the example/guard tests `OpenApiFixedShapeExampleTests`,
+  `OpenApiFixturesSmokeTests`, `OpenApiLayeringGuardTests`) plus root-level `DtoSchemaGeneratorTests` and the
+  `OpenApi*Tests` (document assembly/builder/serving/registration/security/coexistence/pipeline). The AOT
+  probe's `OpenApiDescriptorProbe.cs` covers the envelopes+`FilterNode`-only AOT-clean document.

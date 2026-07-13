@@ -55,5 +55,14 @@ namespace a2n.Vista.SourceGenerators
         /// pipeline (source-generator-json-typeinfo R7.2, mirroring Phase 1/2/3/4).
         /// </summary>
         public const string ViewJsonContextModel = "ViewJsonContextModel";
+
+        /// <summary>
+        /// The stage that yields the equatable <c>StyleAViewModel</c> per discovered Style A
+        /// <c>AddView&lt;TRow&gt;(...)</c> invocation call site (the Style A shape generator's semantic
+        /// transform output after filtering). When an unrelated edit leaves a call site's model unchanged,
+        /// this stage's outputs are served from cache, proving the equatable model for the Style A coverage
+        /// pipeline (style-a-coverage R7.2, mirroring Phase 1/2/3/4/5).
+        /// </summary>
+        public const string StyleAViewModel = "StyleAViewModel";
     }
 }

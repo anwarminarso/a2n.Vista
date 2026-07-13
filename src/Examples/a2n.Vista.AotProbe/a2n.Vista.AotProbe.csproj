@@ -35,6 +35,18 @@
         coexistence boundary: it has no generated invoker and keeps its permanent RUC path (D96 / R8.3),
         isolated behind a narrowly-scoped suppression — it is not required to be AOT-clean.
 
+      * Phase 6 OpenAPI structure/descriptor document (Spec openapi-emitter, Task 11.1, R13.2/R13.3/R13.4;
+        D127): an OpenAPI document assembled from ONLY the emitter's AOT-clean building blocks — the
+        metadata-driven operation structure (paths/methods/operationIds/error responses/security derived
+        from a view's route + writability and the fixed FacetOperations table, R13.2) and the hand-authored,
+        reflection-free envelope + FilterNode descriptors (EnvelopeSchemas + FilterNodeSchema, R13.4) —
+        serialized through the source-generated VistaOpenApiJson context (D127). The RUC DtoSchemaGenerator
+        branch (R13.3), which reflects over CLR row/write types and therefore taints Build()/BuildJson() as
+        [RequiresUnreferencedCode], is deliberately NEVER referenced, so a green build proves the envelopes
+        + FilterNode document is free of IL2026/IL3050 and the DtoSchemaGenerator is not reached on it. The
+        list/detail response row DTO is HAND-AUTHORED (an "already described DTO", R13.4), never produced by
+        reflection.
+
     A green build IS the verification. No native toolchain is required: <IsAotCompatible>true</IsAotCompatible>
     enables BOTH the trim analyzer and the AOT analyzer, which surface IL2026/IL3050 during `dotnet build`.
   -->
@@ -76,6 +88,18 @@
       proves the full typed Style B dispatch + serialization round-trip is free of IL2026/IL3050. The
       generated dispatch invoker itself is Core-only; only the serialization seam pulls in AspNetCore. -->
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+
+    <!--
+      Phase 6 (spec openapi-emitter, Task 11.1, R13.2/R13.3/R13.4; Decision Log D127): the OpenAPI
+      emitter's AOT-clean surface — the reflection-free envelope + FilterNode descriptors (EnvelopeSchemas
+      + FilterNodeSchema), the metadata-driven FacetOperations table + OpenApi object model, and the
+      source-generated VistaOpenApiJson serialization context. Referencing it lets the probe assemble an
+      envelopes + FilterNode-only document and serialize it AOT-clean, so a green build proves the
+      structure/descriptor path is free of IL2026/IL3050 and never reaches the RUC DtoSchemaGenerator
+      branch. This is an opt-in example consumer of the OpenApi package (the layering ban in R13.1 applies
+      only to Core/EF/AspNetCore, not to example probes).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
 
     <!--
       Phase 2 (spec style-b-executable, Task 11.1, R5.1/R5.4/R5.5/R1.7): the generated Style B

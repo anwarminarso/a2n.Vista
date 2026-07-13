@@ -58,6 +58,14 @@ builder.Services.AddVista(vista =>
 builder.Services.AddVistaEndpoints(v => v
     .AllowAnonymousAccess());
 
+// Opt in to the Vista OpenAPI emitter (Decision Log D127/D128). AddVistaOpenApi() registers the
+// metadata-driven document builder + the build-once cache (off by default; nothing is added unless this is
+// called), and MapVistaOpenApi() below exposes GET /openapi/v1.json serving the document as
+// application/json. The emitted document's operation set is, by construction, exactly the live
+// View_Operation_Set for every registered view (endpoint parity), and adding it changes no existing
+// endpoint response — both asserted by the OpenAPI self-test (dotnet run -- selftest).
+builder.Services.AddVistaOpenApi();
+
 // Register the jQuery DataTables.NET adapter (Decision Log D112). Each view then also exposes
 // POST {route}/datatable for DataTables server-side requests.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdapter>();
@@ -81,6 +89,11 @@ app.UseStaticFiles();
 app.UseVistaExceptionHandling();
 app.MapVistaViews();
 
+// The opt-in OpenAPI Serve_Endpoint (default GET /openapi/v1.json). It sits inside the host's normal
+// middleware pipeline (it bypasses no authentication/authorization) and returns the once-built, cached
+// OpenAPI document as application/json.
+app.MapVistaOpenApi();
+
 // Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises
 // List paging, filter/sort/search, and Detail-by-key against the shipped read-only northwind.db through
 // the real executor. The write self-test exercises Create/Update/Delete on the writable vWritableMemo
@@ -90,7 +103,12 @@ if (args.Contains("selftest", StringComparer.OrdinalIgnoreCase))
 {
     var readPassed = await SelfTest.RunAsync(app.Services);
     var writePassed = await WriteSelfTest.RunAsync();
-    Environment.ExitCode = readPassed && writePassed ? 0 : 1;
+    // The OpenAPI self-test stands up an in-process test host (with and without the emitter) over the same
+    // Vista wiring, issues a real GET /openapi/v1.json, asserts the served document is a valid OpenAPI 3.x
+    // document whose operation set equals the registered views' live View_Operation_Set (endpoint parity),
+    // and asserts a representative existing endpoint response is byte-for-byte unchanged by the emitter.
+    var openApiPassed = await OpenApiSelfTest.RunAsync(DbRelativePath);
+    Environment.ExitCode = readPassed && writePassed && openApiPassed ? 0 : 1;
     return;
 }
 

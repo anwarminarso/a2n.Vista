@@ -4,6 +4,7 @@
     <Project Path="a2n.Vista.Core/a2n.Vista.Core.csproj" />
     <Project Path="a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj" />
     <Project Path="a2n.Vista.Newtonsoft/a2n.Vista.Newtonsoft.csproj" />
+    <Project Path="a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj" />
     <Project Path="a2n.Vista.SourceGenerators/a2n.Vista.SourceGenerators.csproj" />
     <Project Path="Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj" />
   </Folder>
@@ -29,6 +30,7 @@
     <Project Path="Examples/a2n.Vista.GeneratorHttpSurfaceSample/a2n.Vista.GeneratorHttpSurfaceSample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorJsonContextSample/a2n.Vista.GeneratorJsonContextSample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorSample/a2n.Vista.GeneratorSample.csproj" />
+    <Project Path="Examples/a2n.Vista.GeneratorStyleASample/a2n.Vista.GeneratorStyleASample.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorWriteMapperSample/a2n.Vista.GeneratorWriteMapperSample.csproj" />
     <Project Path="Examples/a2n.Vista.StyleBExecSample/a2n.Vista.StyleBExecSample.csproj" />
     <Project Path="Examples/Northwind.DataAccess/Northwind.DataAccess.csproj" />

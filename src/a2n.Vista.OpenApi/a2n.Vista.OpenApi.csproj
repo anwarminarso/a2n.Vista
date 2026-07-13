@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.OpenApi</RootNamespace>
+    <AssemblyName>a2n.Vista.OpenApi</AssemblyName>
+    <PackageId>a2n.Vista.OpenApi</PackageId>
+    <Description>Vista OpenAPI v3.x document emitter (opt-in, metadata-driven).</Description>
+    <PackageTags>vista;a2n;openapi;swagger;aspnetcore</PackageTags>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
+  </ItemGroup>
+
+  <!--
+    Optional built-in ASP.NET Core OpenAPI pipeline integration (spec openapi-emitter, task 7.2;
+    Requirement 11.4, Decision Log D128). Microsoft.AspNetCore.OpenApi is a net9+ package (it does not
+    exist for net8.0), so the reference is TFM-guarded: net8.0 keeps only the Vista-owned serve endpoint
+    (task 7.1), while net9.0/net10.0 additionally gain the VistaOpenApiDocumentTransformer that merges the
+    Vista paths/components into an app's built-in pipeline document. The package version is pinned per-TFM
+    in Directory.Packages.props (9.0.x pulls Microsoft.OpenApi 1.6.x; 10.0.x pulls Microsoft.OpenApi 2.x).
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net9.0' OR '$(TargetFramework)' == 'net10.0'">
+    <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- White-box access for the OpenAPI emitter unit and property examples (spec openapi-emitter). -->
+    <InternalsVisibleTo Include="a2n.Vista.Tests" />
+  </ItemGroup>
+
+</Project>

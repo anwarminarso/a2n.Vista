@@ -6,7 +6,7 @@
 // This is the FOURTH IIncrementalGenerator in the a2n.Vista.SourceGenerators project (netstandard2.0),
 // independent of the Phase 1/2 ViewAccessorGenerator, the Phase 3 WriteMapperGenerator, and the Phase 4
 // ViewInvokerGenerator. It targets typed "Style B" views (classes deriving a2n.Vista.Authoring.View<TQuery>
-// or View<TQuery, TCrud>) and will — in later tasks — emit, per covered view, a reflection-free
+// or View<TQuery, TCrud>) and emits, per covered view, a reflection-free
 // System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver (built via JsonMetadataServices, NOT the
 // [JsonSerializable] attribute route) that provides the JsonTypeInfo for the view's TRow,
 // ViewListResult<TRow>, PagedResult<TRow>, and — when writable — TCrud, plus a [ModuleInitializer] that
@@ -36,9 +36,6 @@
 //                             one, mirroring Phases 1/2/3/4).
 //     All type names are captured `global::`-qualified. The equatable Location is a LocationInfo surrogate
 //     (not the non-value-equal Microsoft.CodeAnalysis.Location) so incremental caching holds (R7.2).
-//
-//   NOT YET IN SCOPE (deferred to later tasks):
-//     * The per-view IJsonTypeInfoResolver emitter + its [ModuleInitializer] is TASK 5.1.
 //
 // SCOPE ADDED BY TASK 2.3 (tasks.md §2.3, requirements R1.4, R1.5, R2.5):
 //   * The EMITTABLE_SHAPE ANALYSIS now runs in the semantic transform for a genuine serialization candidate
@@ -86,6 +83,19 @@
 //   candidate with a non-emittable DTO member (AllShapesEmittable == false with recorded
 //   NonEmittableMembers) fires VISTA0051 — mirroring how the ViewInvokerGenerator wired VISTA0040/0041 to
 //   read its model. The per-view IJsonTypeInfoResolver emitter (task 5.1) consumes the same Dtos facet.
+//
+// CONTEXT EMISSION EXTRACTED TO THE SHARED JsonContextEmitter (D129 Style A coverage, task 5.2):
+//   The per-view IJsonTypeInfoResolver emission code (the `file sealed` resolver + its GetTypeInfo dispatch,
+//   the JsonMetadataServices CreateObjectInfo/CreatePropertyInfo/collection factories, and the
+//   [ModuleInitializer] registration) was originally authored here (task 5.1). It is now EXTRACTED VERBATIM
+//   into the shared JsonContextEmitter so the Style A coverage phase (D129, StyleAShapeGenerator) emits the
+//   IDENTICAL context — byte-for-byte serialization parity with the reflection oracle depends on both phases
+//   emitting the same code, exactly as the Emittable_Shape ANALYSIS was extracted into EmittableShapeAnalyzer
+//   (task 2.4). This generator's BuildContextSource is now a thin wrapper that calls the shared emitter,
+//   passing `new <View>().Name` as the [ModuleInitializer] registration key (the ONE per-phase difference:
+//   Style A passes the constant AddView name literal instead — design "Keying — the difference from
+//   Phases 1/5"). The extraction preserves D125's emitted output byte-for-byte (the shared method's default
+//   inputs reproduce the exact former behavior); the D125 byte-identical/determinism tests are the guard.
 
 using System.Collections.Generic;
 using System.Linq;
@@ -101,11 +111,11 @@ namespace a2n.Vista.SourceGenerators
     /// <summary>
     /// Incremental generator that discovers typed Style B views (non-abstract <c>partial</c> classes
     /// deriving from <c>a2n.Vista.Authoring.View&lt;TQuery&gt;</c> or <c>View&lt;TQuery, TCrud&gt;</c>)
-    /// and — in later tasks — emits a reflection-free per-view
+    /// and emits a reflection-free per-view
     /// <c>System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver</c> (built via
-    /// <c>JsonMetadataServices</c>) registered via a module initializer into <c>a2n.Vista.Core</c>'s
-    /// <c>GeneratedJsonContextStore</c> (D125). It recognizes Vista types by fully-qualified name only and
-    /// references no other a2n.Vista project (D48, R1.6, R7.1).
+    /// <c>JsonMetadataServices</c>, via the shared <see cref="JsonContextEmitter"/>) registered via a module
+    /// initializer into <c>a2n.Vista.Core</c>'s <c>GeneratedJsonContextStore</c> (D125). It recognizes Vista
+    /// types by fully-qualified name only and references no other a2n.Vista project (D48, R1.6, R7.1).
     /// </summary>
     [Generator(LanguageNames.CSharp)]
     public sealed class ViewJsonContextGenerator : IIncrementalGenerator
@@ -126,32 +136,14 @@ namespace a2n.Vista.SourceGenerators
         private const string ViewListResultOpenFqn = "global::a2n.Vista.Ports.ViewListResult<";
         private const string PagedResultOpenFqn = "global::a2n.Vista.Results.PagedResult<";
 
-        // Reflection metadata names (arity-encoded) + namespaces of the two Vista read envelopes, used to
-        // resolve their constructed symbols from the compilation for the Serializable_DTO_Set (task 2.3)
-        // and to recognize them as known emittable shapes when they appear as a DTO member. FQN-only
-        // recognition — no a2n.Vista assembly reference (R1.6, R7.1).
-        private const string ViewListResultMetadataName = "a2n.Vista.Ports.ViewListResult`1";
-        private const string PagedResultMetadataName = "a2n.Vista.Results.PagedResult`1";
-        private const string ViewListResultSimpleMetadataName = "ViewListResult`1";
-        private const string PagedResultSimpleMetadataName = "PagedResult`1";
-        private const string ViewListResultNamespace = "a2n.Vista.Ports";
-        private const string PagedResultNamespace = "a2n.Vista.Results";
-        private const string CollectionsGenericNamespace = "System.Collections.Generic";
-
-        // Fully-qualified names of the System.Text.Json attributes the shape analysis honors for parity
-        // with the reflection oracle: [JsonPropertyName] overrides the naming policy; [JsonIgnore] drops a
-        // member from the serializable set. Recognized by FQN only (R2.3, R6.4).
-        private const string JsonPropertyNameAttributeFqn = "System.Text.Json.Serialization.JsonPropertyNameAttribute";
-        private const string JsonIgnoreAttributeFqn = "System.Text.Json.Serialization.JsonIgnoreAttribute";
-
-        // JsonIgnoreCondition.Always == 1 (the default a bare [JsonIgnore] carries): the member is never
-        // serialized and is dropped from the set. Any other condition (Never/WhenWriting*) still serializes.
-        private const int JsonIgnoreConditionAlways = 1;
-
-        // Single level of nested-POCO support (design v1 target): a top-level DTO member may itself be a
-        // POCO (budget 1), but that nested POCO's members must be leaf shapes (budget 0 → no further POCOs).
-        // Deeper nesting is deferred and classified NonEmittable — the safe default over the oracle (R1.5).
-        private const int TopLevelPocoBudget = 1;
+        // NOTE: the Emittable_Shape member-classification and JSON-property-name rules (and the metadata-name
+        // / attribute-FQN constants they use) live in the SHARED EmittableShapeAnalyzer, and the per-view
+        // IJsonTypeInfoResolver EMISSION lives in the SHARED JsonContextEmitter, so the Style A coverage
+        // phase (D129) classifies DTOs AND emits contexts identically — byte-for-byte serialization parity
+        // with the reflection oracle depends on both phases applying the exact same rules and emitting the
+        // exact same code. This generator's Transform calls EmittableShapeAnalyzer.BuildReadDtoSet /
+        // BuildDtoModel and its Emit calls JsonContextEmitter.BuildContextSource; only the emitter-specific
+        // constants (the global::-prefixed envelope FQNs above) stay local here.
 
         /// <inheritdoc />
         public void Initialize(IncrementalGeneratorInitializationContext context)
@@ -173,9 +165,7 @@ namespace a2n.Vista.SourceGenerators
                 .WithTrackingName(TrackingNames.ViewJsonContextModel);
 
             // Source-output stage. Task 3.2 wires the VISTA0050/VISTA0051 diagnostics and task 5.1 emits the
-            // per-view IJsonTypeInfoResolver + its [ModuleInitializer]. Until then this is a no-op so the
-            // generator is inert but present — the recognition/model pipeline is exercised by the
-            // generator-driver tests (task 2.4).
+            // per-view IJsonTypeInfoResolver + its [ModuleInitializer] (via the shared JsonContextEmitter).
             context.RegisterSourceOutput(candidates, static (spc, model) => Emit(spc, model));
         }
 
@@ -196,9 +186,7 @@ namespace a2n.Vista.SourceGenerators
         /// metadata name) from <c>a2n.Vista.Authoring.View&lt;TQuery&gt;</c> or <c>View&lt;TQuery,
         /// TCrud&gt;</c>. Returns a fully equatable <see cref="ViewJsonContextModel"/> carrying the type
         /// fields and coverage flags, or <c>null</c> to drop the class (R1.1, R1.3). The Emittable_Shape
-        /// analysis (task 2.3) and diagnostic/emission (tasks 3.2/5.1) are deferred, so the DTO facet is
-        /// populated with safe placeholders (empty <c>Dtos</c>, <c>AllShapesEmittable == false</c>, empty
-        /// <c>NonEmittableMembers</c>).
+        /// analysis (task 2.3) runs via the shared <see cref="EmittableShapeAnalyzer"/>.
         /// </summary>
         private static ViewJsonContextModel Transform(GeneratorSyntaxContext ctx, CancellationToken ct)
         {
@@ -299,23 +287,23 @@ namespace a2n.Vista.SourceGenerators
             {
                 var compilation = ctx.SemanticModel.Compilation;
 
-                // TRow — its members gate coverage and are recorded into NonEmittableMembers on failure.
-                var rowEmittable = BuildDtoModel(rowNamed, nonEmittable, dtoModels, auxTypes, auxSeen);
-
-                // The two Vista read envelopes are known shapes over TRow (fixed order: ViewListResult,
-                // then PagedResult, matching the emitter's GetTypeInfo dispatch). Their offending members
-                // (when TRow is non-emittable) are already recorded via TRow, so envelope walking does not
-                // add duplicate NonEmittableMembers entries (a throwaway sink is used). Their collection
-                // member IReadOnlyList<TRow> (PagedResult.Items) IS collected into auxTypes so the no-fallback
-                // chain can resolve it (R2.1, R8.1).
-                AddEnvelopeModel(compilation, ViewListResultMetadataName, rowNamed, dtoModels, auxTypes, auxSeen);
-                AddEnvelopeModel(compilation, PagedResultMetadataName, rowNamed, dtoModels, auxTypes, auxSeen);
+                // TRow + the two Vista read envelopes (ViewListResult<TRow>, PagedResult<TRow>) — built by the
+                // SHARED EmittableShapeAnalyzer so the emittable-shape rules are IDENTICAL to the Style A
+                // coverage phase (D129), which byte-for-byte parity with the reflection oracle depends on.
+                // TRow's members gate coverage and are recorded into NonEmittableMembers on failure; the two
+                // envelopes are known shapes over TRow (fixed order: ViewListResult, then PagedResult,
+                // matching the emitter's GetTypeInfo dispatch) whose offending members are routed to a
+                // throwaway sink (no duplicate NonEmittableMembers entries) while their collection member
+                // IReadOnlyList<TRow> (PagedResult.Items) IS collected into auxTypes so the no-fallback chain
+                // can resolve it (R2.1, R8.1).
+                var rowEmittable = EmittableShapeAnalyzer.BuildReadDtoSet(
+                    compilation, rowNamed, dtoModels, nonEmittable, auxTypes, auxSeen);
 
                 // TCrud — gates coverage only when the view is writable with a named write model (R1.2).
                 var crudEmittable = true;
                 if (hasNamedCrudType && crudType is INamedTypeSymbol crudNamed)
                 {
-                    crudEmittable = BuildDtoModel(crudNamed, nonEmittable, dtoModels, auxTypes, auxSeen);
+                    crudEmittable = EmittableShapeAnalyzer.BuildDtoModel(crudNamed, nonEmittable, dtoModels, auxTypes, auxSeen);
                 }
 
                 allShapesEmittable = rowEmittable && crudEmittable;
@@ -377,9 +365,8 @@ namespace a2n.Vista.SourceGenerators
         /// All serialization-context diagnostics are Info/Warning — never Error — so this stage is
         /// non-blocking and the build always succeeds (R9.4). The reportable <see cref="Location"/> is
         /// reconstructed from the equatable <see cref="LocationInfo"/> via
-        /// <see cref="LocationInfo.ToLocation"/>. The per-view <c>IJsonTypeInfoResolver</c> emitter and its
-        /// <c>[ModuleInitializer]</c> remain deferred to task 5.1 — this stage reports diagnostics only and
-        /// emits no source.
+        /// <see cref="LocationInfo.ToLocation"/>. For a covered view the per-view
+        /// <c>IJsonTypeInfoResolver</c> is emitted via the shared <see cref="JsonContextEmitter"/> (task 5.1).
         /// </summary>
         private static void Emit(SourceProductionContext context, ViewJsonContextModel model)
         {
@@ -432,10 +419,11 @@ namespace a2n.Vista.SourceGenerators
                 serializableDtoSet));
 
             // Task 5.1: emit the per-view reflection-free IJsonTypeInfoResolver + its [ModuleInitializer]
-            // for this covered view. The gates above guarantee the view is a serialization candidate
-            // (HasNamedRowType), every gating DTO shape is emittable (AllShapesEmittable), and the view can
-            // be instantiated by the [ModuleInitializer] to read its runtime Name
-            // (HasPublicParameterlessCtor) — the exact coverage contract of R2.1/R4.1/R4.5/R1.7.
+            // for this covered view (via the shared JsonContextEmitter). The gates above guarantee the view
+            // is a serialization candidate (HasNamedRowType), every gating DTO shape is emittable
+            // (AllShapesEmittable), and the view can be instantiated by the [ModuleInitializer] to read its
+            // runtime Name (HasPublicParameterlessCtor) — the exact coverage contract of
+            // R2.1/R4.1/R4.5/R1.7.
             var source = BuildContextSource(model);
             context.AddSource(BuildHintName(model), SourceText.From(source, Encoding.UTF8));
         }
@@ -521,1129 +509,28 @@ namespace a2n.Vista.SourceGenerators
                && named.TypeKind != TypeKind.Error;
 
         // -----------------------------------------------------------------------------------------------
-        // Emittable_Shape analysis (task 2.3)
+        // Per-view IJsonTypeInfoResolver emission — delegates to the shared JsonContextEmitter (task 5.2).
         // -----------------------------------------------------------------------------------------------
 
         /// <summary>
-        /// Builds the equatable <see cref="DtoTypeModel"/> for one DTO in the Serializable_DTO_Set by
-        /// walking its public serializable members (task 2.3): each member's JSON property name is resolved
-        /// per the seam's naming policy for parity (<see cref="ResolveJsonPropertyName"/>), and each member
-        /// type is classified against the Emittable_Shape set (<see cref="ClassifyType"/>). Returns
-        /// <c>true</c> when every member is emittable; records a <c>Type.Member (memberTypeFqn)</c>
-        /// description into <paramref name="nonEmittable"/> for each member that is not, so the caller can
-        /// compose the VISTA0051 message and classify the view as not covered (R1.5). The DTO's
-        /// object-construction kind is detected for R2.5 (<see cref="DetectConstruction"/>). The completed
-        /// model is appended to <paramref name="into"/>.
-        /// </summary>
-        private static bool BuildDtoModel(
-            INamedTypeSymbol dtoType,
-            List<string> nonEmittable,
-            List<DtoTypeModel> into,
-            List<AuxTypeModel> auxTypes,
-            HashSet<string> auxSeen)
-        {
-            var members = new List<DtoMemberModel>();
-            var allEmittable = true;
-
-            foreach (var property in EnumerateSerializableProperties(dtoType))
-            {
-                var memberTypeFqn = property.Type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                var shape = ClassifyType(property.Type, TopLevelPocoBudget, out var emittable);
-                if (!emittable)
-                {
-                    allEmittable = false;
-                    nonEmittable.Add($"{dtoType.Name}.{property.Name} ({memberTypeFqn})");
-                }
-                else
-                {
-                    // Collect the auxiliary (nullable/collection) JsonTypeInfo arms this member needs so the
-                    // covered DTO resolves with NO reflection fallback in the chain (R2.1, R8.1).
-                    CollectAuxTypes(property.Type, auxTypes, auxSeen);
-                }
-
-                members.Add(new DtoMemberModel(
-                    memberName: property.Name,
-                    memberTypeFqn: memberTypeFqn,
-                    jsonPropertyName: ResolveJsonPropertyName(property),
-                    isReadOnly: IsReadOnlyMember(property),
-                    shapeKind: shape));
-            }
-
-            into.Add(new DtoTypeModel(
-                typeFqn: dtoType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat),
-                construction: DetectConstruction(dtoType),
-                members: new EquatableArray<DtoMemberModel>(members.ToArray())));
-
-            return allEmittable;
-        }
-
-        /// <summary>
-        /// Resolves the constructed Vista read envelope (<c>ViewListResult&lt;TRow&gt;</c> or
-        /// <c>PagedResult&lt;TRow&gt;</c>) from the compilation and models it as a DTO (task 2.3). The
-        /// envelopes are known shapes over an emittable <c>TRow</c>, so their members are modeled for the
-        /// task 5.1 emitter but their emittability is NOT gated separately (it follows <c>TRow</c>'s);
-        /// offending members are therefore routed to a throwaway sink to avoid duplicating the
-        /// <c>TRow</c>-derived entries already recorded by the caller. A no-op when the envelope type is not
-        /// present in the compilation (defensive; a real view always references Core).
-        /// </summary>
-        private static void AddEnvelopeModel(
-            Compilation compilation,
-            string envelopeMetadataName,
-            INamedTypeSymbol rowType,
-            List<DtoTypeModel> into,
-            List<AuxTypeModel> auxTypes,
-            HashSet<string> auxSeen)
-        {
-            if (compilation.GetTypeByMetadataName(envelopeMetadataName) is not INamedTypeSymbol openEnvelope)
-            {
-                return;
-            }
-
-            var constructed = openEnvelope.Construct(rowType);
-            var throwaway = new List<string>();
-
-            // Walk the constructed envelope's members so its collection member (PagedResult.Items —
-            // IReadOnlyList<TRow>) is collected into auxTypes; the envelope's emittability follows TRow's, so
-            // offending members are routed to a throwaway sink to avoid duplicate NonEmittableMembers entries.
-            BuildDtoModel(constructed, throwaway, into, auxTypes, auxSeen);
-        }
-
-        /// <summary>
-        /// Enumerates the public serializable properties of a DTO in declaration order: public, readable
-        /// (public getter), non-static, non-indexer instance properties that are not dropped by
-        /// <c>[JsonIgnore]</c>. Mirrors the Phase 1 accessor generator's member selection (declared members
-        /// only) and the System.Text.Json default (public instance properties; fields excluded, matching the
-        /// seam options which do not set <c>IncludeFields</c>).
-        /// </summary>
-        private static IEnumerable<IPropertySymbol> EnumerateSerializableProperties(INamedTypeSymbol type)
-        {
-            foreach (var member in type.GetMembers())
-            {
-                if (member is IPropertySymbol property
-                    && !property.IsStatic
-                    && !property.IsIndexer
-                    && property.DeclaredAccessibility == Accessibility.Public
-                    && property.GetMethod is not null
-                    && property.GetMethod.DeclaredAccessibility == Accessibility.Public
-                    && !IsJsonIgnored(property))
-                {
-                    yield return property;
-                }
-            }
-        }
-
-        /// <summary>
-        /// The JSON property name for parity with the reflection oracle (R2.3, R6.4): the literal from
-        /// <c>[JsonPropertyName("...")]</c> when present, otherwise the member name run through the seam's
-        /// naming policy (<see cref="ToCamelCase"/>, the <see cref="System.Text.Json.JsonSerializerDefaults.Web"/>
-        /// default the seam configures).
-        /// </summary>
-        private static string ResolveJsonPropertyName(IPropertySymbol property)
-        {
-            foreach (var attribute in property.GetAttributes())
-            {
-                if (attribute.AttributeClass?.ToDisplayString() == JsonPropertyNameAttributeFqn
-                    && attribute.ConstructorArguments.Length == 1
-                    && attribute.ConstructorArguments[0].Value is string explicitName)
-                {
-                    return explicitName;
-                }
-            }
-
-            return ToCamelCase(property.Name);
-        }
-
-        /// <summary>
-        /// Whether a member is dropped from the serializable set by <c>[JsonIgnore]</c>. A bare
-        /// <c>[JsonIgnore]</c> carries <c>Condition = JsonIgnoreCondition.Always</c> (never serialized) and
-        /// drops the member; <c>Condition = Never</c> (or a conditional <c>WhenWriting*</c>) keeps it, since
-        /// those still serialize the member (matching the oracle).
-        /// </summary>
-        private static bool IsJsonIgnored(IPropertySymbol property)
-        {
-            foreach (var attribute in property.GetAttributes())
-            {
-                if (attribute.AttributeClass?.ToDisplayString() != JsonIgnoreAttributeFqn)
-                {
-                    continue;
-                }
-
-                var condition = JsonIgnoreConditionAlways; // bare [JsonIgnore] defaults to Always.
-                foreach (var named in attribute.NamedArguments)
-                {
-                    if (named.Key == "Condition" && named.Value.Value is int conditionValue)
-                    {
-                        condition = conditionValue;
-                    }
-                }
-
-                return condition == JsonIgnoreConditionAlways;
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Whether a member is read-only from the serializer's perspective — no public setter, or an
-        /// <c>init</c>-only setter — which forces construction through the parameterized/<c>init</c> path
-        /// (R2.5).
-        /// </summary>
-        private static bool IsReadOnlyMember(IPropertySymbol property)
-            => property.SetMethod is null
-               || property.SetMethod.DeclaredAccessibility != Accessibility.Public
-               || property.SetMethod.IsInitOnly;
-
-        /// <summary>
-        /// Detects the DTO's object-construction kind for R2.5: <see cref="ObjectConstructionKind.Parameterless"/>
-        /// when the type exposes a public parameterless constructor (System.Text.Json constructs via it and
-        /// populates members through setters/<c>init</c>), otherwise
-        /// <see cref="ObjectConstructionKind.Parameterized"/> — the case for positional records (including
-        /// the Vista envelopes) and types whose only constructors take parameters.
-        /// </summary>
-        private static ObjectConstructionKind DetectConstruction(INamedTypeSymbol type)
-        {
-            var hasParameterlessCtor = type.InstanceConstructors.Any(
-                static c => c.DeclaredAccessibility == Accessibility.Public && c.Parameters.Length == 0);
-
-            return hasParameterlessCtor
-                ? ObjectConstructionKind.Parameterless
-                : ObjectConstructionKind.Parameterized;
-        }
-
-        /// <summary>
-        /// Classifies a member type against the Emittable_Shape set (design "Data Models"), returning its
-        /// <see cref="MemberShapeKind"/> and, via <paramref name="emittable"/>, whether the generator can
-        /// emit its <c>JsonTypeInfo</c> reflection-free. The safe default for anything the analyzer cannot
-        /// fully resolve (interfaces, <c>object</c>/<c>dynamic</c>, delegates, unresolved generics/type
-        /// parameters, dictionaries and other unsupported collections, bespoke-converter shapes, and
-        /// nesting beyond the supported single POCO level) is
-        /// <see cref="MemberShapeKind.NonEmittable"/>/<c>false</c> — parity over coverage (R1.4, R1.5).
-        /// <paramref name="pocoBudget"/> bounds nested-POCO depth: a top-level DTO member is classified with
-        /// <see cref="TopLevelPocoBudget"/>, and a nested POCO validates its own members with the budget
-        /// decremented so deeper nesting is rejected.
-        /// </summary>
-        private static MemberShapeKind ClassifyType(ITypeSymbol type, int pocoBudget, out bool emittable)
-        {
-            // string.
-            if (type.SpecialType == SpecialType.System_String)
-            {
-                emittable = true;
-                return MemberShapeKind.String;
-            }
-
-            // Nullable value type (T?): emittable when the underlying type is an emittable scalar or enum.
-            if (type is INamedTypeSymbol nullable
-                && nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
-                && nullable.TypeArguments.Length == 1)
-            {
-                var underlyingKind = ClassifyType(nullable.TypeArguments[0], 0, out var underlyingEmittable);
-                emittable = underlyingEmittable
-                            && (underlyingKind == MemberShapeKind.Scalar || underlyingKind == MemberShapeKind.Enum);
-                return MemberShapeKind.Nullable;
-            }
-
-            // Enum (serialized via the seam's JsonStringEnumConverter for parity).
-            if (type.TypeKind == TypeKind.Enum)
-            {
-                emittable = true;
-                return MemberShapeKind.Enum;
-            }
-
-            // BCL scalar.
-            if (IsScalar(type))
-            {
-                emittable = true;
-                return MemberShapeKind.Scalar;
-            }
-
-            // byte[] — System.Text.Json base64 default (matches the oracle); treated as a scalar leaf.
-            if (type is IArrayTypeSymbol byteArray
-                && byteArray.Rank == 1
-                && byteArray.ElementType.SpecialType == SpecialType.System_Byte)
-            {
-                emittable = true;
-                return MemberShapeKind.Scalar;
-            }
-
-            // Vista read envelope (ViewListResult<T>/PagedResult<T>) — a known shape over an emittable T.
-            if (IsVistaEnvelope(type, out var envelopeElement))
-            {
-                ClassifyType(envelopeElement, pocoBudget, out var envelopeElementEmittable);
-                emittable = envelopeElementEmittable;
-                return MemberShapeKind.Nested;
-            }
-
-            // Collection (array / List<T> / IReadOnlyList<T> / IList<T> / ICollection<T> /
-            // IReadOnlyCollection<T> / IEnumerable<T>) of an emittable element.
-            if (TryGetEnumerableElement(type, out var element))
-            {
-                ClassifyType(element, pocoBudget, out var elementEmittable);
-                emittable = elementEmittable;
-                return MemberShapeKind.Collection;
-            }
-
-            // Single-level nested POCO: emittable when the budget allows and every member is emittable.
-            if (pocoBudget > 0 && type is INamedTypeSymbol pocoType && IsEmittablePocoCandidate(pocoType))
-            {
-                var allMembersEmittable = true;
-                foreach (var member in EnumerateSerializableProperties(pocoType))
-                {
-                    ClassifyType(member.Type, pocoBudget - 1, out var memberEmittable);
-                    if (!memberEmittable)
-                    {
-                        allMembersEmittable = false;
-                    }
-                }
-
-                emittable = allMembersEmittable;
-                return MemberShapeKind.Nested;
-            }
-
-            // Anything else: not emittable reflection-free — falls back to the developer context / oracle.
-            emittable = false;
-            return MemberShapeKind.NonEmittable;
-        }
-
-        /// <summary>
-        /// Whether the type is a BCL scalar the generator can emit directly via
-        /// <c>CreatePropertyInfo&lt;T&gt;</c>: the primitive/numeric/<c>char</c> special types plus the
-        /// common value scalars (<c>Guid</c>, <c>DateTime</c>, <c>DateTimeOffset</c>, <c>DateOnly</c>,
-        /// <c>TimeOnly</c>, <c>TimeSpan</c>).
-        /// </summary>
-        private static bool IsScalar(ITypeSymbol type)
-        {
-            switch (type.SpecialType)
-            {
-                case SpecialType.System_Boolean:
-                case SpecialType.System_Byte:
-                case SpecialType.System_SByte:
-                case SpecialType.System_Int16:
-                case SpecialType.System_UInt16:
-                case SpecialType.System_Int32:
-                case SpecialType.System_UInt32:
-                case SpecialType.System_Int64:
-                case SpecialType.System_UInt64:
-                case SpecialType.System_Single:
-                case SpecialType.System_Double:
-                case SpecialType.System_Decimal:
-                case SpecialType.System_Char:
-                    return true;
-            }
-
-            switch (type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat))
-            {
-                case "global::System.Guid":
-                case "global::System.DateTime":
-                case "global::System.DateTimeOffset":
-                case "global::System.DateOnly":
-                case "global::System.TimeOnly":
-                case "global::System.TimeSpan":
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        /// <summary>
-        /// Recognizes the Vista read envelopes <c>a2n.Vista.Ports.ViewListResult&lt;T&gt;</c> and
-        /// <c>a2n.Vista.Results.PagedResult&lt;T&gt;</c> by metadata name + namespace (FQN-only, R1.6/R7.1),
-        /// yielding the single type argument in <paramref name="element"/> so its emittability can be
-        /// checked.
-        /// </summary>
-        private static bool IsVistaEnvelope(ITypeSymbol type, out ITypeSymbol element)
-        {
-            element = null;
-            if (type is INamedTypeSymbol named && named.IsGenericType && named.TypeArguments.Length == 1)
-            {
-                var definition = named.OriginalDefinition;
-                var ns = definition.ContainingNamespace?.ToDisplayString();
-                if ((definition.MetadataName == ViewListResultSimpleMetadataName && ns == ViewListResultNamespace)
-                    || (definition.MetadataName == PagedResultSimpleMetadataName && ns == PagedResultNamespace))
-                {
-                    element = named.TypeArguments[0];
-                    return true;
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Yields the element type of a supported single-argument sequence: a rank-1 array, or a
-        /// <c>System.Collections.Generic</c> <c>List&lt;T&gt;</c>/<c>IList&lt;T&gt;</c>/
-        /// <c>IReadOnlyList&lt;T&gt;</c>/<c>ICollection&lt;T&gt;</c>/<c>IReadOnlyCollection&lt;T&gt;</c>/
-        /// <c>IEnumerable&lt;T&gt;</c>. Dictionaries and other keyed/custom collections are deliberately
-        /// excluded (they are not in the Emittable_Shape set) so they classify as non-emittable — the safe
-        /// default over the oracle.
-        /// </summary>
-        private static bool TryGetEnumerableElement(ITypeSymbol type, out ITypeSymbol element)
-        {
-            element = null;
-
-            if (type is IArrayTypeSymbol array && array.Rank == 1)
-            {
-                element = array.ElementType;
-                return true;
-            }
-
-            if (type is INamedTypeSymbol named && named.IsGenericType && named.TypeArguments.Length == 1)
-            {
-                var definition = named.OriginalDefinition;
-                if (definition.ContainingNamespace?.ToDisplayString() == CollectionsGenericNamespace)
-                {
-                    switch (definition.MetadataName)
-                    {
-                        case "List`1":
-                        case "IList`1":
-                        case "IReadOnlyList`1":
-                        case "ICollection`1":
-                        case "IReadOnlyCollection`1":
-                        case "IEnumerable`1":
-                            element = named.TypeArguments[0];
-                            return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Collects the auxiliary (non-object) <c>JsonTypeInfo</c> arms a serializable member needs so the
-        /// covered DTO (de)serializes with NO reflection fallback in the chain (R2.1, R8.1). System.Text.Json
-        /// builds scalar/string/enum property metadata from its built-in converters, but for "complex" member
-        /// shapes — nullable value types and collections — it resolves the member's <c>JsonTypeInfo</c> from
-        /// the resolver chain; without a dispatch arm those throw <c>NotSupportedException</c> when the
-        /// reflection resolver is removed. This walks a member type and appends (deduplicated by FQN, in
-        /// first-occurrence order for determinism, R7.4):
-        /// <list type="bullet">
-        ///   <item>a <see cref="AuxTypeKind.Nullable"/> entry for a nullable value type <c>T?</c>;</item>
-        ///   <item>a <see cref="AuxTypeKind.Collection"/> entry for a supported collection, then recurses into
-        ///   its element so nested collections/nullables are covered too.</item>
-        /// </list>
-        /// <c>byte[]</c> (a base64 scalar leaf), the Vista envelopes (top-level DTOs), scalars, strings, enums,
-        /// and nested POCOs are intentionally NOT collected here (the first three resolve built-in / as their
-        /// own object arm; enums ride the seam's registered converter). The element type of a collection
-        /// (e.g. <c>TRow</c>, <c>string</c>) resolves from the rest of the chain — <c>TRow</c> from this same
-        /// resolver's object arm, a scalar element from the built-in converter.
-        /// </summary>
-        private static void CollectAuxTypes(ITypeSymbol type, List<AuxTypeModel> auxTypes, HashSet<string> auxSeen)
-        {
-            // byte[]: a base64 leaf (built-in ByteArrayConverter). Emitted as a scalar leaf arm so the
-            // no-fallback chain can resolve it (checked before the collection branch — it is NOT a collection).
-            if (type is IArrayTypeSymbol maybeBytes
-                && maybeBytes.Rank == 1
-                && maybeBytes.ElementType.SpecialType == SpecialType.System_Byte)
-            {
-                AddScalarAux("byte[]", auxTypes, auxSeen);
-                return;
-            }
-
-            // string / BCL scalar leaf: emit a value-info arm so a leaf reached via GetNullableConverter or a
-            // collection element resolves from this resolver in the no-fallback chain (R2.1, R8.1). Adding an
-            // arm for a leaf System.Text.Json could also resolve inline is harmless — the built-in converter
-            // matches the oracle, so parity holds — and matches the built-in generator's completeness.
-            if (type.SpecialType == SpecialType.System_String || IsScalar(type))
-            {
-                AddScalarAux(type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat), auxTypes, auxSeen);
-                return;
-            }
-
-            // Enum: System.Text.Json still resolves an enum property's JsonTypeInfo from the resolver chain
-            // when the reflection fallback is removed, so an enum leaf arm is required (R2.1, R8.1). The arm
-            // uses the converter the seam's options resolve for the enum, so it rides the seam's registered
-            // JsonStringEnumConverter for parity with the oracle (R2.3, R6.4).
-            if (type.TypeKind == TypeKind.Enum)
-            {
-                var enumFqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (auxSeen.Add(enumFqn))
-                {
-                    auxTypes.Add(new AuxTypeModel(enumFqn, AuxTypeKind.Enum, enumFqn, default));
-                }
-
-                return;
-            }
-
-            // Nullable value type (T?): needs a CreateValueInfo + GetNullableConverter<T> arm, and its
-            // underlying scalar needs its own leaf arm (GetNullableConverter resolves it from the chain).
-            if (type is INamedTypeSymbol nullable
-                && nullable.OriginalDefinition.SpecialType == SpecialType.System_Nullable_T
-                && nullable.TypeArguments.Length == 1)
-            {
-                var nullableFqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                var underlying = nullable.TypeArguments[0];
-                var underlyingFqn = underlying.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (auxSeen.Add(nullableFqn))
-                {
-                    auxTypes.Add(new AuxTypeModel(nullableFqn, AuxTypeKind.Nullable, underlyingFqn, default));
-                }
-
-                // The underlying scalar's leaf arm (enum underlyings ride the seam converter, no arm).
-                CollectAuxTypes(underlying, auxTypes, auxSeen);
-                return;
-            }
-
-            // Vista read envelopes are top-level DTOs (their own object arm), not auxiliary types.
-            if (IsVistaEnvelope(type, out _))
-            {
-                return;
-            }
-
-            // Supported collection: needs the matching collection-info arm; recurse into the element so its
-            // leaf/nested collection/nullable arm is collected too.
-            if (TryGetCollectionShape(type, out var element, out var shape))
-            {
-                var collectionFqn = type.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                var elementFqn = element.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat);
-                if (auxSeen.Add(collectionFqn))
-                {
-                    auxTypes.Add(new AuxTypeModel(collectionFqn, AuxTypeKind.Collection, elementFqn, shape));
-                }
-
-                CollectAuxTypes(element, auxTypes, auxSeen);
-            }
-        }
-
-        /// <summary>
-        /// Adds a scalar/string/<c>byte[]</c> leaf auxiliary arm (deduplicated by FQN), so the no-fallback
-        /// chain can resolve the leaf's <c>JsonTypeInfo</c> from this resolver (R2.1, R8.1).
-        /// </summary>
-        private static void AddScalarAux(string leafFqn, List<AuxTypeModel> auxTypes, HashSet<string> auxSeen)
-        {
-            if (auxSeen.Add(leafFqn))
-            {
-                auxTypes.Add(new AuxTypeModel(leafFqn, AuxTypeKind.Scalar, leafFqn, default));
-            }
-        }
-
-        /// <summary>
-        /// Recognizes a supported single-argument collection member and yields both its element type and the
-        /// <see cref="CollectionShapeKind"/> that selects the emitter's <c>JsonMetadataServices</c> helper
-        /// (mirroring the built-in System.Text.Json source generator's per-shape choice). Rank-1 arrays,
-        /// <c>List&lt;T&gt;</c>, and the <c>System.Collections.Generic</c> list/collection/enumerable
-        /// interfaces are supported; dictionaries and other keyed/custom collections are excluded (they are
-        /// not in the Emittable_Shape set), consistent with <see cref="TryGetEnumerableElement"/>.
-        /// </summary>
-        private static bool TryGetCollectionShape(ITypeSymbol type, out ITypeSymbol element, out CollectionShapeKind shape)
-        {
-            element = null;
-            shape = default;
-
-            if (type is IArrayTypeSymbol array && array.Rank == 1)
-            {
-                element = array.ElementType;
-                shape = CollectionShapeKind.Array;
-                return true;
-            }
-
-            if (type is INamedTypeSymbol named && named.IsGenericType && named.TypeArguments.Length == 1)
-            {
-                var definition = named.OriginalDefinition;
-                if (definition.ContainingNamespace?.ToDisplayString() == CollectionsGenericNamespace)
-                {
-                    switch (definition.MetadataName)
-                    {
-                        case "List`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.List;
-                            return true;
-                        case "IList`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.IList;
-                            return true;
-                        case "ICollection`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.ICollection;
-                            return true;
-                        case "IReadOnlyList`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.IReadOnlyList;
-                            return true;
-                        case "IReadOnlyCollection`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.IReadOnlyCollection;
-                            return true;
-                        case "IEnumerable`1":
-                            element = named.TypeArguments[0];
-                            shape = CollectionShapeKind.IEnumerable;
-                            return true;
-                    }
-                }
-            }
-
-            return false;
-        }
-
-        /// <summary>
-        /// Whether the type is a concrete, constructible POCO the generator may recurse into as a nested
-        /// object: a non-abstract, non-anonymous class or struct that is not <c>object</c> and not an error
-        /// type. Interfaces, delegates, <c>object</c>/<c>dynamic</c>, and type parameters are excluded and
-        /// classify as non-emittable.
-        /// </summary>
-        private static bool IsEmittablePocoCandidate(INamedTypeSymbol type)
-            => !type.IsAnonymousType
-               && !type.IsAbstract
-               && (type.TypeKind == TypeKind.Class || type.TypeKind == TypeKind.Struct)
-               && type.SpecialType != SpecialType.System_Object
-               && type.TypeKind != TypeKind.Error;
-
-        /// <summary>
-        /// Applies the seam's <see cref="System.Text.Json.JsonSerializerDefaults.Web"/> camel-case naming
-        /// policy to a member name for parity with the reflection oracle (R2.3, R6.4). This faithfully
-        /// mirrors System.Text.Json's built-in <c>JsonNamingPolicy.CamelCase</c> conversion (including its
-        /// acronym handling, e.g. <c>OrderID → orderID</c>) so the generated wire names match byte-for-byte.
-        /// </summary>
-        private static string ToCamelCase(string name)
-        {
-            if (string.IsNullOrEmpty(name) || !char.IsUpper(name[0]))
-            {
-                return name;
-            }
-
-            var chars = name.ToCharArray();
-            for (var i = 0; i < chars.Length; i++)
-            {
-                if (i == 1 && !char.IsUpper(chars[i]))
-                {
-                    break;
-                }
-
-                var hasNext = i + 1 < chars.Length;
-
-                // Stop once the following character is already lower-case (acronym boundary).
-                if (i > 0 && hasNext && !char.IsUpper(chars[i + 1]))
-                {
-                    // If the following character is a space, lower-case the current one before stopping.
-                    if (chars[i + 1] == ' ')
-                    {
-                        chars[i] = char.ToLowerInvariant(chars[i]);
-                    }
-
-                    break;
-                }
-
-                chars[i] = char.ToLowerInvariant(chars[i]);
-            }
-
-            return new string(chars);
-        }
-
-        // -----------------------------------------------------------------------------------------------
-        // Per-view IJsonTypeInfoResolver emitter (task 5.1, R2.1-R2.5/R3.1/R3.3/R3.4/R4.1/R4.4/R4.5/R7.3-R7.5)
-        // -----------------------------------------------------------------------------------------------
-
-        // Fully-qualified prefixes for the System.Text.Json metadata surface the emitted resolver names.
-        // Full global::-qualification (no `using` directives) mirrors the ViewInvokerGenerator's emission
-        // style so the generated file never binds to an ambiguous name in the consumer assembly and stays
-        // byte-for-byte deterministic (R7.4). System.Text.Json is part of the net8.0/net9.0/net10.0 shared
-        // framework, so the emitted file needs no NuGet package and no ASP.NET Core reference (R7.3/R7.5).
-        private const string MetaNs = "global::System.Text.Json.Serialization.Metadata.";
-        private const string JsonOptionsFqn = "global::System.Text.Json.JsonSerializerOptions";
-
-        /// <summary>
-        /// Builds the per-view generated source <c>&lt;View&gt;_VistaJsonContext.g.cs</c> — a
-        /// <c>file sealed</c> class implementing
-        /// <c>System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver</c> whose
+        /// Builds the per-view generated source <c>&lt;View&gt;_VistaJsonContext.g.cs</c> by delegating to
+        /// the shared <see cref="JsonContextEmitter.BuildContextSource"/> — a <c>file sealed</c> class
+        /// implementing <c>System.Text.Json.Serialization.Metadata.IJsonTypeInfoResolver</c> whose
         /// <c>GetTypeInfo(Type, options)</c> returns the <c>JsonMetadataServices</c>-built
         /// <c>JsonTypeInfo</c> for each type in the Serializable_DTO_Set (<c>TRow</c>,
         /// <c>ViewListResult&lt;TRow&gt;</c>, <c>PagedResult&lt;TRow&gt;</c>, and — writable only —
-        /// <c>TCrud</c>) and <c>null</c> otherwise (defer to the next resolver in the chain, R2.1). The same
-        /// class carries exactly one <c>[ModuleInitializer]</c> that registers a singleton into
-        /// <c>a2n.Vista.Metadata.GeneratedJsonContextStore</c> keyed by <c>new View().Name</c> (R4.1). Fixed
-        /// <c>"\n"</c> line endings and the model's fixed DTO/member order keep the output byte-for-byte
-        /// deterministic (R7.4). Reflection-free and attribute-free: no <c>Activator.CreateInstance</c>, no
-        /// <c>PropertyInfo</c>, no <c>Expression.Compile</c>, no <c>MakeGenericMethod</c>, no
-        /// <c>[JsonSerializable]</c> (R2.2, R7.3).
+        /// <c>TCrud</c>) plus the auxiliary arms, and <c>null</c> otherwise (R2.1). The
+        /// <c>[ModuleInitializer]</c> registers the context into <c>GeneratedJsonContextStore</c> keyed by
+        /// the view's RUNTIME <c>Name</c> — <c>new &lt;View&gt;().Name</c> — the typed Style B keying (D125);
+        /// the Style A phase passes a constant name literal to the same shared emitter instead (D129, the
+        /// one per-phase difference). Reflection-free, attribute-free, deterministic (R2.2, R7.3, R7.4).
         /// </summary>
         private static string BuildContextSource(ViewJsonContextModel model)
-        {
-            // Fixed "\n" line endings (not Environment.NewLine) so generated text is byte-identical across
-            // platforms, keeping the determinism property stable (R7.4).
-            const string nl = "\n";
-            var contextClassName = model.ClassName + "_VistaJsonContext";
-
-            // Deduplicate the Serializable_DTO_Set by fully-qualified type name preserving the model's fixed
-            // order (TRow, ViewListResult<TRow>, PagedResult<TRow>, [TCrud]). A view whose TCrud equals its
-            // TRow would otherwise emit two identical dispatch arms/factories; first-match-wins keeps the
-            // resolver correct, and the dedup keeps the output minimal and deterministic (R7.4).
-            var dtos = new List<DtoTypeModel>();
-            var seen = new HashSet<string>(System.StringComparer.Ordinal);
-            foreach (var dto in model.Dtos)
-            {
-                if (seen.Add(dto.TypeFqn))
-                {
-                    dtos.Add(dto);
-                }
-            }
-
-            // The auxiliary (non-object) types — nullable value types and collections reachable from the DTO
-            // set (notably the envelope's Items collection IReadOnlyList<TRow>) — each get their own dispatch
-            // arm + factory so the covered DTOs (de)serialize with NO reflection fallback in the chain (R2.1,
-            // R8.1). Deduplicated against the object DTO set (an aux type is never an object DTO) preserving
-            // the model's fixed first-occurrence order for deterministic output (R7.4).
-            var auxTypes = new List<AuxTypeModel>();
-            foreach (var aux in model.AuxTypes)
-            {
-                if (seen.Add(aux.TypeFqn))
-                {
-                    auxTypes.Add(aux);
-                }
-            }
-
-            var sb = new StringBuilder();
-            sb.Append("// <auto-generated/>").Append(nl);
-            sb.Append("#nullable enable").Append(nl);
-            sb.Append(nl);
-
-            // A file-local sealed type: the `file` modifier scopes the type to this generated file so two
-            // views sharing a class name in different namespaces never collide at the type level (C# 11+;
-            // consumer TFMs net8/9/10 support it — R7.3, R7.5). No namespace is emitted; the resolver is an
-            // internal implementation detail referenced only by its own [ModuleInitializer].
-            sb.Append("file sealed class ").Append(contextClassName)
-              .Append(" : ").Append(MetaNs).Append("IJsonTypeInfoResolver").Append(nl);
-            sb.Append("{").Append(nl);
-
-            // GetTypeInfo dispatch: one arm per DTO type, else null (defer to the next resolver, R2.1).
-            sb.Append("    public ").Append(MetaNs).Append("JsonTypeInfo? GetTypeInfo(").Append(nl);
-            sb.Append("        global::System.Type type,").Append(nl);
-            sb.Append("        ").Append(JsonOptionsFqn).Append(" options)").Append(nl);
-            sb.Append("    {").Append(nl);
-
-            // Object DTO arms first (TRow, ViewListResult<TRow>, PagedResult<TRow>, [TCrud]), then the
-            // auxiliary nullable/collection arms — a single contiguous factory index space keeps the emitted
-            // names stable and the output deterministic (R7.4).
-            for (var i = 0; i < dtos.Count; i++)
-            {
-                sb.Append("        if (type == typeof(").Append(dtos[i].TypeFqn).Append("))").Append(nl);
-                sb.Append("        {").Append(nl);
-                sb.Append("            return ").Append(FactoryName(i)).Append("(options);").Append(nl);
-                sb.Append("        }").Append(nl);
-                sb.Append(nl);
-            }
-
-            for (var a = 0; a < auxTypes.Count; a++)
-            {
-                sb.Append("        if (type == typeof(").Append(auxTypes[a].TypeFqn).Append("))").Append(nl);
-                sb.Append("        {").Append(nl);
-                sb.Append("            return ").Append(FactoryName(dtos.Count + a)).Append("(options);").Append(nl);
-                sb.Append("        }").Append(nl);
-                sb.Append(nl);
-            }
-
-            sb.Append("        return null;").Append(nl);
-            sb.Append("    }").Append(nl);
-            sb.Append(nl);
-
-            for (var i = 0; i < dtos.Count; i++)
-            {
-                AppendTypeInfoFactory(sb, nl, dtos[i], i);
-                sb.Append(nl);
-            }
-
-            for (var a = 0; a < auxTypes.Count; a++)
-            {
-                AppendAuxTypeInfoFactory(sb, nl, auxTypes[a], dtos.Count + a);
-                sb.Append(nl);
-            }
-
-            // [ModuleInitializer] registration (R4.1). The initializer keys the context off the view's
-            // RUNTIME Name: it instantiates the view via its public parameterless ctor (guaranteed present —
-            // the Emit gate skips a view lacking one, R1.7/R4.5) and reads `.Name` once at module load,
-            // before any DI container is constructed. GeneratedJsonContextStore.Register is first-wins
-            // idempotent, so a duplicate name keeps the first registration. The method is `internal static
-            // void` and parameterless so it satisfies the ModuleInitializer signature contract. ViewFqn is
-            // already `global::`-qualified by the semantic transform.
-            sb.Append("    [global::System.Runtime.CompilerServices.ModuleInitializer]").Append(nl);
-            sb.Append("    internal static void RegisterJsonContext()").Append(nl);
-            sb.Append("        => global::a2n.Vista.Metadata.GeneratedJsonContextStore.Register(").Append(nl);
-            sb.Append("               new ").Append(model.ViewFqn).Append("().Name, new ").Append(contextClassName).Append("());").Append(nl);
-            sb.Append("}").Append(nl);
-
-            return sb.ToString();
-        }
-
-        /// <summary>
-        /// Appends the factory method that builds one DTO's <c>JsonTypeInfo</c> via
-        /// <c>JsonMetadataServices.CreateObjectInfo</c> + <c>CreatePropertyInfo&lt;TMember&gt;</c>. The
-        /// construction path is chosen to round-trip records, init-only, and required members (R2.5),
-        /// mirroring the built-in System.Text.Json source generator:
-        /// <list type="bullet">
-        ///   <item>
-        ///     <b>Record / positional</b> (no public parameterless ctor): every member maps positionally to
-        ///     the primary/parameterized constructor —
-        ///     <c>ObjectWithParameterizedConstructorCreator = args =&gt; new T((T0)args[0], …)</c>.
-        ///   </item>
-        ///   <item>
-        ///     <b>Parameterless + init-only/required</b> (public parameterless ctor with at least one
-        ///     init-only/read-only member): construct via an object initializer over the init-only members —
-        ///     <c>args =&gt; new T() { X = (TX)args[0], … }</c> — while writable members are populated by
-        ///     their setters after construction (init-only setters cannot be invoked from a stand-alone
-        ///     lambda, so they ride the constructor path exactly like the built-in generator).
-        ///   </item>
-        ///   <item>
-        ///     <b>Parameterless</b> (public parameterless ctor, all members writable):
-        ///     <c>ObjectCreator = () =&gt; new T()</c> and every member gets a setter.
-        ///   </item>
-        /// </list>
-        /// All getters/setters are compile-time member access; the <c>options</c> the resolver was queried
-        /// with is captured so the metadata honors the seam's <c>JsonSerializerOptions</c> (naming policy,
-        /// enum converter) for parity (R2.3, R6.4).
-        /// </summary>
-        private static void AppendTypeInfoFactory(StringBuilder sb, string nl, DtoTypeModel dto, int index)
-        {
-            var typeFqn = dto.TypeFqn;
-            var members = dto.Members;
-
-            // A record / positional DTO has no public parameterless ctor (Construction == Parameterized):
-            // every serializable member maps positionally to the primary constructor. Otherwise the DTO has
-            // a public parameterless ctor and its init-only/read-only members (if any) must be set through an
-            // object initializer inside the creator — the init-only setter cannot be invoked from a
-            // stand-alone lambda (R2.5).
-            var recordPositional = dto.Construction == ObjectConstructionKind.Parameterized && members.Count > 0;
-
-            // The members bound through the constructor/creator (and therefore described by
-            // ConstructorParameterMetadataInitializer, in this exact order): all members for a positional
-            // record; the init-only/read-only members for a parameterless-with-init DTO.
-            var ctorBoundMembers = new List<DtoMemberModel>();
-            foreach (var member in members)
-            {
-                if (recordPositional || member.IsReadOnly)
-                {
-                    ctorBoundMembers.Add(member);
-                }
-            }
-
-            var useParameterizedCreator = ctorBoundMembers.Count > 0;
-
-            sb.Append("    private static ").Append(MetaNs).Append("JsonTypeInfo<").Append(typeFqn).Append("> ")
-              .Append(FactoryName(index)).Append("(").Append(JsonOptionsFqn).Append(" options)").Append(nl);
-            sb.Append("    {").Append(nl);
-            sb.Append("        var objectInfo = new ").Append(MetaNs).Append("JsonObjectInfoValues<").Append(typeFqn).Append(">").Append(nl);
-            sb.Append("        {").Append(nl);
-
-            if (recordPositional)
-            {
-                // args => new T((T0)args[0], (T1)args[1], …)
-                sb.Append("            ObjectWithParameterizedConstructorCreator = static args =>").Append(nl);
-                sb.Append("                new ").Append(typeFqn).Append("(").Append(nl);
-                for (var m = 0; m < ctorBoundMembers.Count; m++)
-                {
-                    sb.Append("                    (").Append(ctorBoundMembers[m].MemberTypeFqn).Append(")args[").Append(m).Append("]")
-                      .Append(m == ctorBoundMembers.Count - 1 ? ")," : ",").Append(nl);
-                }
-            }
-            else if (useParameterizedCreator)
-            {
-                // args => new T() { Init0 = (T0)args[0], … } — writable members are set via their setters.
-                sb.Append("            ObjectWithParameterizedConstructorCreator = static args =>").Append(nl);
-                sb.Append("                new ").Append(typeFqn).Append("()").Append(nl);
-                sb.Append("                {").Append(nl);
-                for (var m = 0; m < ctorBoundMembers.Count; m++)
-                {
-                    var member = ctorBoundMembers[m];
-                    sb.Append("                    ").Append(member.MemberName).Append(" = (").Append(member.MemberTypeFqn)
-                      .Append(")args[").Append(m).Append("],").Append(nl);
-                }
-
-                sb.Append("                },").Append(nl);
-            }
-            else
-            {
-                sb.Append("            ObjectCreator = static () => new ").Append(typeFqn).Append("(),").Append(nl);
-            }
-
-            // Property metadata (getters always; a real setter for a writable member, a throwing guard for a
-            // constructor-bound init-only/read-only member — mirroring the built-in generator). The lambda
-            // ignores the JsonSerializerContext argument and captures the resolver's `options` so the
-            // metadata honors the seam's JsonSerializerOptions (naming policy, enum converter) for parity
-            // (R2.3, R6.4).
-            sb.Append("            PropertyMetadataInitializer = _ => new ").Append(MetaNs).Append("JsonPropertyInfo[]").Append(nl);
-            sb.Append("            {").Append(nl);
-            foreach (var member in members)
-            {
-                AppendPropertyInfo(sb, nl, typeFqn, member);
-            }
-
-            sb.Append("            },").Append(nl);
-
-            if (useParameterizedCreator)
-            {
-                sb.Append("            ConstructorParameterMetadataInitializer = static () => new ").Append(MetaNs).Append("JsonParameterInfoValues[]").Append(nl);
-                sb.Append("            {").Append(nl);
-                for (var m = 0; m < ctorBoundMembers.Count; m++)
-                {
-                    var member = ctorBoundMembers[m];
-                    sb.Append("                new ").Append(MetaNs).Append("JsonParameterInfoValues").Append(nl);
-                    sb.Append("                {").Append(nl);
-                    sb.Append("                    Name = ").Append(Literal(member.MemberName)).Append(",").Append(nl);
-                    sb.Append("                    ParameterType = typeof(").Append(member.MemberTypeFqn).Append("),").Append(nl);
-                    sb.Append("                    Position = ").Append(m).Append(",").Append(nl);
-                    sb.Append("                },").Append(nl);
-                }
-
-                sb.Append("            },").Append(nl);
-            }
-
-            sb.Append("        };").Append(nl);
-            sb.Append("        return ").Append(MetaNs).Append("JsonMetadataServices.CreateObjectInfo<").Append(typeFqn)
-              .Append(">(options, objectInfo);").Append(nl);
-            sb.Append("    }").Append(nl);
-        }
-
-        /// <summary>
-        /// Appends one <c>JsonMetadataServices.CreatePropertyInfo&lt;TMember&gt;</c> element to the property
-        /// metadata array: a compile-time getter (always) plus either a compile-time setter (for a writable
-        /// member) or a throwing guard setter (for an init-only/read-only member that is populated through
-        /// the constructor/creator path, R2.5 — an init-only setter cannot be invoked from a stand-alone
-        /// lambda, exactly as the built-in generator emits). The JSON property name is emitted verbatim from
-        /// the model (resolved per the seam's naming policy / <c>[JsonPropertyName]</c>) so the wire name
-        /// matches the reflection oracle byte-for-byte (R2.3, R6.4).
-        /// </summary>
-        private static void AppendPropertyInfo(StringBuilder sb, string nl, string declaringTypeFqn, DtoMemberModel member)
-        {
-            var memberType = member.MemberTypeFqn;
-            sb.Append("                ").Append(MetaNs).Append("JsonMetadataServices.CreatePropertyInfo<").Append(memberType).Append(">(").Append(nl);
-            sb.Append("                    options,").Append(nl);
-            sb.Append("                    new ").Append(MetaNs).Append("JsonPropertyInfoValues<").Append(memberType).Append(">").Append(nl);
-            sb.Append("                    {").Append(nl);
-            sb.Append("                        IsProperty = true,").Append(nl);
-            sb.Append("                        IsPublic = true,").Append(nl);
-            sb.Append("                        DeclaringType = typeof(").Append(declaringTypeFqn).Append("),").Append(nl);
-            sb.Append("                        PropertyName = ").Append(Literal(member.MemberName)).Append(",").Append(nl);
-            sb.Append("                        JsonPropertyName = ").Append(Literal(member.JsonPropertyName)).Append(",").Append(nl);
-            sb.Append("                        Getter = static o => ((").Append(declaringTypeFqn).Append(")o).").Append(member.MemberName).Append(",").Append(nl);
-            if (member.IsReadOnly)
-            {
-                // Init-only/read-only: the value is populated through the constructor/creator path, so the
-                // property setter is a guard that throws if ever invoked directly (mirrors the built-in
-                // System.Text.Json source generator).
-                sb.Append("                        Setter = static (o, v) => throw new global::System.InvalidOperationException(")
-                  .Append("\"Setting init-only or read-only members is not supported in source-generated metadata.\"),").Append(nl);
-            }
-            else
-            {
-                sb.Append("                        Setter = static (o, v) => ((").Append(declaringTypeFqn).Append(")o).").Append(member.MemberName).Append(" = v,").Append(nl);
-            }
-
-            sb.Append("                    }),").Append(nl);
-        }
-
-        /// <summary>
-        /// Appends the factory method that builds one auxiliary (non-object) type's <c>JsonTypeInfo</c> via
-        /// the matching <c>JsonMetadataServices</c> helper, so the covered DTOs (de)serialize with NO
-        /// reflection fallback in the chain (R2.1, R8.1):
-        /// <list type="bullet">
-        ///   <item>
-        ///     <b>Nullable value type</b> (<c>T?</c>): <c>CreateValueInfo&lt;T?&gt;(options,
-        ///     JsonMetadataServices.GetNullableConverter&lt;T&gt;(options))</c> — the underlying converter is
-        ///     resolved from the seam's <c>options</c> so parity holds (a nullable enum, for instance, rides
-        ///     the seam's <c>JsonStringEnumConverter</c>).
-        ///   </item>
-        ///   <item>
-        ///     <b>Collection</b>: the shape-specific collection-info helper over a
-        ///     <c>JsonCollectionInfoValues&lt;TCollection&gt;</c> — <c>CreateArrayInfo&lt;T&gt;</c>,
-        ///     <c>CreateListInfo&lt;List&lt;T&gt;, T&gt;</c> (with a <c>List&lt;T&gt;</c> creator),
-        ///     <c>CreateIListInfo</c>/<c>CreateICollectionInfo</c> (mutable interfaces, with a
-        ///     <c>List&lt;T&gt;</c> creator), or <c>CreateIEnumerableInfo</c> (the read-only
-        ///     <c>IReadOnlyList</c>/<c>IReadOnlyCollection</c>/<c>IEnumerable</c> interfaces). The element
-        ///     type's <c>JsonTypeInfo</c> is resolved from the rest of the chain (this resolver's object arm
-        ///     for <c>TRow</c>, the built-in converter for a scalar element), mirroring the built-in
-        ///     System.Text.Json source generator, so no <c>ElementInfo</c> is set explicitly.
-        ///   </item>
-        /// </list>
-        /// Reflection-free and attribute-free like the object factories (R2.2, R7.3).
-        /// </summary>
-        private static void AppendAuxTypeInfoFactory(StringBuilder sb, string nl, AuxTypeModel aux, int index)
-        {
-            var typeFqn = aux.TypeFqn;
-
-            sb.Append("    private static ").Append(MetaNs).Append("JsonTypeInfo<").Append(typeFqn).Append("> ")
-              .Append(FactoryName(index)).Append("(").Append(JsonOptionsFqn).Append(" options)").Append(nl);
-            sb.Append("    {").Append(nl);
-
-            if (aux.Kind == AuxTypeKind.Scalar)
-            {
-                // A scalar / string / byte[] leaf: CreateValueInfo<T>(options, <built-in converter>). The
-                // built-in converter matches the reflection oracle so parity holds (R2.3, R6.4).
-                var converter = ScalarConverterName(typeFqn);
-                sb.Append("        return ").Append(MetaNs).Append("JsonMetadataServices.CreateValueInfo<").Append(typeFqn).Append(">(").Append(nl);
-                sb.Append("            options, ").Append(MetaNs).Append("JsonMetadataServices.").Append(converter).Append(");").Append(nl);
-                sb.Append("    }").Append(nl);
-                return;
-            }
-
-            if (aux.Kind == AuxTypeKind.Enum)
-            {
-                // An enum leaf. The seam serializes enums as STRING names (its options register a
-                // JsonStringEnumConverter), so for byte-for-byte parity with the reflection oracle (R2.3,
-                // R6.4) the arm's converter must be a string enum converter — NOT JsonMetadataServices'
-                // GetEnumConverter, which is numeric. It is built DIRECTLY from the AOT-safe GENERIC
-                // JsonStringEnumConverter<TEnum> factory (available in the net8/9/10 shared framework),
-                // never via options.GetConverter/GetTypeInfo (which would re-enter this resolver and
-                // recurse). The generic factory's defaults (no naming policy, integers allowed) match the
-                // seam's `new JsonStringEnumConverter()`, so the wire form is identical.
-                sb.Append("        return ").Append(MetaNs).Append("JsonMetadataServices.CreateValueInfo<").Append(typeFqn).Append(">(").Append(nl);
-                sb.Append("            options,").Append(nl);
-                sb.Append("            new global::System.Text.Json.Serialization.JsonStringEnumConverter<").Append(typeFqn)
-                  .Append(">().CreateConverter(typeof(").Append(typeFqn).Append("), options)!);").Append(nl);
-                sb.Append("    }").Append(nl);
-                return;
-            }
-
-            if (aux.Kind == AuxTypeKind.Nullable)
-            {
-                // CreateValueInfo<T?>(options, GetNullableConverter<T>(options)). GetNullableConverter resolves
-                // the underlying's JsonTypeInfo from the chain — this resolver provides the underlying scalar's
-                // own leaf arm (collected alongside), so the no-fallback chain resolves it (R2.1, R8.1). For an
-                // enum underlying the seam's registered JsonStringEnumConverter governs, preserving parity.
-                sb.Append("        return ").Append(MetaNs).Append("JsonMetadataServices.CreateValueInfo<").Append(typeFqn).Append(">(").Append(nl);
-                sb.Append("            options,").Append(nl);
-                sb.Append("            ").Append(MetaNs).Append("JsonMetadataServices.GetNullableConverter<")
-                  .Append(aux.ElementOrUnderlyingFqn).Append(">(options));").Append(nl);
-                sb.Append("    }").Append(nl);
-                return;
-            }
-
-            // Collection: build JsonCollectionInfoValues<TCollection> and dispatch to the shape-specific
-            // JsonMetadataServices helper. A concrete List<T> gets an ObjectCreator; the mutable interfaces
-            // (IList/ICollection) get a List<T> ObjectCreator; the read-only interfaces and arrays let
-            // System.Text.Json materialize the backing store.
-            var elementFqn = aux.ElementOrUnderlyingFqn;
-            sb.Append("        var collectionInfo = new ").Append(MetaNs).Append("JsonCollectionInfoValues<").Append(typeFqn).Append(">").Append(nl);
-            sb.Append("        {").Append(nl);
-            switch (aux.CollectionShape)
-            {
-                case CollectionShapeKind.List:
-                    sb.Append("            ObjectCreator = static () => new ").Append(typeFqn).Append("(),").Append(nl);
-                    break;
-                case CollectionShapeKind.IList:
-                case CollectionShapeKind.ICollection:
-                    sb.Append("            ObjectCreator = static () => new global::System.Collections.Generic.List<")
-                      .Append(elementFqn).Append(">(),").Append(nl);
-                    break;
-            }
-
-            sb.Append("        };").Append(nl);
-
-            sb.Append("        return ").Append(MetaNs).Append("JsonMetadataServices.")
-              .Append(CollectionHelperName(aux.CollectionShape)).Append("<");
-            if (aux.CollectionShape == CollectionShapeKind.Array)
-            {
-                // CreateArrayInfo<TElement>(options, JsonCollectionInfoValues<TElement[]>).
-                sb.Append(elementFqn);
-            }
-            else
-            {
-                sb.Append(typeFqn).Append(", ").Append(elementFqn);
-            }
-
-            sb.Append(">(options, collectionInfo);").Append(nl);
-            sb.Append("    }").Append(nl);
-        }
-
-        /// <summary>
-        /// The <c>JsonMetadataServices</c> collection-info factory-method name for a
-        /// <see cref="CollectionShapeKind"/>, matching the built-in System.Text.Json source generator's
-        /// per-shape choice (read-only interfaces ride <c>CreateIEnumerableInfo</c>).
-        /// </summary>
-        private static string CollectionHelperName(CollectionShapeKind shape)
-        {
-            switch (shape)
-            {
-                case CollectionShapeKind.Array:
-                    return "CreateArrayInfo";
-                case CollectionShapeKind.List:
-                    return "CreateListInfo";
-                case CollectionShapeKind.IList:
-                    return "CreateIListInfo";
-                case CollectionShapeKind.ICollection:
-                    return "CreateICollectionInfo";
-                default:
-                    // IReadOnlyList / IReadOnlyCollection / IEnumerable.
-                    return "CreateIEnumerableInfo";
-            }
-        }
-
-        /// <summary>
-        /// Maps a scalar/string type's fully-qualified display name (special-type keyword or
-        /// <c>global::System.*</c> form) to the matching <c>JsonMetadataServices</c> built-in converter
-        /// property, so a nullable value type's underlying <c>JsonTypeInfo</c> can be built inline and
-        /// wrapped via <c>GetNullableConverter(JsonTypeInfo&lt;T&gt;)</c> (no chain lookup, no separate
-        /// dispatch arm). Returns <c>null</c> for a non-scalar underlying (e.g. an enum), which the caller
-        /// resolves via the <c>options</c> overload instead.
-        /// </summary>
-        private static string ScalarConverterName(string fqn)
-        {
-            switch (fqn)
-            {
-                case "bool":
-                case "global::System.Boolean":
-                    return "BooleanConverter";
-                case "byte":
-                case "global::System.Byte":
-                    return "ByteConverter";
-                case "sbyte":
-                case "global::System.SByte":
-                    return "SByteConverter";
-                case "short":
-                case "global::System.Int16":
-                    return "Int16Converter";
-                case "ushort":
-                case "global::System.UInt16":
-                    return "UInt16Converter";
-                case "int":
-                case "global::System.Int32":
-                    return "Int32Converter";
-                case "uint":
-                case "global::System.UInt32":
-                    return "UInt32Converter";
-                case "long":
-                case "global::System.Int64":
-                    return "Int64Converter";
-                case "ulong":
-                case "global::System.UInt64":
-                    return "UInt64Converter";
-                case "float":
-                case "global::System.Single":
-                    return "SingleConverter";
-                case "double":
-                case "global::System.Double":
-                    return "DoubleConverter";
-                case "decimal":
-                case "global::System.Decimal":
-                    return "DecimalConverter";
-                case "char":
-                case "global::System.Char":
-                    return "CharConverter";
-                case "string":
-                case "global::System.String":
-                    return "StringConverter";
-                case "global::System.Guid":
-                    return "GuidConverter";
-                case "global::System.DateTime":
-                    return "DateTimeConverter";
-                case "global::System.DateTimeOffset":
-                    return "DateTimeOffsetConverter";
-                case "global::System.DateOnly":
-                    return "DateOnlyConverter";
-                case "global::System.TimeOnly":
-                    return "TimeOnlyConverter";
-                case "global::System.TimeSpan":
-                    return "TimeSpanConverter";
-                case "byte[]":
-                case "global::System.Byte[]":
-                    return "ByteArrayConverter";
-                default:
-                    return null;
-            }
-        }
-
-        /// <summary>
-        /// Deterministic factory-method name for the DTO at <paramref name="index"/> in the (fixed-order,
-        /// de-duplicated) Serializable_DTO_Set. Index-based names avoid fragile FQN sanitization and keep the
-        /// output byte-for-byte stable across runs (R7.4).
-        /// </summary>
-        private static string FactoryName(int index) => "CreateTypeInfo_" + index;
+            => JsonContextEmitter.BuildContextSource(
+                model.ClassName + "_VistaJsonContext",
+                model.Dtos,
+                model.AuxTypes,
+                "new " + model.ViewFqn + "().Name");
 
         /// <summary>
         /// Builds a unique <c>AddSource</c> hint name for the view's generated JSON context. The namespace is
@@ -1658,12 +545,5 @@ namespace a2n.Vista.SourceGenerators
 
             return prefix + model.ClassName + "_VistaJsonContext.g.cs";
         }
-
-        /// <summary>
-        /// Renders a C# string literal for <paramref name="value"/> with backslashes and double quotes
-        /// escaped, so JSON property names and CLR member names emit safely into the generated source.
-        /// </summary>
-        private static string Literal(string value)
-            => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
     }
 }
