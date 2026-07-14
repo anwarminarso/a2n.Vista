@@ -1,0 +1,13 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "a2n.Vista API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/views/customers/list": {
+      "post": {
+        "operationId": "Customers_list",
+        "responses": {
+          "200": {
+            "description": "truncated before the document is closed"

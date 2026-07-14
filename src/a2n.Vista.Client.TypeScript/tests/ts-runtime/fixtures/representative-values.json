@@ -1,0 +1,469 @@
+{
+  "CustomerRow": [
+    {
+      "companyName": "sample",
+      "contactName": "sample",
+      "country": "sample",
+      "customerId": "sample",
+      "isActive": true
+    },
+    {
+      "companyName": "sample",
+      "contactName": null,
+      "country": "sample",
+      "customerId": "sample",
+      "isActive": true
+    },
+    {
+      "companyName": "sample",
+      "country": "sample",
+      "customerId": "sample",
+      "isActive": true
+    },
+    {
+      "companyName": "sample",
+      "contactName": "sample",
+      "country": null,
+      "customerId": "sample",
+      "isActive": true
+    },
+    {
+      "companyName": "sample",
+      "contactName": "sample",
+      "customerId": "sample",
+      "isActive": true
+    }
+  ],
+  "FilterNode": [
+    {
+      "field": "sample",
+      "op": "Equals",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "Equals",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "NotEquals",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "GreaterThan",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "GreaterThanOrEqual",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "LessThan",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "LessThanOrEqual",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "Contains",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "StartsWith",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "EndsWith",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "In",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "Between",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "IsNull",
+      "value": "sample"
+    },
+    {
+      "field": "sample",
+      "op": "Equals",
+      "value": null
+    },
+    {
+      "field": "sample",
+      "op": "Equals"
+    },
+    {
+      "and": [
+        {
+          "field": "sample",
+          "op": "Equals",
+          "value": "sample"
+        }
+      ]
+    },
+    {
+      "and": []
+    },
+    {
+      "or": [
+        {
+          "field": "sample",
+          "op": "Equals",
+          "value": "sample"
+        }
+      ]
+    },
+    {
+      "or": []
+    },
+    {
+      "not": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      }
+    }
+  ],
+  "ProblemDetails": [
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": null,
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": null,
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": null,
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": null,
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "title": "sample",
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": null,
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "type": "sample"
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample",
+      "type": null
+    },
+    {
+      "code": "sample",
+      "detail": "sample",
+      "instance": "sample",
+      "status": 1,
+      "title": "sample"
+    }
+  ],
+  "VistaListRequestBody": [
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample",
+      "sort": [
+        {
+          "desc": true,
+          "field": "sample"
+        }
+      ]
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": null,
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample",
+      "sort": [
+        {
+          "desc": true,
+          "field": "sample"
+        }
+      ]
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample",
+      "sort": [
+        {
+          "desc": true,
+          "field": "sample"
+        }
+      ]
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": null,
+      "sort": [
+        {
+          "desc": true,
+          "field": "sample"
+        }
+      ]
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "sort": [
+        {
+          "desc": true,
+          "field": "sample"
+        }
+      ]
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample",
+      "sort": null
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample"
+    },
+    {
+      "filter": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "format": "sample",
+      "page": 1,
+      "pageSize": 1,
+      "scope": {
+        "field": "sample",
+        "op": "Equals",
+        "value": "sample"
+      },
+      "search": "sample",
+      "sort": []
+    }
+  ],
+  "VistaMetadataResponse": [
+    {
+      "fields": [
+        {
+          "allowedOperators": "sample",
+          "clrType": "sample",
+          "isFilterable": true,
+          "isHidden": true,
+          "isPrimaryKey": true,
+          "isScopable": true,
+          "isSearchable": true,
+          "isSortable": true,
+          "label": "sample",
+          "name": "sample"
+        }
+      ],
+      "isReadOnly": true,
+      "keyFields": [
+        "sample"
+      ],
+      "maxExportRows": 1,
+      "maxPageSize": 1,
+      "name": "sample",
+      "route": "sample"
+    },
+    {
+      "fields": [],
+      "isReadOnly": true,
+      "keyFields": [
+        "sample"
+      ],
+      "maxExportRows": 1,
+      "maxPageSize": 1,
+      "name": "sample",
+      "route": "sample"
+    },
+    {
+      "fields": [
+        {
+          "allowedOperators": "sample",
+          "clrType": "sample",
+          "isFilterable": true,
+          "isHidden": true,
+          "isPrimaryKey": true,
+          "isScopable": true,
+          "isSearchable": true,
+          "isSortable": true,
+          "label": "sample",
+          "name": "sample"
+        }
+      ],
+      "isReadOnly": true,
+      "keyFields": [],
+      "maxExportRows": 1,
+      "maxPageSize": 1,
+      "name": "sample",
+      "route": "sample"
+    }
+  ],
+  "VistaSortBody": [
+    {
+      "desc": true,
+      "field": "sample"
+    }
+  ]
+}

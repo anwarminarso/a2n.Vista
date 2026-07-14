@@ -1,0 +1,309 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "a2n.Vista API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/views/customers/list": {
+      "post": {
+        "operationId": "Customers_list",
+        "tags": ["Customers"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VistaListRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The filtered, paged result.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ViewListResult_CustomerRow" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request.",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/views/customers/detail": {
+      "post": {
+        "operationId": "Customers_detail",
+        "tags": ["Customers"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VistaDetailRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The requested row.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CustomerRow" }
+              }
+            }
+          },
+          "404": {
+            "description": "No row matches the supplied key.",
+            "content": {
+              "application/problem+json": {
+                "schema": { "$ref": "#/components/schemas/ProblemDetails" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/views/customers/metadata": {
+      "get": {
+        "operationId": "Customers_metadata",
+        "tags": ["Customers"],
+        "responses": {
+          "200": {
+            "description": "The view metadata.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/VistaMetadataResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/views/customers/export": {
+      "post": {
+        "operationId": "Customers_export",
+        "tags": ["Customers"],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/VistaListRequestBody" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The exported payload.",
+            "content": {
+              "application/octet-stream": {
+                "schema": { "type": "string", "format": "binary" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "VistaSortBody": {
+        "type": "object",
+        "properties": {
+          "field": { "type": "string" },
+          "desc": { "type": "boolean" }
+        }
+      },
+      "VistaListRequestBody": {
+        "type": "object",
+        "properties": {
+          "filter": { "$ref": "#/components/schemas/FilterNode" },
+          "search": { "type": "string", "nullable": true },
+          "scope": { "$ref": "#/components/schemas/FilterNode" },
+          "sort": {
+            "type": "array",
+            "nullable": true,
+            "items": { "$ref": "#/components/schemas/VistaSortBody" }
+          },
+          "page": { "type": "integer", "format": "int32" },
+          "pageSize": { "type": "integer", "format": "int32" },
+          "format": { "type": "string", "nullable": true }
+        }
+      },
+      "VistaDetailRequestBody": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "description": "A scalar key value or a field-name to value object for a composite key."
+          }
+        },
+        "required": ["key"]
+      },
+      "VistaWriteRequestBody": {
+        "type": "object",
+        "properties": {
+          "model": {
+            "nullable": true,
+            "description": "The typed write payload (the view's TCrud model)."
+          },
+          "key": {
+            "nullable": true,
+            "description": "A scalar key value or a field-name to value object for a composite key."
+          }
+        }
+      },
+      "VistaWriteResponse": {
+        "type": "object",
+        "properties": {
+          "key": {
+            "description": "The created row's primary key: a scalar or a field-name to value object."
+          }
+        },
+        "required": ["key"]
+      },
+      "VistaFieldMetadataResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "label": { "type": "string" },
+          "clrType": { "type": "string" },
+          "isFilterable": { "type": "boolean" },
+          "isSortable": { "type": "boolean" },
+          "isSearchable": { "type": "boolean" },
+          "isScopable": { "type": "boolean" },
+          "isHidden": { "type": "boolean" },
+          "isPrimaryKey": { "type": "boolean" },
+          "allowedOperators": { "type": "string" }
+        },
+        "required": [
+          "name", "label", "clrType", "isFilterable", "isSortable", "isSearchable",
+          "isScopable", "isHidden", "isPrimaryKey", "allowedOperators"
+        ]
+      },
+      "VistaMetadataResponse": {
+        "type": "object",
+        "properties": {
+          "name": { "type": "string" },
+          "route": { "type": "string" },
+          "isReadOnly": { "type": "boolean" },
+          "keyFields": { "type": "array", "items": { "type": "string" } },
+          "maxPageSize": { "type": "integer", "format": "int32" },
+          "maxExportRows": { "type": "integer", "format": "int32" },
+          "fields": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/VistaFieldMetadataResponse" }
+          }
+        },
+        "required": [
+          "name", "route", "isReadOnly", "keyFields", "maxPageSize", "maxExportRows", "fields"
+        ]
+      },
+      "FilterNode": {
+        "oneOf": [
+          { "$ref": "#/components/schemas/FilterLeaf" },
+          { "$ref": "#/components/schemas/FilterAnd" },
+          { "$ref": "#/components/schemas/FilterOr" },
+          { "$ref": "#/components/schemas/FilterNot" }
+        ]
+      },
+      "FilterLeaf": {
+        "type": "object",
+        "properties": {
+          "field": { "type": "string" },
+          "op": {
+            "type": "string",
+            "enum": [
+              "Equals", "NotEquals", "GreaterThan", "GreaterThanOrEqual", "LessThan",
+              "LessThanOrEqual", "Contains", "StartsWith", "EndsWith", "In", "Between", "IsNull"
+            ]
+          },
+          "value": {
+            "nullable": true,
+            "description": "The comparison value: a scalar, a list of scalars (for 'In'/'Between'), or null (for 'IsNull')."
+          }
+        },
+        "required": ["field", "op"]
+      },
+      "FilterAnd": {
+        "type": "object",
+        "properties": {
+          "and": { "type": "array", "items": { "$ref": "#/components/schemas/FilterNode" } }
+        },
+        "required": ["and"]
+      },
+      "FilterOr": {
+        "type": "object",
+        "properties": {
+          "or": { "type": "array", "items": { "$ref": "#/components/schemas/FilterNode" } }
+        },
+        "required": ["or"]
+      },
+      "FilterNot": {
+        "type": "object",
+        "properties": {
+          "not": { "$ref": "#/components/schemas/FilterNode" }
+        },
+        "required": ["not"]
+      },
+      "ProblemDetails": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "nullable": true },
+          "title": { "type": "string", "nullable": true },
+          "status": { "type": "integer", "format": "int32", "nullable": true },
+          "detail": { "type": "string", "nullable": true },
+          "instance": { "type": "string", "nullable": true },
+          "code": { "type": "string", "nullable": true }
+        },
+        "additionalProperties": true
+      },
+      "CustomerRow": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string" },
+          "companyName": { "type": "string" },
+          "contactName": { "type": "string", "nullable": true },
+          "country": { "type": "string", "nullable": true },
+          "isActive": { "type": "boolean" }
+        },
+        "required": ["customerId", "companyName", "isActive"]
+      },
+      "ViewListResult_CustomerRow": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CustomerRow" }
+              },
+              "totalRows": { "type": "integer", "format": "int64" },
+              "pageIndex": { "type": "integer", "format": "int32" },
+              "pageSize": { "type": "integer", "format": "int32" },
+              "totalPages": { "type": "integer", "format": "int64" }
+            },
+            "required": ["items", "totalRows", "pageIndex", "pageSize", "totalPages"]
+          },
+          "totalRowsUnfiltered": { "type": "integer", "format": "int64" }
+        },
+        "required": ["page", "totalRowsUnfiltered"]
+      }
+    },
+    "securitySchemes": {
+      "Bearer": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
+    }
+  },
+  "security": [
+    { "Bearer": [] }
+  ]
+}

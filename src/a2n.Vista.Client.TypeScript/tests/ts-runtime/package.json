@@ -1,0 +1,22 @@
+{
+  "name": "a2n-vista-ts-runtime-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Node test harness for the generated a2n.Vista TypeScript client runtime (fast-check property tests + type-check gate).",
+  "license": "SEE LICENSE IN ../../../LICENSE",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "typecheck:generated": "node scripts/typecheck-generated.mjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run typecheck && npm run typecheck:generated && npm run test"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "ajv": "^8.17.1",
+    "fast-check": "^3.23.1",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022", "DOM"],
+    "types": ["node"],
+    // The runtime property suites import the *generated* client directly (see src/harness/generated.ts),
+    // so `tsc` pulls the generated files into this program and applies these options to them too. The
+    // compiler contract here therefore matches the generated client's own contract (plain `strict`, the
+    // level the generator emits valid TypeScript for and the level `typecheck:generated` enforces). Extra
+    // flags beyond `strict` (e.g. noUncheckedIndexedAccess / exactOptionalPropertyTypes) are intentionally
+    // NOT enabled: they would flag hand-unfixable patterns in the generated output (which must not be
+    // edited by hand, nor the generator changed for this), producing false failures. This keeps
+    // `npm run typecheck` a real gate over both the harness sources and the generated client.
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "esModuleInterop": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "isolatedModules": true,
+    "noEmit": true
+  },
+  "include": ["src/**/*.ts", "vitest.config.ts"]
+}

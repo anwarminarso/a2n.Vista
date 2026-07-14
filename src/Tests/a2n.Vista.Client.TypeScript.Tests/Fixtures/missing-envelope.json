@@ -1,0 +1,58 @@
+{
+  "openapi": "3.0.4",
+  "info": {
+    "title": "a2n.Vista API (missing required envelope)",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/api/views/customers/list": {
+      "post": {
+        "operationId": "Customers_list",
+        "responses": {
+          "200": {
+            "description": "The filtered, paged result.",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ViewListResult_CustomerRow" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CustomerRow": {
+        "type": "object",
+        "properties": {
+          "customerId": { "type": "string" },
+          "companyName": { "type": "string" }
+        },
+        "required": ["customerId", "companyName"]
+      },
+      "ViewListResult_CustomerRow": {
+        "type": "object",
+        "properties": {
+          "page": {
+            "type": "object",
+            "properties": {
+              "items": {
+                "type": "array",
+                "items": { "$ref": "#/components/schemas/CustomerRow" }
+              },
+              "totalRows": { "type": "integer", "format": "int64" },
+              "pageIndex": { "type": "integer", "format": "int32" },
+              "pageSize": { "type": "integer", "format": "int32" },
+              "totalPages": { "type": "integer", "format": "int64" }
+            },
+            "required": ["items", "totalRows", "pageIndex", "pageSize", "totalPages"]
+          },
+          "totalRowsUnfiltered": { "type": "integer", "format": "int64" }
+        },
+        "required": ["page", "totalRowsUnfiltered"]
+      }
+    },
+    "securitySchemes": {}
+  }
+}

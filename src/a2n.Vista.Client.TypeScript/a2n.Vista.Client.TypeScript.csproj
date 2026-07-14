@@ -1,16 +1,20 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
+    <!-- Multi-target exactly the three supported runtimes (Requirements 12.1, 12.2, 13.2, 13.3). -->
+    <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks>
     <OutputType>Exe</OutputType>
     <RootNamespace>a2n.Vista.Client.TypeScript</RootNamespace>
     <AssemblyName>a2n.Vista.Client.TypeScript</AssemblyName>
     <PackageId>a2n.Vista.Client.TypeScript</PackageId>
-    <Description>TypeScript client generator from Vista view metadata.</Description>
+    <Description>TypeScript client generator from the Vista OpenAPI document.</Description>
     <PackageTags>vista;a2n;typescript;codegen;client</PackageTags>
   </PropertyGroup>
 
-  <ItemGroup>
-    <ProjectReference Include="..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
-  </ItemGroup>
+  <!--
+    Pure downstream consumer of the OpenAPI document (Requirement 12.4): no ProjectReference to
+    a2n.Vista.Core, a2n.Vista.EntityFrameworkCore, a2n.Vista.AspNetCore, or a2n.Vista.OpenApi. The
+    generator reads the emitted OpenAPI 3.0.4 document (file or HTTPS URL); it needs no server type.
+  -->
 
 </Project>

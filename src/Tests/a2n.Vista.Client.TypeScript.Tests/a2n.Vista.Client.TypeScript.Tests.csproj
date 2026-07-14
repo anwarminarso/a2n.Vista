@@ -1,0 +1,49 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Generator-test project for a2n.Vista.Client.TypeScript (M17, spec typescript-client; Requirement 11.1).
+    TUnit on Microsoft.Testing.Platform (Decision Log D7): the project compiles to an executable and runs
+    via `dotnet run` for a given target framework (not `dotnet test`), through the repo wrapper
+    `.kiro/tools/run-tests.ps1`.
+
+    It references the generator (a2n.Vista.Client.TypeScript) as a normal assembly so the test code can
+    drive the pipeline stages directly, and CsCheck for the property-based correctness gates. It takes NO
+    server project reference: the generator is a pure downstream consumer of the OpenAPI document, so the
+    tests feed it sample documents from the Fixtures/ folder instead.
+
+    TargetFrameworks (net8.0;net9.0;net10.0), Nullable, ImplicitUsings, and LangVersion are inherited from
+    the root Directory.Build.props to stay aligned with the rest of the solution.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Client.TypeScript.Tests</RootNamespace>
+    <AssemblyName>a2n.Vista.Client.TypeScript.Tests</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
+    <PackageReference Include="TUnit" />
+    <!-- Property-based testing (CsCheck): the generator-side correctness properties (design §Testing). -->
+    <PackageReference Include="CsCheck" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- The generator under test: a pure document consumer (no server reference is pulled in). -->
+    <ProjectReference Include="..\..\a2n.Vista.Client.TypeScript\a2n.Vista.Client.TypeScript.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!--
+      Sample OpenAPI documents for the parse/resolve/model stages: a valid Vista document plus the four
+      fatal-input shapes (malformed JSON, unsupported version, dangling $ref, missing required envelope).
+      Copied next to the test assembly so tests read them by relative path at runtime (Requirement 11.1).
+    -->
+    <Content Include="Fixtures\**\*.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <Link>Fixtures\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    </Content>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,12 @@
+{
+  "openapi": "2.0",
+  "info": {
+    "title": "a2n.Vista API (unsupported Swagger 2.0 version)",
+    "version": "1.0.0"
+  },
+  "paths": {},
+  "components": {
+    "schemas": {},
+    "securitySchemes": {}
+  }
+}
