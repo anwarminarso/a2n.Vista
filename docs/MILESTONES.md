@@ -1,7 +1,23 @@
 # a2n.Vista — Milestones & Roadmap Tracker
 
 > Status: **LIVING DOCUMENT** — update as milestones land.
-> Last updated: 2026-07-13 (`style-a-coverage` **LANDED**: the **final planned M9 Source Generator phase** —
+> Last updated: 2026-07-14 (`typescript-client` **LANDED**: **M17** — the OpenAPI-driven TypeScript client
+> generator (`src/a2n.Vista.Client.TypeScript`), a standalone **.NET CLI** that is a pure downstream consumer
+> of the M18 OpenAPI surface. It reads an **OpenAPI 3.0.4** document (file or HTTPS URL) and emits
+> framework-agnostic TypeScript over a one-way, buffered, pure pipeline (**acquire → parse → resolve → model
+> → emit → write**): per-view `TRow`/`TCrud` DTOs, the fixed Vista envelopes, a presence-discriminated
+> `FilterNode` union, the RFC 7807 `ProblemDetails` type, one re-lifted generic `ViewListResult<TRow>`/
+> `PagedResult<TRow>` per view, and a per-view typed client over an injectable HTTP transport + auth
+> provider. **D131** — the OpenAPI document is the single generation source (the generator references **no**
+> Vista package). **D132** — secure-by-default posture: read facets default, write facets gated off by
+> default; no embedded credential; HTTPS-default transport; every outcome a total, non-throwing discriminated
+> `ClientResult<T>`. Two reconciliations against the live emitter (code is the oracle): `FilterNode` has no
+> `discriminator` (presence-discriminated), and monomorphized `ViewListResult_*` envelopes are re-lifted to a
+> generic. Additive-only (no server change). Build green net8/9/10, a **new `a2n.Vista.Client.TypeScript.Tests`
+> = 136 tests/TFM** (0 failed/skipped) via CsCheck on the TUnit runner + a TypeScript generated-runtime
+> property harness (fast-check under Node); the existing suites are unchanged (**448/450 tests/TFM** +
+> **112 generator tests**), Northwind read + write + OpenAPI self-tests PASS unchanged. See §2 (M17).
+> Prior: 2026-07-13 (`style-a-coverage` **LANDED**: the **final planned M9 Source Generator phase** —
 > Style A (central-template) coverage, D129 (recognition of `ViewTemplate<TDbContext>.AddView<TRow>`
 > **invocation** call sites + shape-driven emission for the *nameable* Style A subset) + D130 (the reaffirmed
 > permanent by-design `[RequiresUnreferencedCode]` boundary for anonymous projections + the coverage
@@ -94,7 +110,7 @@
 ```
 Pillar 1  — View engine            ██████████ 100%   done (read + write/CRUD)
 Pillar 2  — server half (engine)   ██████████ 100%   done & hardened
-Pillar 2  — client half (adapters) ██░░░░░░░░  ~15%   only DataTables real (+ export + QB schema); 8 grid adapters are empty scaffolds
+Pillar 2  — client half (adapters) ███░░░░░░░  ~25%   DataTables real (+ export + QB schema) + the TypeScript client generator; 8 grid adapters are empty scaffolds
 Pillar 3  — source generator       ██████████ 100%   Phase 1 (export accessors) + Phase 2 (executable Style B + masking + D105) + write-DSL (generated write mapper) + HTTP-surface (dispatch invoker + serialization seam) + per-view JsonTypeInfo (App_Json_Context now optional) + Style A coverage (D129/D130) — all planned phases landed
 ```
 
@@ -102,7 +118,7 @@ Pillar 3  — source generator       ██████████ 100%   Phase
 > (`a2n.Vista.OpenApi`), not a source-generator phase — it consumes `ViewMetadata` + the serialization seam
 > at runtime. It is counted under M18, not the Pillar 3 bar above.
 
-Rough progress toward **v1.0 (production-ready): ~88%**. Foundation, the full server-half query engine,
+Rough progress toward **v1.0 (production-ready): ~90%**. Foundation, the full server-half query engine,
 the HTTP action surface, the first grid adapter, the export pipeline, the QueryBuilder schema emitter,
 **source-generator Phase 1** (shape-driven export accessors), **Phase 2** (executable typed Style B via
 generated `ICompiledViewExecutionPlan`, single-source PK auto-derivation, masking runtime), the
@@ -113,14 +129,17 @@ full typed Style B `request → authorize → execute → serialize` path is AOT
 **without any developer `App_Json_Context`**, every mapped view has a deterministic, standards-conformant
 OpenAPI document, and the nameable subset of Style A (named-row read artifacts + every writable view's
 `TCrud` write model) is now generated too — so **M9 (the Source Generator, Pillar 3) is complete**, with
-anonymous Style A read serialization staying permanently RUC by design (D96/D130). The heavy remaining work
-is now the ecosystem: more grid adapters, the TS client, observability, versioning, and CI.
+anonymous Style A read serialization staying permanently RUC by design (D96/D130). The **TypeScript client
+generator (M17, D131/D132)** has now also landed — a framework-agnostic typed client generated from the
+emitted OpenAPI document. The heavy remaining work is now the rest of the ecosystem: more grid adapters
+(M16), observability (M14), versioning (M15), and CI (M19).
 
 > **Adapter reality check (from the source tree):** of the ten projects under `src/Adapters/`, only
 > **DataTables.NET** and the **Npgsql dialect** contain real implementations. The other eight
 > (`AgGrid`, `MudBlazor`, `OData`, `GraphQL`, `PrimeNG`, `Syncfusion`, `TanStackTable`, `Telerik`) are
 > empty scaffolds — `.csproj` + an `AssemblyMarker.cs` only. The `a2n.Vista.Client.TypeScript` generator
-> is likewise a stub (`Main => 0`).
+> **is now a real implementation** (M17, D131/D132 — the full acquire→parse→resolve→model→emit→write
+> pipeline, 136 tests/TFM), no longer the `Main => 0` stub.
 
 ---
 
@@ -146,7 +165,20 @@ is now the ecosystem: more grid adapters, the TS client, observability, versioni
 | **M9-P5** | Source Generator, per-view `JsonTypeInfo` phase — makes serialization self-service for typed Style B, so the developer `App_Json_Context` is **optional**. **D125:** a fourth `IIncrementalGenerator` (`ViewJsonContextGenerator`) emits, per covered view, a reflection-free `file sealed IJsonTypeInfoResolver` built by hand via `JsonMetadataServices` (NOT `[JsonSerializable]` — the generator-of-generator constraint) providing the `JsonTypeInfo` for `TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`/`TCrud` **plus** the collection/nullable/enum/leaf metadata those DTOs reach (so a covered app resolves with no reflection fallback); a `[ModuleInitializer]` fills a new Core-resident, serializer-neutral `GeneratedJsonContextStore` (opaque `object` handles → Core stays STJ-free). **D126:** `a2n.Vista.AspNetCore` drains the store and chains each generated context into the `TypeInfoResolverChain` ahead of the developer `App_Json_Context`(s) and the reflection fallback (keeping `VistaStaticJsonContext` first) — no seam/invoker/API change. Non-blocking diagnostics `VISTA0050` (covered) + `VISTA0051` (non-emittable member → fallback). OpenAPI and Style A coverage remain the last M9 phases. | `source-generator-json-typeinfo` | D125, D126 |
 | **M18** | OpenAPI emitter — an accurate, deterministic **OpenAPI v3.x** document for every mapped View, in a new opt-in `a2n.Vista.OpenApi` package (references `a2n.Vista.AspNetCore`; multi-targets net8/9/10). **D127:** a runtime, metadata-driven `VistaOpenApiDocumentBuilder` turns each `ViewMetadata` from `IViewRegistry` into the fixed operation set (`list`/`detail`/`metadata`/`export` + `create`/`update`/`delete` iff `!IsReadOnly`) via a fixed facet→operation table, over a hand-authored `OpenApiDocument` object model serialized byte-stably by its own source-gen `JsonSerializerContext`. Structure (paths/operationIds/parameters/security/error responses/`$ref`s), the Vista envelope descriptors, `ProblemDetails`, and the polymorphic `FilterNode` `oneOf` are reflection-free (AOT-clean); only per-view `TRow`/`TCrud`/nested-POCO schemas come from the one `[RequiresUnreferencedCode]` `DtoSchemaGenerator` branch (D96 asymmetry; unresolvable member → permissive `{}` + `ILogger` notice, never omit/throw). Two oracles: the live route table (endpoint parity) and the live serializer (schema/wire parity, instance-against-schema), determinism the stabilizer. **D128:** opt-in serving — `AddVistaOpenApi(configure?)` (validated `VistaOpenApiOptions` + build-once cache) + `MapVistaOpenApi()` (`GET /openapi/v1.json`, inside host auth, off by default); on net9/net10 a TFM-guarded `VistaOpenApiDocumentTransformer` merges Vista paths/components into an app's built-in `Microsoft.AspNetCore.OpenApi` document. Additive-only (existing responses byte-for-byte unchanged); Core/EF/AspNetCore gain no dependency; adapter endpoints out of scope for v1. **No new VISTA diagnostics.** | `openapi-emitter` | D127, D128 |
 
+| **M17** | TypeScript client generator — a standalone **.NET CLI** (`src/a2n.Vista.Client.TypeScript`) that generates a framework-agnostic, strongly-typed TS client from the emitted **OpenAPI 3.0.4** document (M18), a pure downstream consumer with **no** Vista project reference. **D131:** the OpenAPI document is the single generation source, consumed over a one-way, buffered, pure pipeline (**acquire → parse → resolve → model → emit → write**) that makes determinism + all-or-nothing failure structural; emits per-view `TRow`/`TCrud` DTOs, the fixed Vista envelopes, a **presence-discriminated** `FilterNode` union (M18 emits no `discriminator`), the RFC 7807 `ProblemDetails` type, one **re-lifted** generic `ViewListResult<TRow>`/`PagedResult<TRow>` per view (M18 monomorphizes them), and a per-view typed client over an injectable HTTP transport + auth provider. **D132:** secure-by-default posture — read facets default, write facets gated **off by default** behind an opt-in flag; never embeds a credential; HTTPS-default transport (non-HTTPS non-loopback → typed config failure); every outcome a total, non-throwing discriminated `ClientResult<T>` (incl. distinct `unauthorized`/`not-found`/428/409). Deterministic byte-for-byte, atomic writes (UTF-8 no-BOM, `\n`); additive-only (no server change). | `typescript-client` | D131, D132 |
+
 | **M9-P6** | Source Generator, Style A coverage — the **final planned M9 phase**. **D129:** a fifth `IIncrementalGenerator` (`StyleAShapeGenerator`, netstandard2.0, FQN recognition, no Vista project ref) — the first to key off an **`InvocationExpressionSyntax`** rather than a class declaration — recognizes `ViewTemplate<TDbContext>.AddView<TRow>(...)` call sites (walking a chained `WithCrud<TCrud, TEntity>()`) and, for the **nameable** subset, emits into the template's own assembly keyed by the **constant** `AddView` name: (a) export accessors for a **named** `TRow` → `ViewAccessorRegistry` (D117); (b) read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`) for a named `TRow`, and (c) `TCrud` `JsonTypeInfo` for **any** writable view (`TCrud` always named, D38) → `GeneratedJsonContextStore` (D125), all via `JsonMetadataServices` and **shape-only** (no projection reconstruction). **No new store, no new seam** — the D126 drain + the `ExportColumns.Value(...)` export seam pick up Style A entries unchanged. **D130:** the reaffirmed permanent by-design RUC boundary — an **anonymous** read row is unnameable in generated source, so its read serialization/export stay `[RequiresUnreferencedCode]` forever (reaffirms D96, `VISTA0061`), while the same view's `TCrud` write binds AOT-clean (the D96 asymmetry within one view, demonstrated by the AOT probe). Non-blocking diagnostics `VISTA0060` (covered) / `VISTA0061` (anonymous read → RUC by design) / `VISTA0062` (non-constant name) — Info — and `VISTA0063` (non-emittable member) — Warning. Mechanism-only (no wire change); parity with the reflection oracle is the guard. | `style-a-coverage` | D129, D130 |
+
+**Verified at M17 (D131/D132, 2026-07-14):** solution build green on net8/9/10, a **new
+`a2n.Vista.Client.TypeScript.Tests` = 136 tests passing per TFM** (0 failed, 0 skipped) via CsCheck on the
+TUnit runner, plus a TypeScript generated-runtime property harness (fast-check under Node) against the
+emitted client. The existing suites are unchanged — **448 tests/TFM (net8) / 450 (net9/net10)** in
+`a2n.Vista.Tests` + **112** in `a2n.Vista.SourceGenerators.Tests` — and the Northwind read + write + OpenAPI
+self-tests PASS unchanged (M17 is a pure downstream consumer; it touches no server code). The emitted OpenAPI
+document is the authoritative oracle: the two headline parity harnesses (generated-type round-trip and schema
+parity) plus the determinism/idempotence, type-mapping-fidelity, `$ref`-soundness, generic-re-lifting,
+write-facet-gating, response-classification, authorization-enforcement, and no-embedded-credential properties
+are the guard.
 
 **Verified at M9-P6 (D129/D130, 2026-07-13):** solution build green on net8/9/10, **448 tests passing per
 TFM (net8) / 450 per TFM (net9/net10)** in `a2n.Vista.Tests` + **112** in `a2n.Vista.SourceGenerators.Tests`
@@ -225,7 +257,6 @@ List/Detail path).
 | **M14** | **Observability (D100)** — OpenTelemetry `ActivitySource`/`Meter`/`ILogger`, health checks | M1 | Cross-cutting; parallelizable |
 | **M15** | **Versioning & deprecation (D99)** — policy + wire-version seam (route groups as the vehicle) | M4 | Seam already exists |
 | **M16** | **More grid adapters** — AG Grid, MudBlazor, OData, Telerik, Syncfusion, TanStack, PrimeNG, GraphQL | M5, M8 | Repetitive once the contract is mature |
-| **M17** 🔵 | **TypeScript client generator** — typed client from `ViewMetadata` | M9, M18 | v1.0 goal (consumes the serialization seam + generated per-view contexts + AOT-clean surface + the OpenAPI document — all now landed) |
 | **M19** 🔵 | **CI workflow** (build + test across net8/9/10) + final NuGet/name availability check | — | Verify `.github/workflows` state |
 
 > **Landed (was remaining):** **M10** Style B executable, **M11** D105 single-source PK auto-derivation,
@@ -239,8 +270,9 @@ List/Detail path).
 > (`openapi-emitter`, D127/D128), and **M9-P6** the Style A coverage phase — the fifth incremental generator
 > covering the nameable Style A subset (`style-a-coverage`, D129/D130). See §2. **With M9-P6, M9 (the Source
 > Generator, Pillar 3) is complete** — every planned generator phase has shipped, and anonymous Style A read
-> serialization stays permanently RUC by design (D96/D130). **M17** (TS client) is fully unblocked on the
-> AOT-clean surface + the generated serialization contexts + the OpenAPI document.
+> serialization stays permanently RUC by design (D96/D130). And **M17** (the TypeScript client generator,
+> D131/D132) has now **also landed** — a framework-agnostic typed client generated from the emitted OpenAPI
+> document, a pure downstream consumer with no Vista project reference.
 >
 > **Bulk write ops** remain deferred to a later phase (v1.x): a bulk/array body is currently rejected with
 > HTTP 400, and the `AllowBulk` authoring flag enables no execution path yet (Requirement 15).
@@ -261,9 +293,9 @@ List/Detail path).
 - Remaining: **M19** (CI).
 
 ### v1.0 — Production-ready
-- **M14–M15** (observability, versioning), **M17** (TS client), and two major adapters from **M16** (AG Grid
-  + MudBlazor). (**M11/M13** landed with D118; **M12** write path landed with D119/D120; **M18** OpenAPI
-  landed with D127/D128.)
+- Done: **M17** (TS client, D131/D132). Remaining: **M14–M15** (observability, versioning) and two major
+  adapters from **M16** (AG Grid + MudBlazor). (**M11/M13** landed with D118; **M12** write path landed with
+  D119/D120; **M18** OpenAPI landed with D127/D128.)
 
 ### v1.x — Ecosystem
 - Remaining **M16** adapters, bulk ops, audit log, soft delete, SignalR live updates.
@@ -292,7 +324,7 @@ M10 Style B ✓        M14 Observability     M15 Versioning
 M11 D105 ✓  M12 Write/CRUD ✓  M13 Masking ✓
                  │
                  ▼ (write mapper now generated ✓)
-   M16 adapters · M19 CI  ·  M18 OpenAPI ✓ ─▶ M17 TS client
+   M16 adapters · M19 CI  ·  M18 OpenAPI ✓ ─▶ M17 TS client ✓
 ```
 
 How we keep it fast, integrated, and high-quality:
@@ -418,8 +450,9 @@ generator (`StyleAShapeGenerator`) covers the nameable Style A subset: export ac
 existing Core stores (no new store, no new seam). Anonymous Style A read serialization stays permanently RUC
 by design (D96/D130); the write side of the same view still binds AOT-clean.
 
-**Next up — the parallelizable v1.0 workstreams (M9 is now complete):** **M14** observability, **M15**
-versioning, **M19** CI, and the two flagship **M16** adapters (AG Grid + MudBlazor) — the eight adapter
-scaffolds under `src/Adapters/` are still empty. **M17** TS client is now fully unblocked on the AOT-clean
-surface, the serialization seam (M9-P4), the generated per-view contexts (M9-P5), the Style A coverage
-(M9-P6), and the OpenAPI document (M18).
+**Next up — the parallelizable v1.0 workstreams (M9 and M17 are now complete):** **M14** observability,
+**M15** versioning, **M19** CI, and the two flagship **M16** adapters (AG Grid + MudBlazor) — the eight
+adapter scaffolds under `src/Adapters/` are still empty. **M17** (the TypeScript client generator, D131/D132)
+has **landed** — a framework-agnostic typed client generated from the emitted OpenAPI document (M18),
+building on the AOT-clean surface, the serialization seam (M9-P4), the generated per-view contexts (M9-P5),
+and the Style A coverage (M9-P6).

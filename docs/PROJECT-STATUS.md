@@ -1,7 +1,31 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-13 (`style-a-coverage` **LANDED** — the **final planned M9 Source Generator
+> Last updated: 2026-07-14 (`typescript-client` **LANDED** — **M17**, the OpenAPI-driven TypeScript client
+> generator (`src/a2n.Vista.Client.TypeScript`), a **.NET CLI executable** that is a pure downstream consumer
+> of the Vista HTTP surface: it reads an **OpenAPI 3.0.4** document (M18) from a file or an HTTPS URL and
+> emits framework-agnostic TypeScript — per-view `TRow`/`TCrud` DTO types, the fixed Vista request/response
+> envelopes, the presence-discriminated `FilterNode` union, the RFC 7807 `ProblemDetails` type, one generic
+> re-lifted `ViewListResult<TRow>`/`PagedResult<TRow>`, and a per-view typed client over an injectable HTTP
+> transport + injectable auth provider. Read facets (list/detail/metadata/export) are the default; write
+> facets (create/update/delete) are gated **off by default** behind an explicit opt-in. **D131** — the
+> OpenAPI document is the single generation source, over a one-way, buffered, pure pipeline
+> (**acquire → parse → resolve → model → emit → write**) that makes determinism + all-or-nothing failure
+> structural; the generator holds **no** `a2n.Vista` project reference (Core/EF/AspNetCore/OpenApi all
+> absent — a pure document consumer). **D132** — secure-by-default client posture: read surface default,
+> write surface opt-in; never embeds a credential; defaults transport to HTTPS (non-HTTPS non-loopback base
+> URL → typed config failure); surfaces `401`/`403`/`404`/`428`/`409` as distinct typed `ClientResult`
+> members, never throwing. Two design facts reconciled against the live M18 emitter (code is the oracle):
+> `FilterNode` carries **no** OpenAPI `discriminator` (so the union is **presence-discriminated** on the same
+> required members the server uses), and the document **monomorphizes** row-parameterized envelopes
+> (`ViewListResult_*`), which the model builder **re-lifts** back into one generic TS type per view.
+> Additive-only — changes no server route, envelope, header, error shape, or behavior. Build green
+> net8/9/10, a **new `a2n.Vista.Client.TypeScript.Tests` = 136 tests/TFM** (0 failed/skipped) via CsCheck on
+> the TUnit runner + a TypeScript generated-runtime property harness (fast-check under Node); the existing
+> suites are unchanged — **448 tests/TFM (net8) / 450 (net9/net10)** in `a2n.Vista.Tests` + **112 generator
+> tests** — and the Northwind read + write + OpenAPI self-tests PASS unchanged (M17 touches no server code).
+> See §2.18.
+> Prior: 2026-07-13 (`style-a-coverage` **LANDED** — the **final planned M9 Source Generator
 > phase**: Style A (central-template) coverage, D129 (recognition of `ViewTemplate<TDbContext>.AddView<TRow>`
 > **invocation** call sites + shape-driven emission for the *nameable* Style A subset) + D130 (the reaffirmed
 > permanent by-design `[RequiresUnreferencedCode]` boundary for anonymous projections + the non-blocking
@@ -170,8 +194,15 @@ Three pillars (see `ROADMAP.md`):
   `openapi-emitter`):** a new opt-in `a2n.Vista.OpenApi` package emits a deterministic OpenAPI v3.x document
   for every mapped view from `ViewMetadata` (structure reflection-free; per-view DTO schemas the one RUC
   branch), served off-by-default at `GET /openapi/v1.json`, additive-only and byte-for-byte non-regressing —
-  see §2.16. **Still to come (planned, not started):** Style A (anonymous) serialization coverage
-  (permanently RUC by D96; spec `style-a-coverage`) — see §6.
+  see §2.16. **Style A coverage landed (M9-P6, D129/D130, spec `style-a-coverage`):** the fifth generator
+  (`StyleAShapeGenerator`) covers the nameable Style A subset (named-`TRow` export accessors + read-DTO
+  `JsonTypeInfo`, and every writable view's `TCrud` `JsonTypeInfo`) into the existing stores; anonymous read
+  serialization stays permanently RUC by design (D96) — **with this, M9 (the Source Generator, Pillar 3) is
+  complete** — see §2.17. **TypeScript client landed (M17, D131/D132, spec `typescript-client`):** the
+  standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic typed TS client from the
+  emitted OpenAPI document — see §2.18. **Still to come (planned, not started):** the remaining ecosystem —
+  more grid adapters (M16), observability (M14, D100), versioning (M15, D99), and a CI workflow (M19) — see
+  §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -189,6 +220,10 @@ Packages / layering (Decision D48, enforced):
   `a2n.Vista.AspNetCore`; on net9/net10 pulls `Microsoft.AspNetCore.OpenApi` for the optional pipeline
   provider. No other Vista package references it; it is a read-only downstream consumer of `ViewMetadata` +
   the serialization seam.
+- `a2n.Vista.Client.TypeScript` — **standalone CLI tool** (M17, D131/D132), a TypeScript client generator.
+  It is a pure downstream consumer of the emitted OpenAPI document and references **no** Vista package
+  (not Core, EF, AspNetCore, or OpenApi); its only inputs are the document (file/HTTPS) + a small config,
+  its only output is TypeScript source. Multi-targets net8/9/10.
 - EF and AspNetCore do **not** reference each other; they meet at Core ports.
 
 ---
@@ -855,6 +890,83 @@ runtime delegate); anonymous-projection promotion to a generated named type; cus
 this phase landed, **M9 (the Source Generator, Pillar 3) is complete** — every planned generator phase has
 shipped.
 
+### 2.18 `typescript-client` — M17 TypeScript client generator (landed; spec `.kiro/specs/typescript-client`)
+The TypeScript client generator (**D131** the OpenAPI document as the single generation source over a
+one-way buffered pure pipeline, **D132** the secure-by-default read-first / write-gated client posture), a
+standalone **.NET CLI executable** at `src/a2n.Vista.Client.TypeScript`. It is a pure downstream consumer of
+the M18 OpenAPI surface — it references **no** Vista package and changes no server route, envelope, header,
+error shape, or behavior (additive-only). Build green net8/9/10, a **new `a2n.Vista.Client.TypeScript.Tests`
+= 136 tests/TFM** (0 failed/skipped); the existing suites are unchanged (**448/450 tests/TFM** in
+`a2n.Vista.Tests` + **112** in `a2n.Vista.SourceGenerators.Tests`), and the Northwind read + write + OpenAPI
+self-tests PASS unchanged. The emitted OpenAPI document is the **authoritative oracle** for all parity checks.
+
+- **Pipeline (D131)** — a one-way, buffered, pure pipeline **acquire → parse → resolve → model → emit →
+  write**; no stage mutates an earlier stage's output, which makes determinism (Requirement 9) and
+  all-or-nothing failure (Requirements 1/9/10) structural rather than bolted on. Every `GeneratedFile` is
+  buffered in memory before the write stage; any failure aborts with a nonzero exit and leaves prior output
+  untouched.
+  - **Acquire** — `FileSource` (local path; unreadable → typed `AcquireError.FileUnreadable`) and
+    `HttpsSource` (HTTPS-only GET, 30s timeout; failure/non-success → typed `AcquireError.Fetch`).
+  - **Parse** — `OpenApiParser`: JSON → internal `OpenApiDocument`; rejects an `openapi` version outside
+    3.0.x–3.1.x (`ParseError.UnsupportedVersion`) and malformed docs (`ParseError.Malformed(location, …)`).
+  - **Resolve** — `RefResolver`: resolves every local `#/components/{schemas|securitySchemes}` `$ref` to a
+    name-keyed graph, ignores `$ref` siblings (3.0 semantics), preserves cyclic refs (`FilterNode`) as
+    by-name edges; dangling ref → `ResolveError.Dangling`.
+  - **Model** — the client model builder: `EnvelopeCatalog` (locates the fixed Vista envelopes; a missing
+    required envelope → fatal `MissingSchema(name)`), `EnvelopeReLifter` (structurally matches each
+    monomorphized `ViewListResult_*` against the template and collapses it back to one generic
+    `ViewListResult<TRow>`/`PagedResult<TRow>` per view), the presence-discriminated `FilterNode` model
+    (bare `oneOf`, no `discriminator` — narrowed by required members), per-view `TRow`/`TCrud` DTOs via
+    `TypeMapper`, the operation graph (facets present per view + `ConcurrencyMode` from 428/409), and the
+    per-operation security posture.
+  - **Emit** — deterministic emitters keyed by `DeterministicOrder` (ordinal, case-sensitive by declared
+    name): `types.ts`, `filter-node.ts`, the framework-agnostic runtime (`runtime/http-transport.ts`,
+    `auth.ts`, `result.ts`, `url.ts`, `client-context.ts`), one `views/{view}.ts` per view (read facets
+    always; write facets only when the opt-in flag is set **and** the view is writable), plus the `index.ts`
+    barrel and an English `README.md`.
+  - **Write** — `OutputWriter`: creates the output dir if absent, pre-checks a writable directory, stages to
+    a temp area then moves/replaces atomically, fixed UTF-8 (no BOM) + `\n` for every file; a write failure
+    aborts, removes staging, and leaves prior output intact.
+- **Type mapping (D131)** — `TypeMapper` maps the OpenAPI scalar `type`/`format` table to TS
+  (`integer`/`number`→`number`, `boolean`→`boolean`, `string`(+`uuid`/`date-time`/`byte`)→`string`),
+  string-enum → literal union in document order, `nullable` → `| null`, not-required → optional `?`,
+  verbatim case-sensitive property names, array → `T[]`; a permissive `{}`/unknown scalar → `unknown` + a
+  non-fatal notice (never omitted, never fatal).
+- **Client posture (D132)** — the emitted client routes every request through an injectable `HttpTransport`
+  (default `fetch`; construction fails if none and `fetch` is unavailable), joins base URL + operation path
+  with exactly one `/`, and never embeds a credential (bearer via an injectable `AuthProvider`); a secured
+  operation with no provider short-circuits to a typed `unauthorized` without sending. Base-URL validation:
+  absent/empty/invalid → fail construction; non-HTTPS loopback → warn + continue; non-HTTPS non-loopback →
+  typed config failure. Every outcome is one discriminated `ClientResult<T>`
+  (`success`/`problem`/`unauthorized`/`not-found`/`precondition-required`/`precondition-failed`/
+  `transport-error`/`unexpected`) — total, never throwing; write ops surface the 428/409 concurrency
+  outcomes distinctly.
+- **CLI** — `CommandLine`/`Program`: args → `GenerationConfig` (source location, output dir, write-facet
+  flag defaulting **off**); missing required value → usage + nonzero exit; success → zero exit reporting the
+  output dir + view count + notices.
+- **Two reconciliations against the live emitter (code is the oracle):** (1) M18 emits `FilterNode` as a
+  bare `oneOf` with **no** `discriminator` (the server discriminates by member presence), so Requirement
+  2.2's literal "using the document's `discriminator`" cannot apply — the generator emits a
+  **presence-discriminated** union honoring the *intent* (a value narrows to one member). (2) M18
+  **monomorphizes** row-parameterized envelopes (`ViewListResult_{Row}`) rather than emitting a generic —
+  the generator **re-lifts** them into one generic TS type per view (the single most important modeling
+  step). Both are recorded in the spec's design as deviations confirmed at review.
+- **Verification** — the C# generator side uses **CsCheck** on the TUnit runner (the repo convention; the
+  design's FsCheck mention is superseded), run via `.kiro/tools/run-tests.ps1` across net8/9/10; the
+  generated-runtime side uses **fast-check** under Node against the emitted client. The 20 design
+  correctness properties are each their own property test (determinism/idempotence, type-mapping fidelity,
+  `$ref` soundness, generic re-lifting, write-facet gating, missing-envelope/unsupported-version aborts,
+  response-classification totality, authorization enforcement, generated-type round-trip, request fidelity,
+  base-URL posture, transport routing/no-retry, no-UI/grid-dependency, no-embedded-credential, and the two
+  headline parity harnesses — round-trip + schema parity — with the document as the oracle). Test fixtures
+  under `Fixtures/` (valid Vista document, malformed, unsupported version, dangling `$ref`, missing
+  envelope); the TS runtime harness under `src/a2n.Vista.Client.TypeScript/tests/ts-runtime`.
+
+**Deferred (recorded, not requirements here):** grid-adapter endpoints (`/datatable`, `/querybuilder`, …;
+M18 does not document them in v1); a metadata-driven (in-process `ViewMetadata`) generation mode; framework
+bindings (React/Vue/Angular/grid data sources); runtime request/response validation beyond TS compile-time
+types; npm packaging/publishing; and wire versioning (D99 — the document is unversioned = latest).
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1025,7 +1137,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D128 | `openapi-emitter` spec / M18 | **Landed (M18 OpenAPI emitter, 2026-07-13).** The opt-in serve endpoint + the optional ASP.NET Core OpenAPI pipeline provider: `AddVistaOpenApi(configure?)` (validated `VistaOpenApiOptions` + build-once `VistaOpenApiDocumentCache`, all singletons; fail-fast validation) and `MapVistaOpenApi()` (`GET /openapi/v1.json` by default, returning the cached document inside the host auth pipeline — bypasses nothing). On net9.0/net10.0 a TFM-guarded `VistaOpenApiDocumentTransformer` merges the Vista `paths`/`components` into an app's built-in `Microsoft.AspNetCore.OpenApi` document; net8.0 keeps only the Vista serve endpoint. Both public APIs carry `[RequiresUnreferencedCode]`. See §2.16. |
 | D129 | `style-a-coverage` spec / `03` §15 | **Landed (M9 Style A coverage, 2026-07-13).** Style A recognition + shape-driven emission for the nameable subset: a fifth `IIncrementalGenerator` (`StyleAShapeGenerator`, `netstandard2.0`, FQN recognition, no Vista project ref) — the first to key off an **`InvocationExpressionSyntax`** — recognizing `ViewTemplate<TDbContext>.AddView<TRow>(...)` call sites (walking a chained `WithCrud<TCrud, TEntity>()`). For a covered view it emits, into the template's own assembly keyed by the **constant** `AddView` name: (a) export accessors for a **named** `TRow` → `ViewAccessorRegistry` (D117); (b) read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`) for a named `TRow`, and (c) write-model `TCrud` `JsonTypeInfo` for **any** writable view (`TCrud` always named, D38) → `GeneratedJsonContextStore` (D125), both via `JsonMetadataServices`. All **shape-only** (no projection reconstruction); Emittable_Shape inherited from D125. **No new store, no new seam** — the D126 drain and the `ExportColumns.Value(...)` export seam pick up Style A entries unchanged. Mechanism-only; byte-for-byte parity with the reflection oracle is the guard. Builds on D117/D125/D126. See §2.17. |
 | D130 | `style-a-coverage` spec / `03` §15 | **Landed (M9 Style A coverage, 2026-07-13).** The reaffirmed permanent by-design RUC boundary: an **anonymous** read `TRow` is unnameable in generated source, so its read serialization/export stay `[RequiresUnreferencedCode]` **forever** (reaffirms D96) — surfaced by non-blocking `VISTA0061`; `VISTA0060` (covered, Info), `VISTA0062` (non-constant name, Info), `VISTA0063` (non-emittable member, Warning) complete the family. The AOT probe **demonstrates** the asymmetry (anonymous read RUC vs named-row / `TCrud` / Style B AOT-clean) within one view rather than removing it. Diagnostic family begins at `VISTA0060`. See §2.17. |
-| **D131+** | **next free** | Use for new decisions. `style-a-coverage` (D129/D130) was the last planned M9 phase. |
+| D131 | `typescript-client` spec | **Landed (M17 TypeScript client, 2026-07-14).** The **OpenAPI document is the single generation source**, consumed over a one-way, buffered, pure pipeline (**acquire → parse → resolve → model → emit → write**) that makes determinism + all-or-nothing failure structural. The generator (`src/a2n.Vista.Client.TypeScript`, a .NET CLI, multi-target net8/9/10) holds **no** `a2n.Vista` project reference (Core/EF/AspNetCore/OpenApi all absent) — a pure document consumer. It emits framework-agnostic TypeScript: per-view `TRow`/`TCrud` DTOs, the fixed Vista envelopes, a **presence-discriminated** `FilterNode` union (M18 emits no `discriminator`), the RFC 7807 `ProblemDetails` type, one **re-lifted** generic `ViewListResult<TRow>`/`PagedResult<TRow>` per view (M18 monomorphizes them), and a per-view typed client. Additive-only; the emitted document is the parity oracle. See §2.18. |
+| D132 | `typescript-client` spec | **Landed (M17 TypeScript client, 2026-07-14).** Secure-by-default client posture: the **read surface is the default**, the **write surface is gated off by default** behind an explicit opt-in flag. The client never embeds a credential (injectable bearer `AuthProvider`), routes every request through an injectable `HttpTransport`, defaults transport to HTTPS (non-HTTPS non-loopback base URL → typed config failure; loopback → warn+continue), and surfaces every outcome as one total, non-throwing discriminated `ClientResult<T>` (incl. distinct `unauthorized`/`not-found`/428/409 members). See §2.18. |
+| **D133+** | **next free** | Use for new decisions. `typescript-client` (D131/D132) was the last landed spec. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
@@ -1097,9 +1211,11 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
   (D125/D126, §2.15)** (`JsonSerializerContext`-equivalent via `JsonMetadataServices`), making the developer
   `App_Json_Context` optional. **The OpenAPI emitter landed (M18, D127/D128, §2.16)** as the separate opt-in
   `a2n.Vista.OpenApi` package (a metadata/seam consumer, not a source generator). **Remaining (planned, not
-  started):** Style A accessor/serialization coverage (spec `style-a-coverage`); plus cross-assembly
-  discovery (D97) and `MapView<TView>()` (DR10). **Dependency note:** M17 (TS client) builds on the landed
-  serialization seam + AOT-clean metadata surface + the generated per-view contexts + the OpenAPI document.
+  started):** ~~Style A accessor/serialization coverage~~ — **DONE (2026-07-13, D129/D130, §2.17)**; the
+  only remaining generator-adjacent debt is cross-assembly discovery (D97) and `MapView<TView>()` (DR10),
+  both v1.x. **With M9-P6 landed, M9 (the Source Generator, Pillar 3) is complete.** **Dependency note:**
+  **M17 (TS client) landed (2026-07-14, D131/D132, §2.18)** on the OpenAPI document (M18) — it consumes the
+  emitted document only and references no Vista package.
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
@@ -1216,6 +1332,15 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   the optional net9/net10 `Microsoft.AspNetCore.OpenApi` provider, TFM-guarded). Both public APIs carry
   `[RequiresUnreferencedCode]`; the emitter adds **no** `VISTA####` diagnostics (unresolvable-member notices
   go through `ILogger`).
+- TypeScript client generator (M17/D131/D132): `src/a2n.Vista.Client.TypeScript/` (standalone CLI, **no**
+  Vista project ref): `Acquire/` (`IOpenApiSource`, `FileSource`, `HttpsSource`), `Parse/` (`OpenApiParser`),
+  `Resolve/` (`RefResolver`), `Model/` (`OpenApiDocument`), `Modeling/` (`DtoModelBuilder`, `EnvelopeCatalog`,
+  `EnvelopeReLifter`, `FilterNodeModelBuilder`, `TypeMapper`, the client model + config/notice types),
+  `Emit/` (`DeterministicOrder`, `TypesEmitter`, `FilterNodeEmitter`, `ViewClientEmitter`, `IndexEmitter`,
+  `DocsEmitter`, `GeneratedFile`, and `Emit/Runtime/` — `HttpTransportEmitter`, `AuthEmitter`,
+  `ResultEmitter`, `UrlEmitter`, `ClientContextEmitter`, `RawPayloadEmitter`), `Write/` (`OutputWriter`),
+  `Cli/` (`CommandLine`, `CliHost`, `IPipelineRunner`), `Pipeline/`, `Parity/`, `Program.cs`; the TS
+  generated-runtime property harness under `tests/ts-runtime/` (fast-check under Node).
 - Example: `src/Examples/Northwind/` (`Program.cs`, `Views/NorthwindViews.cs` — incl. composite
   `vOrderDetail`, `SelfTest.cs`, `OpenApiSelfTest.cs` — the M18 OpenAPI self-test); `src/Examples/a2n.Vista.GeneratorSample/` (a real consumer assembly that
   exercises the generator end to end; referenced by the test project) and `src/Examples/a2n.Vista.AotProbe/`
@@ -1247,3 +1372,15 @@ dotnet run --project src\Examples\Northwind --framework net8.0 -c Debug -- selft
   `OpenApiFixturesSmokeTests`, `OpenApiLayeringGuardTests`) plus root-level `DtoSchemaGeneratorTests` and the
   `OpenApi*Tests` (document assembly/builder/serving/registration/security/coexistence/pipeline). The AOT
   probe's `OpenApiDescriptorProbe.cs` covers the envelopes+`FilterNode`-only AOT-clean document.
+  **M17 TS client (D131/D132):** `src/Tests/a2n.Vista.Client.TypeScript.Tests/` — 136 tests/TFM via CsCheck
+  on TUnit: the pipeline-stage tests (`FileSourceTests`, `HttpsSourceTests`, `OpenApiParserMalformedTests`,
+  `DtoModelBuilderTests`, `FilterNodeModelBuilderTests`, `TypesEmitterTests`, `ViewClientEmitterTests`,
+  `OutputWriterAtomicityTests`, `CliTests`, `LayeringSmokeTests`, `FixtureSmokeTests`), the 20 correctness
+  properties (`DeterminismHarnessPropertyTests`, `TypeMappingFidelityPropertyTests`,
+  `RefResolutionSoundnessPropertyTests`, `GenericReLiftingPropertyTests`, `WriteFacetGatingPropertyTests`,
+  `MissingRequiredEnvelopePropertyTests`, `OpenApiVersionGatingPropertyTests`,
+  `PerViewReadFacetSetPropertyTests`, `ExportFormatUnionPropertyTests`,
+  `UnmappableMemberDegradationPropertyTests`, `NoUiOrGridDependencyPropertyTests`,
+  `NoEmbeddedCredentialPropertyTests`, `OneDeclarationPerNamePropertyTests`,
+  `DocumentLevelSecurityTests`, `DeterministicOrderTests`, the `RepresentativeValue*`/parity harnesses),
+  and the `Fixtures/` sample documents.
