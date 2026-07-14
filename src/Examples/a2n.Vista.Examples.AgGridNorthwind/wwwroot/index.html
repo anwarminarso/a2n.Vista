@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · AG Grid Northwind sample</title>
+
+  <!-- AG Grid legacy CSS themes (loaded from CDN). The grid uses the "quartz" theme via the class on the
+       grid container below. -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/styles/ag-grid.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/styles/ag-theme-quartz.css"
+  />
+
+  <!--
+    Import map so the browser can resolve the bare `ag-grid-community` specifier used by the built ES
+    modules (main.js / vistaAgGridDatasource.js) at runtime. The build step is `tsc` only (no bundler),
+    so `ag-grid-community` is not rewritten to a path; this map points it at the CDN ESM build while `tsc`
+    resolves the same package's types from node_modules for the type-check gate.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "ag-grid-community": "https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/+esm"
+      }
+    }
+  </script>
+
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    body { margin: 0; padding: 1.5rem; color: #1a1a1a; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    p.lead { margin: 0 0 1rem; color: #555; }
+    .toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .toolbar label { font-weight: 600; }
+    .toolbar input {
+      padding: 0.4rem 0.6rem; font-size: 1rem; min-width: 18rem;
+      border: 1px solid #b0b0b0; border-radius: 4px;
+    }
+    #status-line { color: #555; min-height: 1.25rem; margin: 0 0 0.5rem; font-size: 0.9rem; }
+    #status-error {
+      color: #8a1c1c; background: #fdecea; border: 1px solid #f5c6cb;
+      border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0 0 0.75rem; font-size: 0.9rem;
+    }
+    #grid { width: 100%; height: 32rem; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vista AG Grid Northwind sample</h1>
+    <p class="lead">
+      AG Grid infinite row model driving the <code>vProductCategory</code> view through
+      <code>POST /api/views/vProductCategory/aggrid</code>. Scroll for block paging; click headers to sort
+      (Shift+click to multi-sort); use the column filters for text/number and combined AND/OR conditions;
+      type below for a quick-filter search.
+    </p>
+  </header>
+
+  <div class="toolbar">
+    <label for="quick-filter">Quick filter</label>
+    <input
+      id="quick-filter"
+      type="search"
+      placeholder="Search all columns…"
+      autocomplete="off"
+      aria-describedby="status-line"
+    />
+  </div>
+
+  <!-- Status line (polite) and error area (assertive). The error area is populated by the datasource
+       onError callback and stays hidden until there is a message. -->
+  <p id="status-line" role="status" aria-live="polite">Loading…</p>
+  <div id="status-error" role="alert" aria-live="assertive" hidden></div>
+
+  <!-- AG Grid mounts here; the quartz theme class controls styling. -->
+  <div id="grid" class="ag-theme-quartz" role="region" aria-label="Products grid"></div>
+
+  <!-- Built ES module output from `tsc` (client/src/main.ts -> wwwroot/js/main.js). -->
+  <script type="module" src="/js/main.js"></script>
+</body>
+</html>

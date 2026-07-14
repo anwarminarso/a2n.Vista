@@ -1,0 +1,12 @@
+{
+  "profiles": {
+    "a2n.Vista.Examples.AgGridNorthwind": {
+      "commandName": "Project",
+      "launchBrowser": true,
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development"
+      },
+      "applicationUrl": "https://localhost:57727;http://localhost:57728"
+    }
+  }
+}

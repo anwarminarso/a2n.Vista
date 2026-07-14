@@ -1,0 +1,113 @@
+name: publish
+
+# Publishes the implemented Vista packages to nuget.org via Trusted Publishing (OIDC):
+# GitHub issues a short-lived OIDC token, NuGet/login exchanges it for a temporary
+# (~1 hour) API key, and the packages are pushed. No long-lived API key is stored.
+#
+# NuGet Trusted Publishing policy (nuget.org -> Trusted Publishing) must reference this
+# file by name: Workflow File = "publish.yml".
+#
+# Runs on a published GitHub Release (the tag drives the package version, e.g. v1.2.3),
+# or manually via workflow_dispatch with an explicit version.
+on:
+  release:
+    types: [ published ]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Package version to publish (e.g. 1.2.3)."
+        required: true
+        type: string
+
+permissions:
+  contents: read      # checkout
+  id-token: write     # request the GitHub OIDC token for NuGet Trusted Publishing
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+  NUGET_FEED: "https://api.nuget.org/v3/index.json"
+  # Only the implemented, shippable libraries. Intentionally excluded:
+  #   * the empty scaffolds (a2n.Vista.Newtonsoft + the AgGrid/MudBlazor/OData/GraphQL/
+  #     PrimeNG/Syncfusion/TanStackTable/Telerik adapters) until they have content;
+  #   * a2n.Vista.SourceGenerators - its csproj sets IncludeBuildOutput=false with no
+  #     analyzers/dotnet/cs pack items, so `dotnet pack` would emit an empty package.
+  #     Ship it only after the packaging model is settled (standalone analyzer package
+  #     vs. bundled into a2n.Vista.Core so consumers get the generator transitively),
+  #     then add its csproj here.
+  PACK_PROJECTS: >-
+    src/a2n.Vista.Core/a2n.Vista.Core.csproj
+    src/a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj
+    src/a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj
+    src/a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj
+    src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj
+    src/Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj
+    src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
+
+jobs:
+  publish:
+    name: Pack & push to nuget.org
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Determine version
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            v="${{ github.event.release.tag_name }}"
+          else
+            v="${{ inputs.version }}"
+          fi
+          v="${v#v}"   # strip an optional leading "v" (v1.2.3 -> 1.2.3)
+          if [ -z "$v" ]; then
+            echo "::error::No version resolved from the release tag or the dispatch input."
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $v"
+
+      - name: Restore
+        run: dotnet restore src/a2n.Vista.slnx
+
+      - name: Build (Release)
+        run: dotnet build src/a2n.Vista.slnx -c Release --no-restore -p:Version=${{ steps.ver.outputs.version }}
+
+      - name: Pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          for proj in $PACK_PROJECTS; do
+            echo "==> packing $proj"
+            dotnet pack "$proj" -c Release --no-build -o artifacts \
+              -p:Version=${{ steps.ver.outputs.version }}
+          done
+          ls -l artifacts
+
+      - name: NuGet login (OIDC -> short-lived API key)
+        uses: NuGet/login@v1
+        id: login
+        with:
+          # nuget.org account/profile name that owns the Trusted Publishing policy
+          # (NOT an email). Stored as a repository secret.
+          user: ${{ secrets.NUGET_USER }}
+
+      - name: Push to nuget.org
+        run: >-
+          dotnet nuget push "artifacts/*.nupkg"
+          --api-key ${{ steps.login.outputs.NUGET_API_KEY }}
+          --source ${{ env.NUGET_FEED }}
+          --skip-duplicate

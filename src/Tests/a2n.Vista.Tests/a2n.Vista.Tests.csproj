@@ -46,6 +46,11 @@
     <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
     <!--
+      AG Grid adapter (spec ag-grid-adapter, task 7.1): referenced so the glue integration harness can
+      register AddVistaAdapter<AgGridAdapter>() and exercise the POST {route}/aggrid endpoint end to end.
+    -->
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+    <!--
       End-to-end generator consumer (Spec source-generator, Task 6.1, R6.4): referencing this sample
       loads its [ModuleInitializer]-driven accessor registration so GeneratorEndToEndTests can assert
       the GENERATED accessors are present in ViewAccessorRegistry at runtime.

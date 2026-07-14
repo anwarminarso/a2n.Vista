@@ -1,7 +1,22 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-14 (`typescript-client` **LANDED** — **M17**, the OpenAPI-driven TypeScript client
+> Last updated: 2026-07-14 (**M19 LANDED** — the CI + NuGet publish workflows under `.github/workflows/`.
+> `ci.yml` restores + builds the full solution (`src/a2n.Vista.slnx`) in Release, then runs the three TUnit
+> suites (`a2n.Vista.Tests`, `a2n.Vista.SourceGenerators.Tests`, `a2n.Vista.Client.TypeScript.Tests`) via
+> `dotnet run --project … --framework <tfm>` (not `dotnet test`, per the repo convention) over a
+> **net8.0/net9.0/net10.0** matrix, on `push`/`pull_request` to `main` + `workflow_dispatch`. `publish.yml`
+> packs + pushes to nuget.org on a published GitHub Release (tag drives the version, leading `v` stripped) or
+> manual `workflow_dispatch`, using **NuGet Trusted Publishing (OIDC)** via `NuGet/login@v1` — no long-lived
+> API key stored (`permissions: id-token: write`; the nuget.org account name is the `NUGET_USER` secret; the
+> registered Trusted Publishing policy's **Workflow File** must be `publish.yml`). It ships only the **7
+> implemented libraries** (Core, EntityFrameworkCore, AspNetCore, OpenApi, EntityFrameworkCore.Npgsql,
+> Adapters.DataTablesNet, Client.TypeScript); the empty scaffolds (Newtonsoft + the 8 grid-adapter shells)
+> and `a2n.Vista.SourceGenerators` (packaging model unsettled — `IncludeBuildOutput=false` with no
+> `analyzers/dotnet/cs` pack items → would emit an empty package) are intentionally excluded. Additive-only:
+> no source, wire, route, or package-content change; the first green Actions run is the verification. With
+> M19 the v0.x foundation is complete. See §2.19.
+> Prior: 2026-07-14 (`typescript-client` **LANDED** — **M17**, the OpenAPI-driven TypeScript client
 > generator (`src/a2n.Vista.Client.TypeScript`), a **.NET CLI executable** that is a pure downstream consumer
 > of the Vista HTTP surface: it reads an **OpenAPI 3.0.4** document (M18) from a file or an HTTPS URL and
 > emits framework-agnostic TypeScript — per-view `TRow`/`TCrud` DTO types, the fixed Vista request/response
@@ -200,9 +215,11 @@ Three pillars (see `ROADMAP.md`):
   serialization stays permanently RUC by design (D96) — **with this, M9 (the Source Generator, Pillar 3) is
   complete** — see §2.17. **TypeScript client landed (M17, D131/D132, spec `typescript-client`):** the
   standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic typed TS client from the
-  emitted OpenAPI document — see §2.18. **Still to come (planned, not started):** the remaining ecosystem —
-  more grid adapters (M16), observability (M14, D100), versioning (M15, D99), and a CI workflow (M19) — see
-  §6.
+  emitted OpenAPI document — see §2.18. **CI + NuGet publish workflows landed (M19):** `.github/workflows/
+  ci.yml` (build + TUnit across net8/9/10) + `publish.yml` (pack + push to nuget.org via NuGet Trusted
+  Publishing / OIDC, off long-lived keys) — see §2.19. **Still to come (planned, not started):** the
+  remaining ecosystem — more grid adapters (M16), observability (M14, D100), and versioning (M15, D99) —
+  see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -966,6 +983,42 @@ self-tests PASS unchanged. The emitted OpenAPI document is the **authoritative o
 M18 does not document them in v1); a metadata-driven (in-process `ViewMetadata`) generation mode; framework
 bindings (React/Vue/Angular/grid data sources); runtime request/response validation beyond TS compile-time
 types; npm packaging/publishing; and wire versioning (D99 — the document is unversioned = latest).
+
+### 2.19 M19 — CI + NuGet publish workflows (landed; no spec)
+
+Two GitHub Actions workflows under `.github/workflows/` (additive-only; no source, wire, route, or
+package-content change). No decision numbers — pure operational tooling.
+
+- **`ci.yml`** — `name: CI`, triggered on `push`/`pull_request` to `main` + `workflow_dispatch`.
+  - Job **build**: `actions/setup-dotnet@v4` (8.0.x/9.0.x/10.0.x) → `dotnet restore` → `dotnet build
+    src/a2n.Vista.slnx -c Release` — a full-solution compile check across every project/adapter/example on
+    all TFMs.
+  - Job **test**: a `fail-fast: false` matrix over `net8.0`/`net9.0`/`net10.0`, running each of the three
+    TUnit suites via `dotnet run --project <suite> -c Release --framework <tfm>` (**not** `dotnet test`, per
+    the repo convention / §8; a non-zero exit fails the leg). No Node is needed — the TS-client suite's
+    correctness gates are C#/CsCheck; the fast-check runtime harness is out of the automated `dotnet run`
+    path.
+- **`publish.yml`** — `name: publish`, triggered on `release: [published]` (the tag drives the version,
+  leading `v` stripped) + `workflow_dispatch` (explicit `version` input). Restores, builds Release with
+  `-p:Version=`, packs each shipping project `--no-build -o artifacts`, then pushes with `--skip-duplicate`.
+  - **NuGet Trusted Publishing (OIDC)** — `permissions: id-token: write`; `NuGet/login@v1` exchanges the
+    GitHub OIDC token for a short-lived (~1 h) nuget.org API key (`steps.login.outputs.NUGET_API_KEY`); the
+    `user:` input is the `NUGET_USER` secret (the nuget.org **account/profile name**, not an email). No
+    long-lived API key is stored. The registered Trusted Publishing policy's **Workflow File** must be
+    `publish.yml` (GitHub Actions only runs `.yml`/`.yaml`).
+  - **Scope — 7 implemented libraries only:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
+    `.OpenApi`, `.EntityFrameworkCore.Npgsql`, `.Adapters.DataTablesNet`, `.Client.TypeScript`.
+    **Excluded:** the empty scaffolds (`a2n.Vista.Newtonsoft` + the AgGrid/MudBlazor/OData/GraphQL/PrimeNG/
+    Syncfusion/TanStackTable/Telerik adapter shells — `AssemblyMarker.cs` only), and
+    **`a2n.Vista.SourceGenerators`** (its `IncludeBuildOutput=false` csproj has no `analyzers/dotnet/cs`
+    pack items, so `dotnet pack` would emit an empty package — ship only after the packaging model is
+    settled: standalone analyzer package vs. bundled into `a2n.Vista.Core`).
+
+**Open follow-ups (flagged, not done):** (1) the `a2n.Vista.SourceGenerators` packaging model above;
+(2) `a2n.Vista.Client.TypeScript` currently packs as a plain `Exe` package (no `PackAsTool`/`ToolCommandName`)
+— decide whether it should ship as a `dotnet tool`; (3) `<Version>` is still `0.0.1` in
+`Directory.Build.props` — a real release cuts the version from the Git tag. **Verification** is the first
+green Actions run (workflows cannot be exercised locally).
 
 ---
 

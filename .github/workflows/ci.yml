@@ -1,0 +1,71 @@
+name: CI
+
+# Build the whole solution and run the TUnit suites across every supported TFM
+# (net8.0 / net9.0 / net10.0). M19.
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
+
+jobs:
+  build:
+    name: Build (full solution, all TFMs)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Restore
+        run: dotnet restore src/a2n.Vista.slnx
+
+      - name: Build (Release)
+        run: dotnet build src/a2n.Vista.slnx -c Release --no-restore
+
+  test:
+    name: Test (${{ matrix.tfm }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tfm: [ net8.0, net9.0, net10.0 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # TUnit runs on Microsoft.Testing.Platform: each test project compiles to an
+      # executable and is launched via `dotnet run --framework <tfm>` (not `dotnet test`),
+      # matching the repo convention. A non-zero exit code fails the step.
+      - name: a2n.Vista.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.Tests -c Release --framework ${{ matrix.tfm }}
+
+      - name: a2n.Vista.SourceGenerators.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.SourceGenerators.Tests -c Release --framework ${{ matrix.tfm }}
+
+      - name: a2n.Vista.Client.TypeScript.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.Client.TypeScript.Tests -c Release --framework ${{ matrix.tfm }}

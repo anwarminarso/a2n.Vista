@@ -24,6 +24,7 @@
   </Folder>
   <Folder Name="/30 Examples/">
     <Project Path="Examples/a2n.Vista.AotProbe/a2n.Vista.AotProbe.csproj" />
+    <Project Path="Examples/a2n.Vista.Examples.AgGridNorthwind/a2n.Vista.Examples.AgGridNorthwind.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP4/a2n.Vista.GeneratorExecSampleP4.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP5/a2n.Vista.GeneratorExecSampleP5.csproj" />
     <Project Path="Examples/a2n.Vista.GeneratorExecSampleP6/a2n.Vista.GeneratorExecSampleP6.csproj" />
