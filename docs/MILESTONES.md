@@ -1,7 +1,23 @@
 # a2n.Vista — Milestones & Roadmap Tracker
 
 > Status: **LIVING DOCUMENT** — update as milestones land.
-> Last updated: 2026-07-14 (**M19 LANDED** — the CI + NuGet publish workflows. `.github/workflows/ci.yml`
+> Last updated: 2026-07-14 (`ag-grid-adapter` **LANDED**: **M16** — the **second** Pillar 2 client-half grid
+> adapter, `a2n.Vista.Adapters.AgGrid` (Core-only, D48), D133–D136. `AgGridAdapter` implements three pure
+> mapping steps against the **landed** neutral `IViewAdapter` contract with **no** Core/EF/AspNetCore type
+> added or changed and the AspNetCore glue reused **verbatim**: **D133** — `RouteSuffix="aggrid"` → exposed at
+> `POST {route}/aggrid`; **D134** — the pure `AgGridFilterModelParser` maps the AG Grid `filterModel`
+> (text/number/date/set + combined AND/OR) to a `FilterNode` per a locked table (Advanced Filter deferred for
+> v1 → rejected loudly, never silently dropped); **D135** — block paging (`PageSize = EndRow - StartRow`,
+> non-positive pass-through) + the `{rowData, rowCount}` `LoadSuccessParams` response (`rowCount` = filtered
+> total); **D136** — quick filter via `?q=` (no host change) + a thin hand-written `IServerSideDatasource` for
+> the sample. `filterModel` → `Filter` channel, quick filter → `Search`; source-gen `AgGridJsonContext`
+> (AOT-clean; anonymous Style A rows ride the D96 RUC path). Ships an `a2n.Vista.Examples.AgGridNorthwind`
+> sample (net8.0-only: ASP.NET host + AG Grid + TS front-end with a `tsc --noEmit` gate + a guarded
+> `dotnet run -- selftest`). Additive-only. Build green net8/9/10, **515 tests/TFM (net8) / 517 tests/TFM
+> (net9/net10)** in `a2n.Vista.Tests` (+67/TFM) + **112 generator tests** unchanged (0 failed/skipped),
+> Northwind read + write + OpenAPI self-tests PASS unchanged **and** the AG Grid sample self-test PASSES.
+> See §2 (M16). **DataTables.NET and AG Grid are now the two real grid adapters; seven scaffolds remain.**
+> Prior: 2026-07-14 (**M19 LANDED** — the CI + NuGet publish workflows. `.github/workflows/ci.yml`
 > builds the full solution in Release and runs the three TUnit suites (`a2n.Vista.Tests`,
 > `a2n.Vista.SourceGenerators.Tests`, `a2n.Vista.Client.TypeScript.Tests`) via `dotnet run --framework`
 > across **net8.0/net9.0/net10.0** on `push`/`pull_request` to `main`. `.github/workflows/publish.yml` packs
@@ -120,7 +136,7 @@
 ```
 Pillar 1  — View engine            ██████████ 100%   done (read + write/CRUD)
 Pillar 2  — server half (engine)   ██████████ 100%   done & hardened
-Pillar 2  — client half (adapters) ███░░░░░░░  ~25%   DataTables real (+ export + QB schema) + the TypeScript client generator; 8 grid adapters are empty scaffolds
+Pillar 2  — client half (adapters) ████░░░░░░  ~35%   DataTables + AG Grid real (+ export + QB schema) + the TypeScript client generator; 7 grid adapters are empty scaffolds
 Pillar 3  — source generator       ██████████ 100%   Phase 1 (export accessors) + Phase 2 (executable Style B + masking + D105) + write-DSL (generated write mapper) + HTTP-surface (dispatch invoker + serialization seam) + per-view JsonTypeInfo (App_Json_Context now optional) + Style A coverage (D129/D130) — all planned phases landed
 ```
 
@@ -140,15 +156,16 @@ full typed Style B `request → authorize → execute → serialize` path is AOT
 OpenAPI document, and the nameable subset of Style A (named-row read artifacts + every writable view's
 `TCrud` write model) is now generated too — so **M9 (the Source Generator, Pillar 3) is complete**, with
 anonymous Style A read serialization staying permanently RUC by design (D96/D130). The **TypeScript client
-generator (M17, D131/D132)** has now also landed — a framework-agnostic typed client generated from the
-emitted OpenAPI document. The **CI + NuGet publish workflows (M19)** have now landed too
-(`.github/workflows/ci.yml` + `publish.yml`, the latter using NuGet Trusted Publishing / OIDC). The heavy
-remaining work is now the rest of the ecosystem: more grid adapters (M16), observability (M14), and
-versioning (M15).
+generator (M17, D131/D132)** has landed — a framework-agnostic typed client generated from the emitted
+OpenAPI document. The **CI + NuGet publish workflows (M19)** have landed (`.github/workflows/ci.yml` +
+`publish.yml`, the latter using NuGet Trusted Publishing / OIDC). The **AG Grid adapter (M16, D133–D136)**
+has now landed too — the second real Pillar 2 grid adapter (`a2n.Vista.Adapters.AgGrid`) plus an AG Grid +
+TypeScript Northwind sample. The heavy remaining work is now the rest of the ecosystem: the other seven grid
+adapters (MudBlazor next), observability (M14), and versioning (M15).
 
 > **Adapter reality check (from the source tree):** of the ten projects under `src/Adapters/`, only
-> **DataTables.NET** and the **Npgsql dialect** contain real implementations. The other eight
-> (`AgGrid`, `MudBlazor`, `OData`, `GraphQL`, `PrimeNG`, `Syncfusion`, `TanStackTable`, `Telerik`) are
+> **DataTables.NET**, **AG Grid** (M16, D133–D136), and the **Npgsql dialect** contain real implementations.
+> The other seven (`MudBlazor`, `OData`, `GraphQL`, `PrimeNG`, `Syncfusion`, `TanStackTable`, `Telerik`) are
 > empty scaffolds — `.csproj` + an `AssemblyMarker.cs` only. The `a2n.Vista.Client.TypeScript` generator
 > **is now a real implementation** (M17, D131/D132 — the full acquire→parse→resolve→model→emit→write
 > pipeline, 136 tests/TFM), no longer the `Main => 0` stub.
@@ -182,6 +199,16 @@ versioning (M15).
 | **M9-P6** | Source Generator, Style A coverage — the **final planned M9 phase**. **D129:** a fifth `IIncrementalGenerator` (`StyleAShapeGenerator`, netstandard2.0, FQN recognition, no Vista project ref) — the first to key off an **`InvocationExpressionSyntax`** rather than a class declaration — recognizes `ViewTemplate<TDbContext>.AddView<TRow>(...)` call sites (walking a chained `WithCrud<TCrud, TEntity>()`) and, for the **nameable** subset, emits into the template's own assembly keyed by the **constant** `AddView` name: (a) export accessors for a **named** `TRow` → `ViewAccessorRegistry` (D117); (b) read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`) for a named `TRow`, and (c) `TCrud` `JsonTypeInfo` for **any** writable view (`TCrud` always named, D38) → `GeneratedJsonContextStore` (D125), all via `JsonMetadataServices` and **shape-only** (no projection reconstruction). **No new store, no new seam** — the D126 drain + the `ExportColumns.Value(...)` export seam pick up Style A entries unchanged. **D130:** the reaffirmed permanent by-design RUC boundary — an **anonymous** read row is unnameable in generated source, so its read serialization/export stay `[RequiresUnreferencedCode]` forever (reaffirms D96, `VISTA0061`), while the same view's `TCrud` write binds AOT-clean (the D96 asymmetry within one view, demonstrated by the AOT probe). Non-blocking diagnostics `VISTA0060` (covered) / `VISTA0061` (anonymous read → RUC by design) / `VISTA0062` (non-constant name) — Info — and `VISTA0063` (non-emittable member) — Warning. Mechanism-only (no wire change); parity with the reflection oracle is the guard. | `style-a-coverage` | D129, D130 |
 
 | **M19** | CI + NuGet publish workflows — `.github/workflows/ci.yml` (build the full solution in Release + run the three TUnit suites via `dotnet run --framework` across **net8.0/net9.0/net10.0** on `push`/`pull_request` to `main`) and `.github/workflows/publish.yml` (pack + push to nuget.org on a published GitHub Release or manual `workflow_dispatch`, version from the release tag). Publishing uses **NuGet Trusted Publishing (OIDC)** via `NuGet/login@v1` — no long-lived API key; the job requests a short-lived key with `id-token: write` (the nuget.org account name is the `NUGET_USER` secret). Publishes only the **7 implemented libraries** (Core, EntityFrameworkCore, AspNetCore, OpenApi, EntityFrameworkCore.Npgsql, Adapters.DataTablesNet, Client.TypeScript); the empty scaffolds (Newtonsoft + the 8 grid-adapter shells) and `a2n.Vista.SourceGenerators` (packaging model unsettled — its `IncludeBuildOutput=false` csproj has no `analyzers/dotnet/cs` pack items, so it would emit an empty package) are intentionally excluded until each is ready. Additive-only (no source/wire change). | — | — |
+
+| **M16** | AG Grid adapter — the **second** Pillar 2 client-half grid adapter, `a2n.Vista.Adapters.AgGrid` (Core-only, D48), proving the neutral `IViewAdapter` contract generalizes to a grid with a substantially different request shape. **No Core/EF/AspNetCore type is added or changed**; the AspNetCore adapter glue is reused **verbatim** (only a new `RouteSuffix` + the JSON-body read path are new). **D133:** `AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>`, `Id`/`RouteSuffix` = `"aggrid"` → `POST {route}/aggrid`, three pure/deterministic steps (`BindRequest`/`ToQuery`/`ToResponse`); request POCOs (de)serialize through a source-gen `AgGridJsonContext` (AOT-clean; anonymous Style A rows ride the D96 RUC path — no new reflection path). **D134:** the pure `AgGridFilterModelParser` maps the `filterModel` (text/number/date/`set` + combined AND/OR) → `FilterNode` per a locked table (`inRange`→`Between`, `blank`/`notBlank`→`IsNull`/`FilterNot`, `set`→`In`); **Advanced Filter deferred for v1** — rejected loudly (`AdapterBindException` → 400 `adapter-bind-failed`), never silently dropped. **D135:** block paging (`PageSize = EndRow - StartRow`, `Page = StartRow / PageSize`; non-positive `PageSize` passed through so the engine rejects it) + the `{rowData, rowCount}` `LoadSuccessParams` response (`rowCount = RecordsFiltered` for last-block detection; `RecordsTotal` not surfaced); `filterModel` → `Filter` channel, quick filter → `Search` channel (adapter never enforces the tri-whitelist — per-channel engine validation, D111). **D136:** quick-filter transport via `?q=` folded into `AdapterRequest.Values` (zero host change) + a thin hand-written `IServerSideDatasource` for the sample (the M17 generated client is OpenAPI-driven; adapter endpoints not yet in the document). Ships `a2n.Vista.Examples.AgGridNorthwind` (net8.0-only: ASP.NET host + AG Grid + TS front-end with a `tsc --noEmit` gate + a guarded `dotnet run -- selftest`). Additive-only. | `ag-grid-adapter` | D133, D134, D135, D136 |
+
+**Verified at M16 (D133–D136, 2026-07-14):** solution build green on net8/9/10, **515 tests passing per TFM
+(net8) / 517 per TFM (net9/net10)** in `a2n.Vista.Tests` (+67/TFM) + **112** in
+`a2n.Vista.SourceGenerators.Tests` (0 failed, 0 skipped), Northwind read + write + OpenAPI self-tests PASS
+unchanged, and the new AG Grid sample self-test PASSES. The eight CsCheck properties (≥100 iters each —
+adapter purity/determinism, block-paging mapping, sort-model order/direction, `filterModel`→`FilterNode`
+fidelity, channel isolation, `rowData`/`rowCount` mapping, request bind fidelity, JSON source-gen round-trip)
+plus parser edge-case, `BindRequest`/`ToQuery` example, and glue-integration unit tests are the guard.
 
 **Verified at M17 (D131/D132, 2026-07-14):** solution build green on net8/9/10, a **new
 `a2n.Vista.Client.TypeScript.Tests` = 136 tests passing per TFM** (0 failed, 0 skipped) via CsCheck on the

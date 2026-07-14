@@ -1,7 +1,29 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-14 (**M19 LANDED** — the CI + NuGet publish workflows under `.github/workflows/`.
+> Last updated: 2026-07-14 (`ag-grid-adapter` **LANDED** — **M16**, the **second** Pillar 2 client-half grid
+> adapter: `a2n.Vista.Adapters.AgGrid` (Core-only, D48), D133–D136. A new `AgGridAdapter :
+> ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>` implements the three pure mapping steps against the
+> **landed** neutral contract (no Core/EF/AspNetCore type added or changed): **D133** — `Id="aggrid"` +
+> `RouteSuffix="aggrid"` → exposed at `POST {route}/aggrid` through the **existing** DataTables glue
+> verbatim; **D134** — the pure `AgGridFilterModelParser` maps the AG Grid `filterModel` (text/number/date/set
+> + combined AND/OR) to a `FilterNode` per a locked table, Advanced Filter deferred for v1 (rejected loudly →
+> `AdapterBindException` → 400 `adapter-bind-failed`, never silently dropped); **D135** — block paging
+> (`PageSize = EndRow - StartRow`, `Page = StartRow / PageSize`; non-positive pass-through so the engine
+> rejects it) and the `{rowData, rowCount}` `LoadSuccessParams` response (`rowCount = RecordsFiltered` for
+> last-block detection, `RecordsTotal` not surfaced); **D136** — quick-filter transport via `?q=` folded into
+> `AdapterRequest.Values` (no host change) + a thin hand-written `IServerSideDatasource` for the sample (the
+> M17 generated client is OpenAPI-driven and adapter endpoints are not yet in the document). `filterModel`
+> lands only in the `Filter` channel, quick filter only in `Search`; the adapter never enforces the
+> tri-whitelist (per-channel engine validation, D111). Request POCOs (de)serialize through a source-gen
+> `AgGridJsonContext` (AOT-clean; anonymous Style A rows ride the documented D96 RUC path — no new reflection
+> path). Ships an `a2n.Vista.Examples.AgGridNorthwind` sample (net8.0-only): ASP.NET host + AG Grid + TS
+> front-end (`tsc --noEmit` gate) + a guarded `dotnet run -- selftest` round-trip. Additive-only (no server
+> route/wire/behavior change). Build green net8/9/10, **515 tests/TFM (net8) / 517 tests/TFM (net9/net10)** in
+> `a2n.Vista.Tests` (+67/TFM, 8 PBT properties ≥100 iters + unit/glue-integration) + **112 generator tests**
+> unchanged (0 failed/skipped), Northwind read + write + OpenAPI self-tests PASS unchanged **and** the new AG
+> Grid sample self-test PASSES. See §2.20.
+> Prior: 2026-07-14 (**M19 LANDED** — the CI + NuGet publish workflows under `.github/workflows/`.
 > `ci.yml` restores + builds the full solution (`src/a2n.Vista.slnx`) in Release, then runs the three TUnit
 > suites (`a2n.Vista.Tests`, `a2n.Vista.SourceGenerators.Tests`, `a2n.Vista.Client.TypeScript.Tests`) via
 > `dotnet run --project … --framework <tfm>` (not `dotnet test`, per the repo convention) over a
@@ -180,8 +202,8 @@ Three pillars (see `ROADMAP.md`):
 - **Pillar 2 — Adapters + neutral query engine** (server half = query engine, **built & hardened**:
   PK-in-metadata, deterministic paging, DoS guards, `IQueryDialect` port, composite keys — see §2.4;
   HTTP surface is now action-style POST + `GET metadata` — see §2.5; multi-channel Search/Scope request —
-  see §2.7; client half = grid adapters, **DataTables.NET reference adapter built** — see §2.7; other
-  grid adapters not built).
+  see §2.7; client half = grid adapters, **two built: the DataTables.NET reference adapter (§2.7) and the
+  AG Grid adapter (M16, D133–D136, §2.20)**; the other seven grid adapters are empty scaffolds).
 - **Pillar 3 — Source generator** (AOT-clean codegen). **Phase 1 landed (M9, D117):** an incremental
   generator emits shape-driven field accessors for typed Style B views, registered into a Core store the
   export pipeline prefers over reflection (coexistence) — see §2.10. **Phase 2 landed (M10+M11+M13,
@@ -217,9 +239,11 @@ Three pillars (see `ROADMAP.md`):
   standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic typed TS client from the
   emitted OpenAPI document — see §2.18. **CI + NuGet publish workflows landed (M19):** `.github/workflows/
   ci.yml` (build + TUnit across net8/9/10) + `publish.yml` (pack + push to nuget.org via NuGet Trusted
-  Publishing / OIDC, off long-lived keys) — see §2.19. **Still to come (planned, not started):** the
-  remaining ecosystem — more grid adapters (M16), observability (M14, D100), and versioning (M15, D99) —
-  see §6.
+  Publishing / OIDC, off long-lived keys) — see §2.19. **AG Grid adapter landed (M16, D133–D136, spec
+  `ag-grid-adapter`):** the second Pillar 2 client-half grid adapter (`a2n.Vista.Adapters.AgGrid`, Core-only)
+  + an AG Grid + TypeScript Northwind sample — see §2.20. **Still to come (planned, not started):** the
+  remaining ecosystem — the other seven grid adapters (MudBlazor next), observability (M14, D100), and
+  versioning (M15, D99) — see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -1020,6 +1044,53 @@ package-content change). No decision numbers — pure operational tooling.
 `Directory.Build.props` — a real release cuts the version from the Git tag. **Verification** is the first
 green Actions run (workflows cannot be exercised locally).
 
+### 2.20 `ag-grid-adapter` (landed; spec `.kiro/specs/ag-grid-adapter`) — M16
+
+The **second** Pillar 2 client-half grid adapter (D133–D136), proving the neutral `IViewAdapter` contract
+generalizes to a grid whose request shape differs substantially from DataTables. Purely additive at the
+adapter + sample layer: **no Core/EF/AspNetCore type is added, changed, or forked**, and the AspNetCore
+adapter glue is reused **verbatim** (only a new `RouteSuffix` and the JSON-body read path are new).
+
+- **`a2n.Vista.Adapters.AgGrid`** (Core-only, D48): `AgGridModels.cs` (the `IServerSideGetRowsRequest`-shaped
+  `AgGridRowsRequest`/`AgGridSortModel` + the `{rowData,rowCount}` `AgGridRowsResponse`),
+  `AgGridJsonContext.cs` (source-gen STJ context, `PropertyNameCaseInsensitive`; AOT-clean — anonymous
+  Style A rows ride the documented D96 RUC reflection path, **no new reflection path**),
+  `AgGridFilterModelParser.cs` (the pure `filterModel` → `FilterNode` parser), and `AgGridAdapter.cs`.
+- **D133 — the adapter surface.** `AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>`,
+  `Id="aggrid"`, `RouteSuffix="aggrid"` → exposed at `POST {route}/aggrid` through the existing DataTables
+  path (`AddVistaAdapter<AgGridAdapter>()`). Three pure, deterministic steps: `BindRequest` (guards a
+  non-blank JSON body, deserializes via the source-gen context wrapping `JsonException`, validates the block
+  range, defaults absent `sortModel`/`filterModel` to empty, reads the quick filter from `Values["q"]` capped
+  at 1,024 chars), `ToQuery`, `ToResponse`.
+- **D134 — `filterModel` → `FilterNode` (locked table).** text/number/date `type`s, `set` → `In`, `inRange`
+  → `Between` (both bounds required else `AdapterBindException`), `blank`/`notBlank` → `IsNull`/`FilterNot`,
+  and combined `AND`/`OR` of 2+ conditions → `FilterAnd`/`FilterOr` preserving order. **Advanced Filter is
+  deferred for v1** — an Advanced-Filter payload is rejected **loudly** (`AdapterBindException` → 400
+  `adapter-bind-failed`), never silently dropped (D67 posture).
+- **D135 — block paging + response.** `PageSize = EndRow - StartRow`; `Page = StartRow / PageSize` when
+  positive; a non-positive `PageSize` is **passed through unchanged** so the engine rejects it (no
+  clamp/default). The response is `{rowData = result.Rows, rowCount = result.RecordsFiltered}` — `rowCount`
+  is the **filtered** total (AG Grid's `LoadSuccessParams` uses it for last-block detection); `RecordsTotal`
+  is not surfaced.
+- **Channel isolation (D111).** `filterModel` lands only in the `Filter` slot (AND-of-columns); a non-empty
+  quick filter becomes a `FilterOr` of `Contains` over `IsSearchable && string` fields in the `Search` slot
+  (mirrors DataTables' `BuildGlobalSearch`); `Scope` stays `null`. The adapter never enforces the
+  tri-whitelist and drops nothing beyond skipping a non-field `colId` — disallowed leaves reach the engine
+  and are rejected per-channel with 400.
+- **D136 — sample composition.** Quick-filter transport is `?q=` folded into `AdapterRequest.Values` (zero
+  host change; keeps the JSON body a byte-faithful `IServerSideGetRowsRequest`). The sample's front-end is a
+  **thin hand-written `IServerSideDatasource`** because the M17 generated TS client is OpenAPI-driven and
+  adapter endpoints are not (yet) in the OpenAPI document (the generated client can still supply the row DTO
+  types). `src/Examples/a2n.Vista.Examples.AgGridNorthwind` (net8.0-only): ASP.NET host reusing
+  `NorthwindDbContext` + views, `client/` TypeScript (`tsc --noEmit` gate) emitting into `wwwroot`, and a
+  guarded `dotnet run -- selftest` round-trip asserting the `{rowData, rowCount}` shape/values.
+- **Verified (2026-07-14):** build green net8/9/10; **515 tests/TFM (net8) / 517 tests/TFM (net9/net10)** in
+  `a2n.Vista.Tests` (+67/TFM — 8 CsCheck properties ≥100 iters covering purity/determinism, block paging,
+  sort-model order, `filterModel` fidelity, channel isolation, response mapping, bind fidelity, and JSON
+  round-trip, plus parser edge-case, `BindRequest`, `ToQuery`, and glue-integration unit tests) + **112
+  generator tests** unchanged (0 failed/skipped); Northwind read + write + OpenAPI self-tests PASS unchanged;
+  the new AG Grid sample self-test PASSES.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1192,7 +1263,11 @@ These record where the code intentionally differs from the early spec sketches. 
 | D130 | `style-a-coverage` spec / `03` §15 | **Landed (M9 Style A coverage, 2026-07-13).** The reaffirmed permanent by-design RUC boundary: an **anonymous** read `TRow` is unnameable in generated source, so its read serialization/export stay `[RequiresUnreferencedCode]` **forever** (reaffirms D96) — surfaced by non-blocking `VISTA0061`; `VISTA0060` (covered, Info), `VISTA0062` (non-constant name, Info), `VISTA0063` (non-emittable member, Warning) complete the family. The AOT probe **demonstrates** the asymmetry (anonymous read RUC vs named-row / `TCrud` / Style B AOT-clean) within one view rather than removing it. Diagnostic family begins at `VISTA0060`. See §2.17. |
 | D131 | `typescript-client` spec | **Landed (M17 TypeScript client, 2026-07-14).** The **OpenAPI document is the single generation source**, consumed over a one-way, buffered, pure pipeline (**acquire → parse → resolve → model → emit → write**) that makes determinism + all-or-nothing failure structural. The generator (`src/a2n.Vista.Client.TypeScript`, a .NET CLI, multi-target net8/9/10) holds **no** `a2n.Vista` project reference (Core/EF/AspNetCore/OpenApi all absent) — a pure document consumer. It emits framework-agnostic TypeScript: per-view `TRow`/`TCrud` DTOs, the fixed Vista envelopes, a **presence-discriminated** `FilterNode` union (M18 emits no `discriminator`), the RFC 7807 `ProblemDetails` type, one **re-lifted** generic `ViewListResult<TRow>`/`PagedResult<TRow>` per view (M18 monomorphizes them), and a per-view typed client. Additive-only; the emitted document is the parity oracle. See §2.18. |
 | D132 | `typescript-client` spec | **Landed (M17 TypeScript client, 2026-07-14).** Secure-by-default client posture: the **read surface is the default**, the **write surface is gated off by default** behind an explicit opt-in flag. The client never embeds a credential (injectable bearer `AuthProvider`), routes every request through an injectable `HttpTransport`, defaults transport to HTTPS (non-HTTPS non-loopback base URL → typed config failure; loopback → warn+continue), and surfaces every outcome as one total, non-throwing discriminated `ClientResult<T>` (incl. distinct `unauthorized`/`not-found`/428/409 members). See §2.18. |
-| **D133+** | **next free** | Use for new decisions. `typescript-client` (D131/D132) was the last landed spec. |
+| D133 | `ag-grid-adapter` spec | **Landed (M16 AG Grid adapter, 2026-07-14).** The adapter surface: `AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>` (Core-only, D48), `Id="aggrid"` + `RouteSuffix="aggrid"` → `POST {route}/aggrid` through the **existing** DataTables glue verbatim (no new host mechanism). Three pure, deterministic mapping steps (`BindRequest`/`ToQuery`/`ToResponse`). Consumes D48/D110/D111 unchanged. See §2.20. |
+| D134 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** The `filterModel` → `FilterNode` mapping (locked table) in the pure `AgGridFilterModelParser`: text/number/date `type`s, `set` → `In`, `inRange` → `Between` (both bounds required), `blank`/`notBlank` → `IsNull`/`FilterNot`, combined `AND`/`OR` → `FilterAnd`/`FilterOr` (order-preserving). **Advanced Filter deferred for v1** — rejected loudly (`AdapterBindException` → 400 `adapter-bind-failed`), never silently dropped (D67 posture). Consumes D96 unchanged. See §2.20. |
+| D135 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** Block paging + response mapping: `PageSize = EndRow - StartRow`, `Page = StartRow / PageSize` (non-positive `PageSize` passed through so the engine rejects it, no clamp/default); response `{rowData = Rows, rowCount = RecordsFiltered}` (filtered total for AG Grid last-block detection; `RecordsTotal` not surfaced). `filterModel` → `Filter` channel, quick filter → `Search` channel; adapter never enforces the tri-whitelist (per-channel engine validation, D111). See §2.20. |
+| D136 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** Sample composition: quick-filter transport via `?q=` folded into `AdapterRequest.Values` (zero host change) + a thin hand-written `IServerSideDatasource` (the M17 generated client is OpenAPI-driven; adapter endpoints not yet in the OpenAPI document). `a2n.Vista.Examples.AgGridNorthwind` (net8.0-only): ASP.NET host + AG Grid + TS front-end (`tsc --noEmit` gate) + a guarded `dotnet run -- selftest`. See §2.20. |
+| **D137+** | **next free** | Use for new decisions. `ag-grid-adapter` (D133–D136) was the last landed spec. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

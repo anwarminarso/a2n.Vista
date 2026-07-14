@@ -165,10 +165,10 @@ README message:
 
 > For the detailed, authoritative snapshot see `docs/PROJECT-STATUS.md`; for the milestone tracker with
 > progress bars and the dependency graph see `docs/MILESTONES.md`. Build is green on net8/9/10 with
-> **448 tests/TFM (net8) / 450 (net9/net10)** + **112 generator tests** + a new **136 tests/TFM** for the
+> **515 tests/TFM (net8) / 517 (net9/net10)** + **112 generator tests** + **136 tests/TFM** for the
 > TypeScript client generator (M17); the AOT probe is clean (zero IL2026/IL3050 on the full generated Style B
 > HTTP round-trip), and the Northwind read + write + OpenAPI self-tests pass (write reports both
-> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`).
+> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`), as does the AG Grid Northwind sample self-test.
 
 **Done (v0.x foundation):**
 
@@ -178,16 +178,16 @@ README message:
    - **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, filter contract, the `IViewExecutor`/`IViewScope`/`IViewRegistry` ports, `FilterCompiler` (tri-whitelist + DoS guards), the write seam (`WriteMapper`/`IWriteFacetRegistry`).
    - **EntityFrameworkCore** — View execution (List + Detail, deterministic paging, filter/sort/search, composite keys, provider-aware) and the write facet (Create/Update/Delete with mass-assignment whitelist, optimistic concurrency, single `SaveChanges`); `IQueryDialect` port + Npgsql dialect; startup PK auto-derivation (D105) and provider guard.
    - **AspNetCore** — action-style endpoint mapping (`POST list/detail/export/create/update/delete` + `GET metadata`), RFC 7807 error mapping, secure-by-default one-door auth (fail-closed in non-Development).
-4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: the **DataTables.NET** reference adapter, the pluggable **export pipeline** (CSV/XLSX), and the **QueryBuilder metadata-schema** emitter.
+4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: two real grid adapters — the **DataTables.NET** reference adapter and the **AG Grid** adapter (M16, D133–D136 — server-side row model: block paging, `filterModel`/`sortModel`, quick filter, with an AG Grid + TypeScript Northwind sample) — plus the pluggable **export pipeline** (CSV/XLSX) and the **QueryBuilder metadata-schema** emitter.
 5. **Pillar 3 — source generator (complete):** Phase 1 (shape-driven export accessors), Phase 2 (executable typed Style B via generated `ICompiledViewExecutionPlan` + masking runtime), the write-DSL phase (the generated write mapper), the HTTP-surface phase (a generated Core-only dispatch invoker + `ViewInvokerStore` and an AOT-clean serialization seam), the per-view `JsonTypeInfo` phase (a generated per-view `IJsonTypeInfoResolver` built via `JsonMetadataServices` + a Core-resident `GeneratedJsonContextStore` the seam auto-chains, making the developer-authored `App_Json_Context` **optional**), and the final **Style A coverage** phase (a fifth generator covering the nameable central-template subset — named-`TRow` export accessors + read-DTO `JsonTypeInfo`, and every writable view's `TCrud` `JsonTypeInfo`) have all landed — **every planned generator phase has shipped**. The **full** typed Style B `request → authorize → execute → serialize` path is AOT-clean, including serialization with no hand-authored context; anonymous Style A read serialization stays permanently `[RequiresUnreferencedCode]` by design (the deliberate AOT trade-off above).
 6. **OpenAPI (M18):** an opt-in `a2n.Vista.OpenApi` package emits a deterministic OpenAPI v3.x document for every mapped View (served off-by-default at `GET /openapi/v1.json`, additive-only).
 7. **TypeScript client generator (M17):** the standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic, strongly-typed TS client from the emitted OpenAPI document — a pure downstream consumer with no Vista project reference (read facets by default, write facets opt-in, secure-by-default, deterministic output).
 8. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper *and* the generated dispatch invoker) — now with its developer `NorthwindJsonContext` removed, exercising the generated per-view serialization, plus an OpenAPI self-test.
+9. **CI + NuGet publish workflows (M19):** `.github/workflows/ci.yml` (build the solution + run the three TUnit suites across net8/9/10) and `publish.yml` (pack + push the 7 shipping packages to nuget.org via **NuGet Trusted Publishing / OIDC** — no long-lived API key) — with M19 the v0.x foundation is complete.
 
 **Next:**
 
 1. Observability (D100 — OpenTelemetry) and versioning/deprecation (D99).
-2. The remaining reference adapters (AG Grid, MudBlazor first; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — eight are still empty scaffolds.
-3. A GitHub Actions CI workflow (build + test across the target frameworks).
-4. Bulk write operations (v1.x; an array body is rejected with 400 today).
-5. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).
+2. The remaining reference adapters (MudBlazor next; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — seven are still empty scaffolds (DataTables.NET and AG Grid are done).
+3. Bulk write operations (v1.x; an array body is rejected with 400 today).
+4. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).

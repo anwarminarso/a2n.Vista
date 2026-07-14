@@ -9,6 +9,94 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **Adapters** — the **AG Grid** adapter, `a2n.Vista.Adapters.AgGrid` (Decision
+  Log D133–D136; M16): the second Pillar 2 client-half grid adapter, proving the
+  neutral `IViewAdapter` contract generalizes to a grid whose request shape
+  differs substantially from DataTables. Core-only (no EF/ASP.NET/Npgsql
+  reference); no `a2n.Vista.Core`/`EntityFrameworkCore`/`AspNetCore` type is added
+  or changed, and the AspNetCore adapter glue is reused verbatim (only a new
+  `RouteSuffix` and the JSON-body read path are new). **D133** — an
+  `AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>` (`Id` and
+  `RouteSuffix` `"aggrid"`) exposed at `POST {route}/aggrid`, with three pure,
+  deterministic mapping steps (`BindRequest`/`ToQuery`/`ToResponse`); request
+  POCOs (de)serialize through a source-gen `AgGridJsonContext` (AOT-clean —
+  anonymous Style A rows ride the documented D96 `[RequiresUnreferencedCode]`
+  path, so no new reflection path is introduced). **D134** — a pure
+  `AgGridFilterModelParser` maps the AG Grid `filterModel`
+  (text/number/date/`set` plus combined AND/OR) to a `FilterNode` per a locked
+  table (`inRange` → `Between`, `blank`/`notBlank` → `IsNull`/`FilterNot`, `set`
+  → `In`); **Advanced Filter is deferred for v1** — an Advanced-Filter payload is
+  rejected loudly (`AdapterBindException` → 400 `adapter-bind-failed`), never
+  silently dropped. **D135** — block paging (`PageSize = EndRow - StartRow`,
+  `Page = StartRow / PageSize`; a non-positive `PageSize` is passed through
+  unchanged so the engine rejects it) and the `{ rowData, rowCount }`
+  `LoadSuccessParams` response (`rowCount` is the filtered total for AG Grid
+  last-block detection; `RecordsTotal` is not surfaced); the `filterModel` lands
+  only in the `Filter` channel and a quick filter only in the `Search` channel,
+  and the adapter never enforces the tri-whitelist (per-channel engine
+  validation). **D136** — quick-filter transport via `?q=` folded into
+  `AdapterRequest.Values` (zero host change), plus a thin hand-written
+  `IServerSideDatasource` for the sample (the generated TypeScript client is
+  OpenAPI-driven and adapter endpoints are not yet in the OpenAPI document). Ships
+  an `a2n.Vista.Examples.AgGridNorthwind` sample (net8.0-only): an ASP.NET host,
+  an AG Grid + TypeScript front-end with a `tsc --noEmit` typecheck gate, and a
+  guarded `dotnet run -- selftest` round-trip. Additive-only — no server route,
+  wire, or behavior change.
+- **CI / packaging** — two GitHub Actions workflows under `.github/workflows/`
+  (M19). `ci.yml` restores and builds the full solution (`src/a2n.Vista.slnx`) in
+  Release and runs the three TUnit suites (`a2n.Vista.Tests`,
+  `a2n.Vista.SourceGenerators.Tests`, `a2n.Vista.Client.TypeScript.Tests`) via
+  `dotnet run --project … --framework <tfm>` (not `dotnet test`) across a
+  net8.0/net9.0/net10.0 matrix on `push`/`pull_request` to `main` and
+  `workflow_dispatch`. `publish.yml` packs and pushes to nuget.org on a published
+  GitHub Release (the tag drives the version, leading `v` stripped) or manual
+  `workflow_dispatch`, using **NuGet Trusted Publishing (OIDC)** via
+  `NuGet/login@v1` — no long-lived API key is stored (`permissions: id-token:
+  write`; the nuget.org account name is the `NUGET_USER` secret). It ships only
+  the seven implemented libraries (`Core`, `EntityFrameworkCore`, `AspNetCore`,
+  `OpenApi`, `EntityFrameworkCore.Npgsql`, `Adapters.DataTablesNet`,
+  `Client.TypeScript`); the empty scaffolds and `a2n.Vista.SourceGenerators`
+  (packaging model unsettled) are intentionally excluded. Additive-only — no
+  source, wire, or package-content change.
+- **Client.TypeScript** — a standalone TypeScript client generator,
+  `a2n.Vista.Client.TypeScript` (Decision Log D131/D132; M17): a .NET CLI that
+  reads a Vista **OpenAPI 3.0.4** document (from a file or an HTTPS URL) and emits
+  a framework-agnostic, strongly-typed TypeScript client — per-view `TRow`/`TCrud`
+  DTO types, the fixed Vista request/response envelopes, the presence-discriminated
+  `FilterNode` union, the RFC 7807 `ProblemDetails` type, one re-lifted generic
+  `ViewListResult<TRow>`/`PagedResult<TRow>` per view, and a per-view typed client
+  over an injectable HTTP transport and auth provider. **D131** — the OpenAPI
+  document is the single generation source, consumed over a one-way, buffered,
+  pure pipeline (**acquire → parse → resolve → model → emit → write**) that makes
+  determinism and all-or-nothing failure structural; the generator references
+  **no** Vista package (not Core, EF, AspNetCore, or OpenApi). **D132** —
+  secure-by-default posture: read facets are the default and write facets are
+  gated **off** behind an explicit opt-in; it never embeds a credential, defaults
+  transport to HTTPS (a non-HTTPS non-loopback base URL is a typed config
+  failure), and surfaces every outcome as one total, non-throwing discriminated
+  `ClientResult<T>` (with distinct `unauthorized`/`not-found`/428/409 members).
+  Deterministic, atomic, UTF-8 (no BOM) output; purely additive — it touches no
+  server code.
+- **SourceGenerators** — Pillar 3, Style A coverage phase (Decision Log
+  D129/D130), the final planned generator phase — with it the source generator
+  (Pillar 3) is complete. **D129** — a fifth incremental generator
+  (`StyleAShapeGenerator`), the first to key off an invocation rather than a class
+  declaration, recognizes `ViewTemplate<TDbContext>.AddView<TRow>(…)` call sites
+  (walking a chained `WithCrud<TCrud, TEntity>()`) and, for the nameable Style A
+  subset, emits — keyed by the constant `AddView` name — export accessors and
+  read-DTO `JsonTypeInfo` (`TRow`/`ViewListResult<TRow>`/`PagedResult<TRow>`) for a
+  **named** `TRow`, plus `TCrud` `JsonTypeInfo` for **any** writable view (`TCrud`
+  is always named), all shape-only into the existing `ViewAccessorRegistry` and
+  `GeneratedJsonContextStore` (no new store, no new seam). **D130** — the
+  reaffirmed permanent by-design boundary: an **anonymous** read row is unnameable
+  in generated source, so its read serialization/export stay
+  `[RequiresUnreferencedCode]` forever (reaffirms the two-authoring-styles AOT
+  asymmetry), while the same view's `TCrud` write still binds AOT-clean — the
+  asymmetry is within one view. Non-blocking diagnostics `VISTA0060` (covered),
+  `VISTA0061` (anonymous read → RUC by design), `VISTA0062` (non-constant name) —
+  Info — and `VISTA0063` (non-emittable member) — Warning; help docs under
+  `docs/diagnostics/`. Mechanism-only — no wire change; byte-for-byte parity with
+  the reflection oracle is the guard.
 - **OpenApi** — a new opt-in `a2n.Vista.OpenApi` package that emits an accurate,
   deterministic **OpenAPI v3.x document** for every Vista View mapped to HTTP
   (Decision Log D127/D128; M18). It is a pure downstream consumer of the
