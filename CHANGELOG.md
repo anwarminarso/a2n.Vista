@@ -9,6 +9,32 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Added
+- **Examples** — a **Northwind sample showcase** (Decision Log D137–D140):
+  the `a2n.Vista.Examples.AgGridNorthwind` host is now a three-page showcase
+  behind a shared nav, reaching feature parity with the legacy DynData
+  "Table Browser" on the read surface, purely additive at the sample layer (no
+  Core/EF/AspNetCore/adapter contract, route, envelope, or error change).
+  **D137** — the single `a2n.Vista.Examples.AgGridNorthwind` host serves all
+  three pages and registers `DataTablesAdapter` + `QueryBuilderSchemaAdapter` +
+  `AgGridAdapter` + the OpenAPI emitter, keeping `AllowAnonymousAccess()` (D94);
+  the standalone `a2n.Vista.Examples.Northwind` host stays a separate
+  single-view sample. **D138** — an additive read-only catalog endpoint
+  `GET /api/showcase/views` (a pure `ShowcaseCatalog.Project` over
+  `IViewRegistry`) supplies the browsable-view list, secure-by-default (only
+  registered views), inside the host auth pipeline. **D139** — the pages are
+  static HTML + TypeScript compiled by `tsc` (no bundler), with a `tsc --noEmit`
+  typecheck gate and fast-check property tests for the pure transforms
+  (`columns.ts`, `search.ts`). **D140** — a third read-only view, `vOrder`, is
+  registered so the set (`vProductCategory`/`vOrderDetail`/`vOrder`) spans
+  string/numeric/date/foreign-key/composite-key fields. The three pages: a
+  **Simple Wiring** AG Grid page (infinite row model → `POST {route}/aggrid`,
+  `?q=` quick filter), a **View Browser** DataTables.NET + jQuery-QueryBuilder
+  page (view selection, dynamic columns from `GET {route}/metadata`, server-side
+  paging + min-length global search + single/multi sort + a
+  `GET {route}/querybuilder`-driven advanced filter posted through
+  `POST {route}/datatable`), and a **Custom Renderer** AG Grid page (consumer-owned
+  community `cellRenderer`s, presentation-only). The host self-test gained a
+  view-browser round-trip that exercises all channels in one request.
 - **Adapters** — the **AG Grid** adapter, `a2n.Vista.Adapters.AgGrid` (Decision
   Log D133–D136; M16): the second Pillar 2 client-half grid adapter, proving the
   neutral `IViewAdapter` contract generalizes to a grid whose request shape

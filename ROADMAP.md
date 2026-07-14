@@ -165,10 +165,12 @@ README message:
 
 > For the detailed, authoritative snapshot see `docs/PROJECT-STATUS.md`; for the milestone tracker with
 > progress bars and the dependency graph see `docs/MILESTONES.md`. Build is green on net8/9/10 with
-> **515 tests/TFM (net8) / 517 (net9/net10)** + **112 generator tests** + **136 tests/TFM** for the
+> **516 tests/TFM (net8) / 517 (net9/net10)** + **112 generator tests** + **136 tests/TFM** for the
 > TypeScript client generator (M17); the AOT probe is clean (zero IL2026/IL3050 on the full generated Style B
 > HTTP round-trip), and the Northwind read + write + OpenAPI self-tests pass (write reports both
-> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`), as does the AG Grid Northwind sample self-test.
+> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`), as does the Northwind sample showcase self-test
+> (read + write + OpenAPI + a view-browser round-trip combining paging, global search, multi-sort, and an
+> advanced filter).
 
 **Done (v0.x foundation):**
 
@@ -184,6 +186,7 @@ README message:
 7. **TypeScript client generator (M17):** the standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic, strongly-typed TS client from the emitted OpenAPI document — a pure downstream consumer with no Vista project reference (read facets by default, write facets opt-in, secure-by-default, deterministic output).
 8. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper *and* the generated dispatch invoker) — now with its developer `NorthwindJsonContext` removed, exercising the generated per-view serialization, plus an OpenAPI self-test.
 9. **CI + NuGet publish workflows (M19):** `.github/workflows/ci.yml` (build the solution + run the three TUnit suites across net8/9/10) and `publish.yml` (pack + push the 7 shipping packages to nuget.org via **NuGet Trusted Publishing / OIDC** — no long-lived API key) — with M19 the v0.x foundation is complete.
+10. **Northwind sample showcase (D137–D140):** the `a2n.Vista.Examples.AgGridNorthwind` host became a three-page showcase (Simple Wiring / View Browser / Custom Renderer) reaching DynData "Table Browser" parity on the read surface — a `GET /api/showcase/views` catalog over `IViewRegistry`, dynamic columns from metadata, server-side paging/global-search/multi-sort, and a jQuery-QueryBuilder advanced filter — plus the `vOrder` view. Additive at the sample layer only.
 
 **Next:**
 

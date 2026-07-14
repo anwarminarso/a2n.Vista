@@ -1,7 +1,32 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-14 (`ag-grid-adapter` **LANDED** — **M16**, the **second** Pillar 2 client-half grid
+> Last updated: 2026-07-14 (`northwind-sample-showcase` **LANDED** — D137–D140, purely additive at the
+> sample/example layer (no Core/EF/AspNetCore/adapter contract, route, envelope, or error change). The
+> `a2n.Vista.Examples.AgGridNorthwind` host became a **three-page showcase** behind a shared nav, reaching
+> feature parity with the legacy DynData "Table Browser" on the read surface. **D137** — the single
+> `AgGridNorthwind` host serves all three pages and registers `DataTablesAdapter` +
+> `QueryBuilderSchemaAdapter` + `AgGridAdapter` + the OpenAPI emitter, keeping `AllowAnonymousAccess()`
+> (D94); the standalone `Northwind` host stays the separate DataTables-only single-view sample (this revised
+> the earlier D137 draft that had proposed extending the `Northwind` host). **D138** — an additive read-only
+> catalog endpoint `GET /api/showcase/views` (a pure `ShowcaseCatalog.Project(IViewRegistry)` → `[]` on an
+> empty registry) supplies the browsable-view list, secure-by-default (only registered views), inside the
+> host auth pipeline — there was no HTTP "list all views" endpoint before. **D139** — static HTML +
+> TypeScript compiled by `tsc` (no bundler), a `tsc --noEmit` gate, and fast-check property tests for the
+> pure transforms (`columns.ts` metadata→columns, `search.ts` min-length gate). **D140** — a third read-only
+> view `vOrder` so the registered set (`vProductCategory`/`vOrderDetail`/`vOrder`) spans
+> string/numeric/date/FK/composite-key. Three pages: **Simple Wiring** (AG Grid infinite row model →
+> `POST {route}/aggrid`, `?q=`), **View Browser** (DataTables.NET + jQuery-QueryBuilder — view selection,
+> dynamic columns from `GET {route}/metadata`, server-side paging + min-length global search + single/multi
+> sort + a `GET {route}/querybuilder`-driven advanced filter through `POST {route}/datatable`), and **Custom
+> Renderer** (consumer-owned community `cellRenderer`s, presentation-only). The old standalone
+> `AgGridSelfTest` was removed when the showcase took over the host; the host self-test gained a view-browser
+> round-trip (paging + global search + multi-sort + `jsonQB` in one request). Build green net8/9/10, **516
+> tests/TFM (net8) / 517 tests/TFM (net9/net10)** in `a2n.Vista.Tests` (+1 — the `ShowcaseCatalog` CsCheck
+> Property 2; Properties 1 & 3 are fast-check under Node) + **112 generator tests** unchanged (0
+> failed/skipped), the showcase host read + write + OpenAPI self-tests PASS (view-browser round-trip
+> included; 19 OpenAPI paths, 4 views). See §2.21.
+> Prior: 2026-07-14 (`ag-grid-adapter` **LANDED** — **M16**, the **second** Pillar 2 client-half grid
 > adapter: `a2n.Vista.Adapters.AgGrid` (Core-only, D48), D133–D136. A new `AgGridAdapter :
 > ViewAdapter<AgGridRowsRequest, AgGridRowsResponse>` implements the three pure mapping steps against the
 > **landed** neutral contract (no Core/EF/AspNetCore type added or changed): **D133** — `Id="aggrid"` +
@@ -1091,6 +1116,53 @@ adapter glue is reused **verbatim** (only a new `RouteSuffix` and the JSON-body 
   generator tests** unchanged (0 failed/skipped); Northwind read + write + OpenAPI self-tests PASS unchanged;
   the new AG Grid sample self-test PASSES.
 
+### 2.21 `northwind-sample-showcase` (landed; spec `.kiro/specs/northwind-sample-showcase`) — D137–D140
+
+A multi-page runnable demo of the Pillar-2 client adapters, reaching feature parity with the legacy DynData
+`Northwind.WebUI` "Table Browser" on the **read** surface — but on the landed Vista contracts and the
+secure-by-default posture (only explicitly-registered views are browsable). **Purely additive at the
+sample/example layer**: no Core/EF/AspNetCore/adapter contract, route, envelope, or error shape changes.
+
+- **D137 — composition.** The single `a2n.Vista.Examples.AgGridNorthwind` host (net8.0-only) serves all
+  three pages behind a shared nav and registers every adapter family it needs —
+  `AddVistaAdapter<DataTablesAdapter>()` + `AddVistaMetadataAdapter<QueryBuilderSchemaAdapter>()` +
+  `AddVistaAdapter<AgGridAdapter>()` + `AddVistaOpenApi()` — keeping `AllowAnonymousAccess()` (D94). The
+  standalone `a2n.Vista.Examples.Northwind` host stays the separate DataTables-only single-view sample.
+  (This **revised** the earlier draft of D137, which had proposed extending the `Northwind` host.)
+- **D138 — view-catalog exposure.** A new app-level, additive read-only endpoint `GET /api/showcase/views`
+  (a minimal-API `MapGet` inside the existing pipeline) returns `ShowcaseCatalog.Project(registry)`: a pure
+  static `IReadOnlyList<ViewCatalogEntry> Project(IViewRegistry)` that maps `registry.All` one-to-one to
+  `ViewCatalogEntry(Name, Route, Title)` (title humanized: strip a leading `v`, space before capitals),
+  returning `[]` for an empty registry. Secure-by-default (only registered views); no arbitrary tables.
+  There was no HTTP "list all views" endpoint before this.
+- **D139 — page technology.** Static HTML + TypeScript compiled by `tsc` (no bundler), emitting ES modules
+  into `wwwroot/js`; a `tsc --noEmit` typecheck gate over ambient CDN declarations (`globals.d.ts`) keeps
+  it green with no heavyweight `@types`. Three pure transforms are property-tested with **fast-check** under
+  Node (`columns.ts` metadata→columns bijection; `search.ts` min-length gate) and one with **CsCheck** in
+  `a2n.Vista.Tests` (`ShowcaseCatalog.Project` catalog↔registry bijection, Property 2).
+- **D140 — registered view set.** A third read-only view `vOrder` (over `db.Orders`, PK `OrderId`, date
+  `OrderDate`/`RequiredDate`/`ShippedDate`, numeric `Freight`, string `ShipCountry`/`ShipCity`/`ShipName`,
+  hidden FK columns) so `vProductCategory`/`vOrderDetail`/`vOrder` collectively span
+  string/numeric/date/FK/composite-key. `vProductCategory` and `vOrderDetail` unchanged.
+- **The three pages.** **Simple Wiring** — the preserved AG Grid community grid (infinite/server-side row
+  model → `POST {route}/aggrid`, server-side paging/sort, `?q=` quick filter). **View Browser** (DynData
+  parity) — DataTables.NET + jQuery-QueryBuilder: a `View_Selector` from the catalog, grid auto-rebuild with
+  columns discovered from `GET {route}/metadata`, server-side paging + global search (min-length gated) +
+  single/multi sort + a `GET {route}/querybuilder`-driven advanced filter, all combined into one
+  `POST {route}/datatable` request (each in its own channel); a view switch disposes the prior
+  DataTable/QueryBuilder (no state leak); a placeholder selection issues no request; an RFC 7807 error is
+  surfaced with rows left unchanged. **Custom Renderer** — an AG Grid community page with ≥2 consumer-owned
+  `cellRenderer`s (formatted price, Discontinued badge, link), presentation-only over a server-side view.
+- **Self-test.** The old standalone `AgGridSelfTest` was removed when the showcase took over the host; the
+  host self-test (`dotnet run -- selftest`) now runs read (incl. a **view-browser round-trip** combining
+  paging + global search `'ch'` + multi-sort `CategoryName,ProductName` + `jsonQB UnitPrice>=20`) + write +
+  OpenAPI, all PASS.
+- **Verified (2026-07-14):** build green net8/9/10; **516 tests/TFM (net8) / 517 tests/TFM (net9/net10)** in
+  `a2n.Vista.Tests` (+1 — the `ShowcaseCatalog` CsCheck Property 2; the two fast-check properties run under
+  Node) + **112 generator tests** unchanged (0 failed/skipped); the showcase host read + write + OpenAPI
+  self-tests PASS (19 OpenAPI paths, 4 views incl. the writable memo); the other example self-tests stay
+  green and unchanged.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1267,7 +1339,11 @@ These record where the code intentionally differs from the early spec sketches. 
 | D134 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** The `filterModel` → `FilterNode` mapping (locked table) in the pure `AgGridFilterModelParser`: text/number/date `type`s, `set` → `In`, `inRange` → `Between` (both bounds required), `blank`/`notBlank` → `IsNull`/`FilterNot`, combined `AND`/`OR` → `FilterAnd`/`FilterOr` (order-preserving). **Advanced Filter deferred for v1** — rejected loudly (`AdapterBindException` → 400 `adapter-bind-failed`), never silently dropped (D67 posture). Consumes D96 unchanged. See §2.20. |
 | D135 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** Block paging + response mapping: `PageSize = EndRow - StartRow`, `Page = StartRow / PageSize` (non-positive `PageSize` passed through so the engine rejects it, no clamp/default); response `{rowData = Rows, rowCount = RecordsFiltered}` (filtered total for AG Grid last-block detection; `RecordsTotal` not surfaced). `filterModel` → `Filter` channel, quick filter → `Search` channel; adapter never enforces the tri-whitelist (per-channel engine validation, D111). See §2.20. |
 | D136 | `ag-grid-adapter` spec | **Landed (M16, 2026-07-14).** Sample composition: quick-filter transport via `?q=` folded into `AdapterRequest.Values` (zero host change) + a thin hand-written `IServerSideDatasource` (the M17 generated client is OpenAPI-driven; adapter endpoints not yet in the OpenAPI document). `a2n.Vista.Examples.AgGridNorthwind` (net8.0-only): ASP.NET host + AG Grid + TS front-end (`tsc --noEmit` gate) + a guarded `dotnet run -- selftest`. See §2.20. |
-| **D137+** | **next free** | Use for new decisions. `ag-grid-adapter` (D133–D136) was the last landed spec. |
+| D137 | `northwind-sample-showcase` spec | **Landed (Northwind sample showcase, 2026-07-14).** Showcase composition & layout: the single `a2n.Vista.Examples.AgGridNorthwind` host serves all three pages behind a shared nav and registers `DataTablesAdapter` + `QueryBuilderSchemaAdapter` + `AgGridAdapter` + the OpenAPI emitter, keeping `AllowAnonymousAccess()` (D94); the standalone `a2n.Vista.Examples.Northwind` host stays the separate DataTables-only single-view sample. Revised the earlier draft that had proposed extending the `Northwind` host. Additive at the sample layer. See §2.21. |
+| D138 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** View-catalog exposure: an additive read-only endpoint `GET /api/showcase/views` returning a pure `ShowcaseCatalog.Project(IViewRegistry)` (name + route + humanized title; `[]` on empty), secure-by-default (only registered views) and inside the host auth pipeline. Additive — no existing route/envelope/error change. See §2.21. |
+| D139 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** Page technology: static HTML + TypeScript compiled by `tsc` (no bundler), emitting into `wwwroot/js`; `tsc --noEmit` typecheck gate + fast-check property tests for the pure transforms (`columns.ts`, `search.ts`). See §2.21. |
+| D140 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** Registered Northwind view set: a third read-only view `vOrder` added so `vProductCategory`/`vOrderDetail`/`vOrder` span string/numeric/date/FK/composite-key, exercising the query-builder operators and column affordances. See §2.21. |
+| **D141+** | **next free** | Use for new decisions. `northwind-sample-showcase` (D137–D140) was the last landed spec. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
