@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · Custom cell renderers (Northwind)</title>
+
+  <!-- AG Grid community CSS themes (CDN). The grid uses the "quartz" theme via the class on the grid
+       container below. Community styles only — no Enterprise stylesheet (R5.4). -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/styles/ag-grid.css"
+  />
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/styles/ag-theme-quartz.css"
+  />
+
+  <!--
+    Import map so the browser can resolve the bare `ag-grid-community` specifier used by the built ES
+    modules (customRenderer.js / vistaAgGridDatasource.js) at runtime. The build step is `tsc` only (no
+    bundler), so `ag-grid-community` is not rewritten to a path; this map points it at the CDN ESM build
+    (community package only), while `tsc` resolves the same package's types from node_modules for the
+    type-check gate.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "ag-grid-community": "https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/+esm"
+      }
+    }
+  </script>
+
+  <style>
+    :root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; padding: 0; color: #1a1a1a; background: #f6f7f9; }
+
+    /* Shared showcase navigation (rendered by nav.ts into #nav). */
+    .showcase-nav { background: #0f172a; padding: 12px 28px; }
+    .nav-list { list-style: none; display: flex; gap: 8px; margin: 0; padding: 0; }
+    .nav-link {
+      display: inline-block; padding: 8px 14px; border-radius: 8px; text-decoration: none;
+      color: #cbd5e1; font-weight: 600; font-size: 14px;
+    }
+    .nav-link:hover { background: #1e293b; color: #e2e8f0; }
+    .nav-link--active { background: #2563eb; color: #fff; }
+
+    header { padding: 20px 28px 0; }
+    header h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    header p.lead { margin: 0 0 1rem; color: #555; max-width: 900px; }
+    header code { background: #eef1f5; padding: 1px 6px; border-radius: 4px; font-size: 0.85em; }
+
+    main { padding: 0 28px 40px; }
+    .toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
+    .toolbar label { font-weight: 600; }
+    .toolbar input {
+      padding: 0.4rem 0.6rem; font-size: 1rem; min-width: 18rem;
+      border: 1px solid #b0b0b0; border-radius: 4px;
+    }
+    #status-line { color: #555; min-height: 1.25rem; margin: 0 0 0.5rem; font-size: 0.9rem; }
+    #status-error {
+      color: #8a1c1c; background: #fdecea; border: 1px solid #f5c6cb;
+      border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0 0 0.75rem; font-size: 0.9rem;
+    }
+    #grid { width: 100%; height: 32rem; }
+
+    /* Consumer-owned renderer styling — the Discontinued badge and the product link (presentation only). */
+    .badge {
+      display: inline-block; padding: 2px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 600; line-height: 1.6;
+    }
+    .badge--discontinued { background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+    .badge--active { background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    .product-link { color: #2563eb; font-weight: 600; text-decoration: none; }
+    .product-link:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <!-- Shared cross-page navigation is injected here by nav.ts (R7.1). -->
+  <div id="nav"></div>
+
+  <header>
+    <h1>Vista · Custom cell renderers</h1>
+    <p class="lead">
+      AG Grid <strong>community</strong> Infinite Row Model driving the read-only
+      <code>vProductCategory</code> view through <code>POST /api/views/vProductCategory/aggrid</code>.
+      Paging, sorting, and filtering all run <strong>server-side</strong>; the customization is confined to
+      presentation. Three consumer-owned <code>cellRenderer</code>s are shown: a formatted price, a
+      Discontinued badge, and a product link.
+    </p>
+  </header>
+
+  <main>
+    <div class="toolbar">
+      <label for="quick-filter">Quick filter</label>
+      <input
+        id="quick-filter"
+        type="search"
+        placeholder="Search all columns…"
+        autocomplete="off"
+        aria-describedby="status-line"
+      />
+    </div>
+
+    <!-- Status line (polite) and error area (assertive). The error area is populated by the datasource
+         onError callback and stays hidden until there is a message. -->
+    <p id="status-line" role="status" aria-live="polite">Loading…</p>
+    <div id="status-error" role="alert" aria-live="assertive" hidden></div>
+
+    <!-- AG Grid mounts here; the quartz theme class controls styling. -->
+    <div id="grid" class="ag-theme-quartz" role="region" aria-label="Products grid with custom renderers"></div>
+  </main>
+
+  <!-- Built ES module output from `tsc` (client/src/customRenderer.ts -> wwwroot/js/customRenderer.js). -->
+  <script type="module" src="js/customRenderer.js"></script>
+</body>
+</html>

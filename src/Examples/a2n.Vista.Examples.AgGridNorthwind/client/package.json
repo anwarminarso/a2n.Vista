@@ -1,15 +1,18 @@
 {
-  "name": "agrid-northwind-client",
+  "name": "agGrid-northwind-showcase-client",
   "version": "1.0.0",
   "private": true,
-  "description": "TypeScript front-end for the Vista AG Grid Northwind sample: a thin IServerSideDatasource that posts IServerSideGetRowsRequest to POST {route}/aggrid.",
+  "description": "TypeScript front-end for the Vista Northwind sample showcase: three static HTML pages (Simple Wiring, View Browser, Custom Renderer) driving the landed AG Grid / DataTables / QueryBuilder adapter endpoints. Compiled with tsc (no bundler) to ES modules under ../wwwroot/js.",
   "type": "module",
   "scripts": {
     "build": "tsc",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "devDependencies": {
     "ag-grid-community": "^32.2.0",
-    "typescript": "^5.5.4"
+    "fast-check": "^3.23.1",
+    "typescript": "^5.5.4",
+    "vitest": "^2.1.8"
   }
 }

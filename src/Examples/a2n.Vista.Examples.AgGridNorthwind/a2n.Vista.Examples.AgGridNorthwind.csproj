@@ -5,11 +5,12 @@
       The example pins a single target framework to stay simple, overriding the repo-wide
       <TargetFrameworks>net8.0;net9.0;net10.0</TargetFrameworks> from Directory.Build.props.
       Both properties are set so the SDK runs a single (inner) build instead of cross-targeting.
-      The AG Grid Northwind sample targets net8.0 only (Requirement R7.6).
+      The AG Grid Northwind showcase host targets net8.0 only (Requirement R7.6).
     -->
     <TargetFramework>net8.0</TargetFramework>
     <TargetFrameworks></TargetFrameworks>
 
+    <!-- Identity stays AgGridNorthwind — only the source content is the relocated showcase. -->
     <RootNamespace>a2n.Vista.Examples.AgGridNorthwind</RootNamespace>
     <AssemblyName>a2n.Vista.Examples.AgGridNorthwind</AssemblyName>
 
@@ -23,6 +24,12 @@
          through the a2n.Vista.EntityFrameworkCore project reference. Version is pinned by
          central package management in Directory.Packages.props (do not hardcode here). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
+
+    <!-- In-process test host used by the OpenAPI self-test (OpenApiSelfTest) to issue a real
+         GET /openapi/v1.json against the mapped Serve_Endpoint and to compare a representative existing
+         endpoint response with vs. without the emitter registered (Requirements 10.1, 11.1). Version is
+         pinned per-TFM in Directory.Packages.props (net8.0 -> 8.0.11). -->
+    <PackageReference Include="Microsoft.AspNetCore.TestHost" />
   </ItemGroup>
 
   <ItemGroup>
@@ -32,10 +39,23 @@
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
-
-    <!-- The Core-only AG Grid server-side row model adapter (D133/D134/D135). Registered via
-         AddVistaAdapter<AgGridAdapter>() so each view also exposes POST {route}/aggrid. -->
+    <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+
+    <!--
+      Reference the Phase 3 source generator as an ANALYZER only (no runtime assembly dependency) — the
+      same way a real consumer wires it, mirroring a2n.Vista.GeneratorWriteMapperSample. Because Core and
+      the EF layer are referenced above, the WriteMapperGenerator recognizes the typed Style B writable
+      view declared here (vWritableMemo) and emits — INTO this assembly — a reflection-free generated
+      WriteMapper plus a [ModuleInitializer] that registers it into
+      a2n.Vista.EntityFrameworkCore.Execution.GeneratedWriteMapperStore keyed by the view's runtime Name.
+      At assembly load the resolver then prefers the generated mapper (first-wins) over reflection, so the
+      write self-test exercises the generated write path (Decision Log D121/D122).
+    -->
+    <ProjectReference Include="..\..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false" />
   </ItemGroup>
 
 </Project>

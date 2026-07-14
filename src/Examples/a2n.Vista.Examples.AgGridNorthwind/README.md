@@ -1,38 +1,23 @@
-# Vista AG Grid Northwind sample
+# Vista Northwind sample showcase
 
-A runnable, end-to-end demo of the Vista **AG Grid adapter**. An AG Grid
-[infinite row model](https://www.ag-grid.com/javascript-data-grid/infinite-scrolling/) front-end
-(written in TypeScript) drives the read-only Northwind `vProductCategory` view through the Vista AG Grid
-adapter endpoint:
+A runnable, multi-page demo that composes the landed Pillar-2 client adapters into one showcase. A single
+ASP.NET Core host (targeting **net8.0**) serves three static pages behind a shared navigation, each
+driving read-only Northwind views through already-shipped Vista adapter endpoints — nothing here changes a
+Core / EF / AspNetCore / adapter contract, route, envelope, or error shape.
 
-```
-POST /api/views/vProductCategory/aggrid
-```
-
-Every grid interaction — block paging on scroll, single/multi-column sort, text/number column filters,
-combined `AND`/`OR` conditions, and quick-filter global search — becomes one `POST` to that endpoint,
-mapped by the adapter onto the neutral Vista query contract and executed against a real Microsoft
-Northwind SQLite database. The host is an ASP.NET Core app targeting **net8.0**.
-
-> **Why the infinite row model (not the server-side row model)?** The spec (D136 / R7.2) originally
-> targeted AG Grid's *server-side row model*, but that is an **AG Grid Enterprise** feature — the
-> community package throws `unable to use rowModelType = 'serverSide'` at runtime, so the grid never
-> renders without a license. The **infinite row model** ships in `ag-grid-community`, needs no license,
-> and drives the exact same block-paging-per-request contract: each block request carries
-> `startRow`/`endRow` plus the grid's `sortModel`/`filterModel`, which the Vista adapter binds unchanged.
-> The C# adapter, its tests, and the self-test are identical either way — only the front-end row model
-> differs. If you have an Enterprise license and prefer the server-side row model, swap
-> `createVistaAgGridDatasource` back to an `IServerSideDatasource` and set `rowModelType: 'serverSide'`;
-> the request/response shapes are already compatible.
+The host registers three read-only views (`vProductCategory`, `vOrderDetail`, `vOrder`), so the view set
+covers string, numeric, date, boolean, foreign-key, and composite-key shapes. All three views are exposed
+under the landed routing model (`/api/views/{viewName}`), and each also exposes the adapter sub-routes
+(`/aggrid`, `/datatable`, `/querybuilder`, `/metadata`).
 
 ## Prerequisites
 
 - **.NET 8 SDK** — to build and run the host.
-- **Node.js** (with `npm`) — to build the TypeScript client.
+- **Node.js** (with `npm`) — to build and type-check the TypeScript client.
 
 ## Run from a clean checkout
 
-Follow these steps in order. They are sufficient to build and run the sample with no additional,
+Follow these steps in order. They are sufficient to build and run the whole showcase with no additional,
 undocumented steps.
 
 ### 1. Extract the Northwind database
@@ -44,8 +29,8 @@ never recreates or seeds it, so the extracted file is the single source of truth
 2. Extract `Northwind SQLite.zip` into that folder.
 3. Ensure the extracted file is named `northwind.db` (rename it if needed).
 
-The result must be `src/Examples/DB/northwind.db`. If it is missing, the host prints this same guidance
-and exits with a non-zero code instead of running.
+The result must be `src/Examples/DB/northwind.db`. If it is missing, the host prints this same extraction
+guidance and exits with a non-zero code instead of running.
 
 ### 2. Build the TypeScript client
 
@@ -55,7 +40,7 @@ The front-end is plain TypeScript compiled with `tsc` (no bundler). The build em
 ```sh
 cd client
 npm install
-npm run build      # tsc -> emits main.js / vistaAgGridDatasource.js into ../wwwroot/js
+npm run build      # tsc -> emits ES modules into ../wwwroot/js
 ```
 
 To run the type-check gate on its own (no emit):
@@ -64,15 +49,21 @@ To run the type-check gate on its own (no emit):
 npm run typecheck  # tsc --noEmit — must complete with exit code 0 and zero type errors
 ```
 
-`npm run build` also enforces types because `tsconfig.json` sets `noEmitOnError`, so a type error fails
-the build and emits nothing.
+`npm run build` also enforces types because `tsconfig.json` sets `noEmitOnError`, so a type error fails the
+build and emits nothing.
+
+To run the front-end test suites (fast-check property tests on the pure transforms, via Vitest):
+
+```sh
+npm test           # vitest run — the fast-check property suites for columns.ts / search.ts
+```
 
 ### 3. Run the host
 
 From the repository root:
 
 ```sh
-dotnet run --project src/Examples/a2n.Vista.Examples.AgGridNorthwind
+dotnet run --project src/Examples/Northwind
 ```
 
 or, from the project folder:
@@ -81,89 +72,61 @@ or, from the project folder:
 dotnet run
 ```
 
-Then open the served URL (the console prints it) in a browser. The default file is `index.html`, which
-mounts the grid.
+Then open the served URL (the console prints it) in a browser. The default file is `index.html` (the
+Simple Wiring page); the shared navigation links the other two pages.
 
 ### 4. Self-test (optional but recommended)
 
-A guarded end-to-end round-trip verifies the adapter path — request binding, mapping to the neutral query,
-the real Core executor, and response shaping — without a browser:
+A guarded end-to-end round-trip verifies the read, write, OpenAPI, and view-browser paths against the
+shipped read-only database, without a browser:
 
 ```sh
 dotnet run -- selftest
 ```
 
-It drives an AG Grid `IServerSideGetRowsRequest` (block paging, two `sortModel` keys, a two-condition
-combined `filterModel`, and a quick filter) through the same path the endpoint uses, asserts the
-`{ rowData, rowCount }` shape and camelCase serialization, and exits `0` only on PASS.
+The view-browser round-trip drives a single `POST {route}/datatable` request combining paging, global
+search, multi-sort, and a jQuery-QueryBuilder advanced filter through the real executor, and asserts the
+returned page reflects all channels simultaneously. The process exits `0` only when every self-test
+passes.
 
-## Composition: the thin AG-Grid datasource (D136)
+## The three pages (shared navigation)
 
-The front-end talks to Vista through a **thin, hand-written** AG Grid `IDatasource` (infinite row model),
-`client/src/vistaAgGridDatasource.ts`. On each block request it:
+Every page injects the same cross-page navigation, so the three demos form one showcase.
 
-- assembles `{ startRow, endRow, sortModel, filterModel }` from the AG Grid `IGetRowsParams` (this body is
-  field-compatible with the adapter's `IServerSideGetRowsRequest`),
-- `POST`s it as JSON to `{route}/aggrid` (here `/api/views/vProductCategory/aggrid`), appending the
-  current quick-filter text as a `?q=` query-string parameter when present,
-- feeds a successful `{ rowData, rowCount }` response into `params.successCallback(rowData, rowCount)` (the
-  `rowCount` is the known total, so AG Grid can detect the last block),
-- and on an HTTP error or network failure calls `params.failCallback()` (leaving the displayed rows
-  unchanged) and surfaces a visible error message.
+| Page | URL | Grid / adapter | Highlights |
+|------|-----|----------------|------------|
+| **Simple Wiring** | `/` (`index.html`) | AG Grid community **infinite row model** → `POST {route}/aggrid` | The minimal end-to-end integration over `vProductCategory`: block paging on scroll, single/multi-column sort, column filters, and a quick-filter global search sent out-of-band as `?q=`. |
+| **View Browser** | `/view-browser.html` | DataTables.NET + jQuery-QueryBuilder → `POST {route}/datatable` | Pick any registered view from a selector (catalog from `GET /api/showcase/views`). Columns are discovered from `GET {route}/metadata`; the advanced-filter panel is populated from `GET {route}/querybuilder`. One request combines paging, global search (minimum 3 characters), multi-sort, and the structured advanced filter — each in its own channel. |
+| **Custom Renderer** | `/custom-renderer.html` | AG Grid community (server-side driven) → `POST {route}/aggrid` | Consumer-owned `cellRenderer`s (formatted price, a Discontinued badge, a product link) over `vProductCategory`. Paging, sorting, and filtering all run server-side; the customization is confined to presentation only. Community features only — no AG Grid Enterprise dependency. |
 
-Note the column definitions separate `field` (camelCase, e.g. `productName`) from `colId` (PascalCase,
-e.g. `ProductName`): Vista serializes row JSON as camelCase, while the adapter matches `sortModel`/
-`filterModel` `colId`s against the view's PascalCase field names.
+Routes shown as `{route}` resolve per view — for example the Simple Wiring and Custom Renderer pages both
+drive `vProductCategory`, so their AG Grid endpoint is `POST /api/views/vProductCategory/aggrid`. The View
+Browser page composes the sub-route (`/metadata`, `/querybuilder`, `/datatable`) from whichever view the
+user selects.
 
-### Why it is hand-written and not the M17 generated client
+## Access posture: open, read-only (D94)
 
-The M17 `a2n.Vista.Client.TypeScript` generated client is **OpenAPI-driven**: it generates strictly from
-the emitted OpenAPI document. M18 **deferred adapter endpoints**, so `{route}/aggrid` is **not** described
-in the OpenAPI document today. The datasource must therefore be authored by hand against the AG Grid
-server-side row model contract.
+This sample runs with **open access** — it opts into anonymous access explicitly via
+`AllowAnonymousAccess()` in `Program.cs`. Without an authorizer, Vista would otherwise fail closed at
+startup in a non-Development environment (Decision Log D94); calling `AllowAnonymousAccess()` makes the
+open posture a deliberate, documented choice for a public read-only demo.
 
-The generated client could still optionally supply the row **DTO types**, but the datasource wiring itself
-is hand-authored. If a future spec adds the adapter endpoint to the OpenAPI document, this datasource can
-migrate to the generated client with **no grid-side change** — `main.ts` only depends on the
-`IServerSideDatasource` interface, not on how it is implemented.
+Only explicitly-registered views are browsable (secure-by-default): the view catalog and the selector
+enumerate exactly the three registered views, never arbitrary database tables. All three views are
+read-only (List + Detail; no write facet), and the host never seeds or mutates the shipped database.
 
-## Quick-filter transport
-
-The quick-filter (global search) text is sent **out-of-band** as a `?q=` query-string parameter on the
-`POST`, so the JSON body stays a faithful `IServerSideGetRowsRequest`. The adapter reads it from
-`AdapterRequest.Values["q"]`, and the value is capped at **1,024 characters** (a longer value is rejected
-with `400 adapter-bind-failed`).
-
-## Upgrading to the server-side row model (AG Grid Enterprise)
-
-This sample uses the community **infinite row model** so it runs with no license. AG Grid's **server-side
-row model** (the shape D136 / R7.2 originally described) is an **Enterprise** feature — the community
-package throws `unable to use rowModelType = 'serverSide'` at runtime. If you have an Enterprise license
-and want the server-side row model instead, the server side needs no change (the request/response shapes
-are already compatible); on the client:
-
-1. Add an import-map entry for `ag-grid-enterprise` in `wwwroot/index.html` (alongside the existing
-   `ag-grid-community` entry), pointing at its CDN ESM build.
-2. In `client/src/main.ts`, set your license key and register the enterprise modules before creating the
-   grid, then set `rowModelType: 'serverSide'` and pass the datasource as `serverSideDatasource`:
-
-   ```ts
-   import { LicenseManager, ModuleRegistry, ServerSideRowModelModule } from 'ag-grid-enterprise';
-
-   LicenseManager.setLicenseKey('<your-license-key>');
-   ModuleRegistry.registerModules([ServerSideRowModelModule]);
-   ```
-
-3. Switch `createVistaAgGridDatasource` to return an `IServerSideDatasource` (read `params.request` and
-   call `params.success({ rowData, rowCount })`). Then re-run `npm run build`.
+**A real application does not run open.** Gate access by registering an authorizer via
+`UseAuthorizer<T>()` instead of `AllowAnonymousAccess()`, so every view request is authorized inside the
+host pipeline.
 
 ## What's in this sample
 
 | Path | Role |
 |------|------|
-| `Program.cs` | net8.0 host: registers the Northwind view (Style A), the Vista endpoints, and the AG Grid adapter; serves `wwwroot`; provides the `selftest` mode. |
-| `Views/AgGridNorthwindViews.cs` | Style A central template exposing the read-only `vProductCategory` view. |
-| `client/src/main.ts` | Grid bootstrap: column defs, server-side row model options, quick-filter wiring. |
-| `client/src/vistaAgGridDatasource.ts` | The thin, hand-written `IServerSideDatasource` (D136). |
-| `wwwroot/index.html` | Demo page + import map; `wwwroot/js/*` is the built `tsc` output. |
-| `AgGridSelfTest.cs` | The guarded end-to-end round-trip invoked by `dotnet run -- selftest`. |
+| `Program.cs` | net8.0 host: registers the three Northwind views, the Vista endpoints (open access), the DataTables + QueryBuilder + AG Grid adapters, the OpenAPI emitter, and the `/api/showcase/views` catalog endpoint; serves `wwwroot`; provides the `selftest` mode. |
+| `Views/NorthwindViews.cs` | Style A central template exposing the read-only `vProductCategory`, `vOrderDetail`, and `vOrder` views. |
+| `Showcase/ShowcaseCatalog.cs` | Pure `ShowcaseCatalog.Project(IViewRegistry)` helper + `ViewCatalogEntry` DTO backing the `/api/showcase/views` catalog. |
+| `client/src/` | TypeScript sources: shared `nav.ts`, the pure transforms (`columns.ts`, `search.ts`, `catalog.ts`), the AG Grid datasource, and the per-page orchestration (`simpleWiring.ts`, `customRenderer.ts`, `viewBrowser.ts`). |
+| `client/tests/` | fast-check property suites (run via `npm test`). |
+| `wwwroot/*.html` | The three demo pages; `wwwroot/js/*` is the built `tsc` output. |
+| `SelfTest.cs` / `WriteSelfTest.cs` / `OpenApiSelfTest.cs` | The guarded end-to-end round-trips invoked by `dotnet run -- selftest`. |

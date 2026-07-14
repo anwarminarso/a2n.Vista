@@ -1,16 +1,22 @@
 import { createGrid } from 'ag-grid-community';
+import { renderNav } from './nav.js';
 import { createVistaAgGridDatasource } from './vistaAgGridDatasource.js';
 /**
- * Entry point for the Vista AG Grid Northwind sample front-end.
+ * Entry point for the Northwind showcase **Simple Wiring** page (Requirements 1.1–1.4).
  *
- * Wires an AG Grid **Infinite Row Model** over the read-only Northwind `vProductCategory` view through the
- * Vista AG Grid adapter endpoint `POST /api/views/vProductCategory/aggrid`. The Infinite Row Model is a
- * community feature (unlike the Enterprise-only server-side row model) and makes every grid interaction
- * observable as an HTTP request (R7.3/R7.4): each scroll fetches one block, and every sort, multi-sort,
- * filter, combined AND/OR condition, and quick-filter change issues a fresh POST followed by a
- * displayed-rows update. The request body the datasource sends
- * (`{ startRow, endRow, sortModel, filterModel }`) is field-compatible with the adapter's
- * `IServerSideGetRowsRequest`, so the server side is unchanged.
+ * This is the minimal, "it just works" wiring: an AG Grid **Infinite Row Model** (a community feature,
+ * unlike the Enterprise-only server-side row model) driving the read-only Northwind `vProductCategory`
+ * view through the landed Vista AG Grid adapter endpoint `POST /api/views/vProductCategory/aggrid`. It
+ * preserves the behavior of the standalone `a2n.Vista.Examples.AgGridNorthwind` grid (1.3) and requires
+ * no change to the adapter endpoint or any Core/EF/AspNetCore contract; it only adds the shared showcase
+ * navigation so the page is reachable as one of the three showcase pages (1.4).
+ *
+ * Every grid interaction is an observable HTTP request: each scroll fetches one block, and every sort,
+ * multi-sort, column filter, combined AND/OR condition, and quick-filter change issues a fresh POST
+ * followed by a displayed-rows update (1.1). The quick-filter text is sent out-of-band as the `?q=`
+ * query-string parameter the adapter reads from `AdapterRequest.Values["q"]` (1.2); the JSON body
+ * (`{ startRow, endRow, sortModel, filterModel }`) stays a faithful `IServerSideGetRowsRequest` subset,
+ * so the server side is identical regardless of the front-end row model.
  *
  * Runtime note: AG Grid community modules (including the Infinite Row Model) auto-register on import from
  * the umbrella `ag-grid-community` package/CDN bundle (see the import map in `index.html`), so no explicit
@@ -18,7 +24,7 @@ import { createVistaAgGridDatasource } from './vistaAgGridDatasource.js';
  */
 /** The Vista AG Grid adapter endpoint for the exposed Northwind view. */
 const AGGRID_ENDPOINT = '/api/views/vProductCategory/aggrid';
-/** How many rows AG Grid requests per block; each block is one POST to the adapter endpoint (R7.3). */
+/** How many rows AG Grid requests per block; each block is one POST to the adapter endpoint (1.1). */
 const CACHE_BLOCK_SIZE = 20;
 /** Debounce window (ms) for quick-filter keystrokes, so typing does not fire a POST per character. */
 const QUICK_FILTER_DEBOUNCE_MS = 250;
@@ -26,7 +32,7 @@ const QUICK_FILTER_DEBOUNCE_MS = 250;
  * Column definitions for the six visible `vProductCategory` fields (the hidden key columns ProductId /
  * CategoryId / SupplierId are intentionally not projected as columns). Text fields use
  * `agTextColumnFilter` and numeric fields use `agNumberColumnFilter`; both filter types support AG Grid
- * combined AND/OR conditions out of the box (R7.4).
+ * combined AND/OR conditions out of the box.
  *
  * Each column separates `field` from `colId` on purpose. `field` is the row-data accessor and must match
  * the response JSON, which Vista serializes as **camelCase** (`productName`, `unitPrice`, …). `colId` is
@@ -56,6 +62,8 @@ function setError(statusEl, message) {
     statusEl.hidden = message.length === 0;
 }
 function bootstrap() {
+    // Render the shared showcase navigation, marking this page active (1.4).
+    renderNav('simple-wiring', getRequiredElement('nav'));
     const gridDiv = getRequiredElement('grid');
     const quickFilterInput = getRequiredElement('quick-filter');
     const errorEl = getRequiredElement('status-error');
@@ -71,7 +79,7 @@ function bootstrap() {
     const gridOptions = {
         columnDefs,
         // Every column is sortable and filterable so single-sort, Shift+click multi-sort across columns,
-        // text/number filters, and AG Grid combined AND/OR conditions are all exercisable (R7.4).
+        // text/number filters, and AG Grid combined AND/OR conditions are all exercisable (1.1).
         defaultColDef: {
             sortable: true,
             filter: true,
@@ -79,7 +87,7 @@ function bootstrap() {
             resizable: true,
         },
         // Infinite Row Model (community): paging, sorting, and filtering are delegated to the Vista adapter
-        // endpoint. Scrolling requests the next block, one POST per block (R7.3).
+        // endpoint. Scrolling requests the next block, one POST per block (1.1).
         rowModelType: 'infinite',
         datasource,
         cacheBlockSize: CACHE_BLOCK_SIZE,
@@ -94,7 +102,7 @@ function bootstrap() {
     const api = createGrid(gridDiv, gridOptions);
     // Re-fetch from the server whenever the quick filter changes. With the Infinite Row Model the quick
     // filter is NOT applied client-side; purging the cache forces a fresh POST carrying the new `?q=` value
-    // and a full displayed-rows update (R7.4).
+    // and a full displayed-rows update (1.2).
     let debounceHandle;
     quickFilterInput.addEventListener('input', () => {
         if (debounceHandle !== undefined) {
@@ -113,4 +121,4 @@ if (document.readyState === 'loading') {
 else {
     bootstrap();
 }
-//# sourceMappingURL=main.js.map
+//# sourceMappingURL=simpleWiring.js.map

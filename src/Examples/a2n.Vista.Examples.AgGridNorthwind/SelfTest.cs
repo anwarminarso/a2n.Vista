@@ -1,0 +1,401 @@
+using System.Collections;
+using System.Collections.Generic;
+using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
+using System.Reflection;
+using a2n.Vista.Adapters;
+using a2n.Vista.Adapters.DataTablesNet;
+using a2n.Vista.Contracts;
+using a2n.Vista.Metadata;
+using a2n.Vista.Ports;
+using Microsoft.Extensions.DependencyInjection;
+
+namespace a2n.Vista.Examples.AgGridNorthwind;
+
+/// <summary>
+/// End-to-end verification harness for the <c>vProductCategory</c> view (Requirement R12). It drives the
+/// real Core <see cref="IViewExecutor"/> exactly as the HTTP layer does — closing the generic
+/// List/Detail methods over the view's runtime (anonymous) row type via reflection — and asserts that:
+/// <list type="bullet">
+///   <item><description>List returns a paged <c>PagedResult</c> with the expected totals/paging (R12.1).</description></item>
+///   <item><description>Filter + sort + global-search-style Contains narrow the result (R12.3).</description></item>
+///   <item><description>Detail by the hidden <c>ProductId</c> primary key resolves a row (R12.2).</description></item>
+/// </list>
+/// Run it with <c>dotnet run -- selftest</c>.
+/// </summary>
+public static class SelfTest
+{
+    private const string ViewName = "vProductCategory";
+
+    private static readonly MethodInfo ListAsyncMethod =
+        typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.ListAsync))!;
+
+    private static readonly MethodInfo DetailAsyncMethod =
+        typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.DetailAsync))!;
+
+    /// <summary>
+    /// Runs the self-test against a built application's services.
+    /// </summary>
+    /// <param name="services">The root service provider (a scope is created internally).</param>
+    /// <returns><see langword="true"/> when every check passed; otherwise <see langword="false"/>.</returns>
+    [RequiresUnreferencedCode("Self-test closes the generic IViewExecutor over the view's runtime row type via reflection.")]
+    public static async Task<bool> RunAsync(IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        using var scope = services.CreateScope();
+        var sp = scope.ServiceProvider;
+
+        var registry = sp.GetRequiredService<IViewRegistry>();
+        var executor = sp.GetRequiredService<IViewExecutor>();
+        var viewScope = sp.GetRequiredService<IViewScope>();
+
+        var view = registry.Get(ViewName);
+        if (view is null)
+        {
+            Console.WriteLine($"FAIL: view '{ViewName}' is not registered.");
+            return false;
+        }
+
+        Console.WriteLine("=== Vista Northwind self-test ===");
+        Console.WriteLine($"View      : {view.Name}");
+        Console.WriteLine($"Route     : {view.Route}");
+        Console.WriteLine($"IsReadOnly: {view.IsReadOnly}");
+        Console.WriteLine($"RowType   : {view.QueryType.Name}");
+        Console.WriteLine($"Fields    : {string.Join(", ", view.Fields.Select(f => $"{f.Name}{(f.IsHidden ? " (hidden)" : "")}"))}");
+        Console.WriteLine();
+
+        var allPassed = true;
+
+        allPassed &= await PagingCheckAsync(view, executor, viewScope);
+        allPassed &= await FilterSortSearchCheckAsync(view, executor, viewScope);
+        allPassed &= await DetailCheckAsync(view, executor, viewScope);
+
+        var orderDetailView = registry.Get("vOrderDetail");
+        if (orderDetailView is not null)
+        {
+            allPassed &= await CompositeDetailCheckAsync(orderDetailView, executor, viewScope);
+        }
+
+        allPassed &= await DataTablesRoundTripCheckAsync(view, executor, viewScope);
+        allPassed &= await DataTablesViewBrowserRoundTripCheckAsync(view, executor, viewScope);
+
+        Console.WriteLine();
+        Console.WriteLine(allPassed ? "RESULT: PASS" : "RESULT: FAIL");
+        return allPassed;
+    }
+
+    /// <summary>R12.1 — List returns a paged <c>PagedResult</c> (0-based index, long totals, clamped page).</summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> PagingCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        // No filter, sort by ProductName ascending, page 0 with a small page size to force multiple pages.
+        var request = new ViewQueryRequest(
+            Filter: null,
+            Sort: new[] { new SortSpec("ProductName") },
+            Page: 0,
+            PageSize: 3);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var totalRowsUnfiltered = (long)Prop(listResult, "TotalRowsUnfiltered")!;
+
+        var totalRows = (long)Prop(page, "TotalRows")!;
+        var pageIndex = (int)Prop(page, "PageIndex")!;
+        var pageSize = (int)Prop(page, "PageSize")!;
+        var totalPages = (long)Prop(page, "TotalPages")!;
+        var items = ToObjectList(Prop(page, "Items")!);
+        var names = items.Select(i => (string)Prop(i, "ProductName")!).ToList();
+
+        Console.WriteLine("[1] Paging (no filter, sort ProductName asc, page 0, size 3)");
+        Console.WriteLine($"    TotalRows(filtered)={totalRows}  TotalRowsUnfiltered={totalRowsUnfiltered}  " +
+            $"PageIndex={pageIndex}  PageSize={pageSize}  TotalPages={totalPages}  Items={items.Count}");
+        Console.WriteLine($"    Page items: {string.Join(", ", names)}");
+
+        var sortedAscending = names.SequenceEqual(names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+        var ok =
+            totalRows == 77 &&
+            totalRowsUnfiltered == 77 &&
+            pageIndex == 0 &&
+            pageSize == 3 &&
+            totalPages == 26 &&
+            items.Count == 3 &&
+            sortedAscending;
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>R12.3 — filter (UnitPrice) + global-search-style Contains (ProductName) + sort.</summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> FilterSortSearchCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        // A structured filter (UnitPrice >= 20) AND a global-search-style substring match on a string
+        // field (ProductName Contains "a"). The whole tree is validated under FilterOrigin.Filter by the
+        // executor; both leaves target filterable fields with allowed operators.
+        var filter = new FilterAnd(new FilterNode[]
+        {
+            new FilterLeaf("UnitPrice", FilterOperator.GreaterThanOrEqual, 20m),
+            new FilterLeaf("ProductName", FilterOperator.Contains, "a"),
+        });
+
+        var request = new ViewQueryRequest(
+            Filter: filter,
+            Sort: new[] { new SortSpec("ProductName") },
+            Page: 0,
+            PageSize: 10);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var totalRowsUnfiltered = (long)Prop(listResult, "TotalRowsUnfiltered")!;
+        var totalRows = (long)Prop(page, "TotalRows")!;
+        var items = ToObjectList(Prop(page, "Items")!);
+        var names = items.Select(i => (string)Prop(i, "ProductName")!).ToList();
+
+        Console.WriteLine("[2] Filter + search (UnitPrice>=20 AND ProductName Contains 'a', sort ProductName asc)");
+        Console.WriteLine($"    recordsTotal(unfiltered)={totalRowsUnfiltered}  recordsFiltered={totalRows}  Items={items.Count}");
+        Console.WriteLine($"    Matched: {string.Join(", ", names)}");
+
+        // The full Northwind catalog has 77 products; this structured filter + substring search narrows
+        // it to a stable subset. We assert the filter actually reduces the set and the first page is full
+        // and correctly ordered, rather than pinning an exact name list (accented names make that brittle).
+        var ok =
+            totalRowsUnfiltered == 77 &&
+            totalRows == 31 &&
+            totalRows < totalRowsUnfiltered &&
+            items.Count == 10 &&
+            names.SequenceEqual(names.OrderBy(n => n, StringComparer.OrdinalIgnoreCase));
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>R12.2 — Detail resolves a row by the hidden <c>ProductId</c> primary key.</summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> DetailCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        const int productId = 1;
+
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, new object?[] { view, productId, scope, CancellationToken.None })!;
+        await task.ConfigureAwait(false);
+        var row = task.GetType().GetProperty(nameof(Task<object>.Result))!.GetValue(task);
+
+        Console.WriteLine($"[3] Detail by ProductId={productId} (hidden PK, resolved by convention)");
+        if (row is null)
+        {
+            Console.WriteLine("    -> FAIL: no row returned");
+            return false;
+        }
+
+        var resolvedId = Convert.ToInt32(Prop(row, "ProductId")!, CultureInfo.InvariantCulture);
+        var name = (string)Prop(row, "ProductName")!;
+        var categoryName = (string)Prop(row, "CategoryName")!;
+        Console.WriteLine($"    Row: ProductId={resolvedId}  ProductName={name}  CategoryName={categoryName}");
+
+        var ok = resolvedId == productId && name == "Chai";
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>D109 — Detail resolves a row by a composite key (OrderId, ProductId) via a name→value map.</summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> CompositeDetailCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var key = new Dictionary<string, object?> { ["OrderId"] = 10248, ["ProductId"] = 11 };
+
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, new object?[] { view, key, scope, CancellationToken.None })!;
+        await task.ConfigureAwait(false);
+        var row = task.GetType().GetProperty(nameof(Task<object>.Result))!.GetValue(task);
+
+        Console.WriteLine("[4] Composite Detail by (OrderId=10248, ProductId=11) — KeyFields=" +
+            $"[{string.Join(", ", view.KeyFields)}]");
+        if (row is null)
+        {
+            Console.WriteLine("    -> FAIL: no row returned");
+            return false;
+        }
+
+        var orderId = Convert.ToInt32(Prop(row, "OrderId")!, CultureInfo.InvariantCulture);
+        var productId = Convert.ToInt32(Prop(row, "ProductId")!, CultureInfo.InvariantCulture);
+        var ok = orderId == 10248 && productId == 11;
+        Console.WriteLine($"    Row: OrderId={orderId}  ProductId={productId}  -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>
+    /// D111/D112 — full DataTables adapter round-trip: a server-side request with sort + a <c>jsonQB</c>
+    /// filter (Filter channel) + an <c>externalFilter</c> scope (Scope channel) is bound, mapped to the
+    /// three neutral channels, executed, and formatted back into a <see cref="DataTablesResponse{T}"/>.
+    /// Asserts the channel separation: the scope counts toward <c>recordsTotal</c> while the filter only
+    /// narrows <c>recordsFiltered</c>.
+    /// </summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> DataTablesRoundTripCheckAsync(ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var adapter = new DataTablesAdapter();
+
+        // Simulate a DataTables server-side request: sort by ProductName asc, filter UnitPrice >= 20
+        // (Filter channel via jsonQB), scoped to CategoryId = 1 / Beverages (Scope channel via externalFilter).
+        var values = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["draw"] = new[] { "7" },
+            ["start"] = new[] { "0" },
+            ["length"] = new[] { "20" },
+            ["columns[0][data]"] = new[] { "ProductName" },
+            ["columns[0][orderable]"] = new[] { "true" },
+            ["order[0][column]"] = new[] { "0" },
+            ["order[0][dir]"] = new[] { "asc" },
+            ["jsonQB"] = new[] { "{\"condition\":\"AND\",\"rules\":[{\"field\":\"UnitPrice\",\"operator\":\"greater_or_equal\",\"value\":20}]}" },
+            ["externalFilter"] = new[] { "{\"CategoryId\":1}" },
+        };
+
+        var raw = new AdapterRequest(view.Name, values, JsonBody: null);
+        var query = adapter.BindRequest(raw);
+        var request = adapter.ToQuery(query, view);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var rows = ToObjectList(Prop(page, "Items")!);
+        var adapterResult = new AdapterListResult(
+            rows!,
+            (long)Prop(page, "TotalRows")!,
+            (long)Prop(listResult, "TotalRowsUnfiltered")!);
+
+        var response = adapter.ToResponse(adapterResult, query, view);
+
+        Console.WriteLine("[5] DataTables round-trip (sort + jsonQB UnitPrice>=20 + externalFilter CategoryId=1)");
+        Console.WriteLine($"    draw={response.Draw}  recordsTotal={response.RecordsTotal}  " +
+            $"recordsFiltered={response.RecordsFiltered}  data={response.Data.Count}");
+
+        // Beverages (CategoryId=1) has 12 products → recordsTotal counts the Scope channel only.
+        // Of those, exactly 2 cost >= 20 → recordsFiltered applies the Filter channel.
+        var ok =
+            response.Draw == 7 &&
+            response.RecordsTotal == 12 &&
+            response.RecordsFiltered == 2 &&
+            response.Data.Count == 2;
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>
+    /// R3.1/R3.2/R3.4/R3.5/R3.7/R3.8 (R9.4) — the View_Browser round-trip. A single DataTables server-side
+    /// request drives all four read channels at once: paging (<c>start</c>/<c>length</c>), global search
+    /// (<c>search[value]</c> → <c>Search</c> channel across the view's searchable string fields), multi-sort
+    /// (two <c>order[]</c> entries → priority-ordered <c>Sort</c>), and a <c>jsonQB</c> advanced filter
+    /// (<c>Filter</c> channel). The assertion proves every channel is reflected in the returned page
+    /// simultaneously: the filtered count comes from search AND filter together, the page is clamped by the
+    /// page size, and the rows are ordered by the two sort keys in priority order. No <c>externalFilter</c>
+    /// scope is sent, so <c>recordsTotal</c> stays the full catalog (77) — keeping this check distinct from
+    /// the Scope-channel round-trip in check [5].
+    /// </summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> DataTablesViewBrowserRoundTripCheckAsync(
+        ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var adapter = new DataTablesAdapter();
+
+        // One request combining ALL four read channels of the View_Browser page:
+        //   * paging       : start=0, length=5 (first page of 5)
+        //   * global search: search[value]="ch" → Contains over ProductName/CategoryName/SupplierName (OR)
+        //   * multi-sort   : CategoryName asc (priority 0), then ProductName asc (priority 1)
+        //   * advanced qb  : UnitPrice >= 20 (jsonQB → Filter channel)
+        // order[k][column] indexes into the declared columns[] array, so both sort columns are declared.
+        var values = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["draw"] = new[] { "9" },
+            ["start"] = new[] { "0" },
+            ["length"] = new[] { "5" },
+            ["columns[0][data]"] = new[] { "CategoryName" },
+            ["columns[0][orderable]"] = new[] { "true" },
+            ["columns[1][data]"] = new[] { "ProductName" },
+            ["columns[1][orderable]"] = new[] { "true" },
+            ["order[0][column]"] = new[] { "0" },
+            ["order[0][dir]"] = new[] { "asc" },
+            ["order[1][column]"] = new[] { "1" },
+            ["order[1][dir]"] = new[] { "asc" },
+            ["search[value]"] = new[] { "ch" },
+            ["jsonQB"] = new[] { "{\"condition\":\"AND\",\"rules\":[{\"field\":\"UnitPrice\",\"operator\":\"greater_or_equal\",\"value\":20}]}" },
+        };
+
+        var raw = new AdapterRequest(view.Name, values, JsonBody: null);
+        var query = adapter.BindRequest(raw);
+        var request = adapter.ToQuery(query, view);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var rows = ToObjectList(Prop(page, "Items")!);
+        var adapterResult = new AdapterListResult(
+            rows!,
+            (long)Prop(page, "TotalRows")!,
+            (long)Prop(listResult, "TotalRowsUnfiltered")!);
+
+        var response = adapter.ToResponse(adapterResult, query, view);
+
+        var categories = response.Data.Select(r => (string)Prop(r, "CategoryName")!).ToList();
+        var names = response.Data.Select(r => (string)Prop(r, "ProductName")!).ToList();
+
+        Console.WriteLine("[6] View-browser round-trip (paging len=5 + global search 'ch' + multi-sort " +
+            "CategoryName,ProductName asc + jsonQB UnitPrice>=20)");
+        Console.WriteLine($"    draw={response.Draw}  recordsTotal={response.RecordsTotal}  " +
+            $"recordsFiltered={response.RecordsFiltered}  data={response.Data.Count}");
+        Console.WriteLine($"    Page rows: {string.Join(", ", names.Zip(categories, (n, c) => $"{c}/{n}"))}");
+
+        // Multi-sort invariant: primary key (CategoryName) is non-decreasing across the page, and within a
+        // run of equal CategoryName the secondary key (ProductName) is non-decreasing. Ordinal comparison
+        // mirrors SQLite's default BINARY collation used by the executor.
+        var multiSorted = true;
+        for (var i = 1; i < response.Data.Count; i++)
+        {
+            var catCmp = string.CompareOrdinal(categories[i - 1], categories[i]);
+            if (catCmp > 0 || (catCmp == 0 && string.CompareOrdinal(names[i - 1], names[i]) > 0))
+            {
+                multiSorted = false;
+                break;
+            }
+        }
+
+        // recordsTotal = full catalog (77, no scope). recordsFiltered = search 'ch' AND UnitPrice>=20 = 8.
+        // The first page (len=5) begins with the two pure-ASCII Condiments matches, proving search + filter
+        // + multi-sort + paging all shaped this single page together.
+        var ok =
+            response.Draw == 9 &&
+            response.RecordsTotal == 77 &&
+            response.RecordsFiltered == 8 &&
+            response.Data.Count == 5 &&
+            multiSorted &&
+            names.Count >= 2 &&
+            names[0] == "Chef Anton's Cajun Seasoning" &&
+            names[1] == "Chef Anton's Gumbo Mix";
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<object> InvokeListAsync(
+        ViewMetadata view, IViewExecutor executor, ViewQueryRequest request, IViewScope scope)
+    {
+        var closed = ListAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(executor, new object?[] { view, request, scope, CancellationToken.None })!;
+        await task.ConfigureAwait(false);
+        return task.GetType().GetProperty(nameof(Task<object>.Result))!.GetValue(task)!;
+    }
+
+    private static object? Prop(object instance, string name) =>
+        instance.GetType().GetProperty(name)?.GetValue(instance);
+
+    private static List<object> ToObjectList(object items)
+    {
+        var list = new List<object>();
+        foreach (var item in (IEnumerable)items)
+        {
+            list.Add(item);
+        }
+
+        return list;
+    }
+}

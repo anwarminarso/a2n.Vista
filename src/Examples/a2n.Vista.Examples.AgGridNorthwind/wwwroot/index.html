@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Vista · AG Grid Northwind sample</title>
+  <title>Vista · Simple Wiring (Northwind showcase)</title>
 
-  <!-- AG Grid legacy CSS themes (loaded from CDN). The grid uses the "quartz" theme via the class on the
-       grid container below. -->
+  <!-- AG Grid community CSS themes (loaded from CDN). The grid uses the "quartz" theme via the class on
+       the grid container below. -->
   <link
     rel="stylesheet"
     href="https://cdn.jsdelivr.net/npm/ag-grid-community@32.3.9/styles/ag-grid.css"
@@ -18,9 +18,9 @@
 
   <!--
     Import map so the browser can resolve the bare `ag-grid-community` specifier used by the built ES
-    modules (main.js / vistaAgGridDatasource.js) at runtime. The build step is `tsc` only (no bundler),
-    so `ag-grid-community` is not rewritten to a path; this map points it at the CDN ESM build while `tsc`
-    resolves the same package's types from node_modules for the type-check gate.
+    modules (simpleWiring.js / vistaAgGridDatasource.js) at runtime. The build step is `tsc` only (no
+    bundler), so `ag-grid-community` is not rewritten to a path; this map points it at the CDN ESM build
+    while `tsc` resolves the same package's types from node_modules for the type-check gate.
   -->
   <script type="importmap">
     {
@@ -31,8 +31,21 @@
   </script>
 
   <style>
-    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
-    body { margin: 0; padding: 1.5rem; color: #1a1a1a; }
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
+    body { margin: 0; padding: 0 0 1.5rem; color: #1a1a1a; background: #f6f7f9; }
+
+    /* Shared showcase navigation (rendered by nav.ts into #nav). */
+    .showcase-nav { background: #0f172a; padding: 0 1.5rem; }
+    .showcase-nav .nav-list { list-style: none; display: flex; gap: 0.25rem; margin: 0; padding: 0; }
+    .showcase-nav .nav-item { margin: 0; }
+    .showcase-nav .nav-link {
+      display: inline-block; padding: 0.85rem 1rem; color: #94a3b8; text-decoration: none;
+      font-weight: 600; font-size: 0.9rem; border-bottom: 3px solid transparent;
+    }
+    .showcase-nav .nav-link:hover { color: #e2e8f0; }
+    .showcase-nav .nav-link--active { color: #fff; border-bottom-color: #2563eb; }
+
+    main { padding: 1.5rem; }
     h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
     p.lead { margin: 0 0 1rem; color: #555; }
     .toolbar { display: flex; align-items: center; gap: 0.5rem; margin-bottom: 0.75rem; }
@@ -50,36 +63,42 @@
   </style>
 </head>
 <body>
-  <header>
-    <h1>Vista AG Grid Northwind sample</h1>
-    <p class="lead">
-      AG Grid infinite row model driving the <code>vProductCategory</code> view through
-      <code>POST /api/views/vProductCategory/aggrid</code>. Scroll for block paging; click headers to sort
-      (Shift+click to multi-sort); use the column filters for text/number and combined AND/OR conditions;
-      type below for a quick-filter search.
-    </p>
-  </header>
+  <!-- Shared showcase navigation is injected here by nav.ts. -->
+  <div id="nav"></div>
 
-  <div class="toolbar">
-    <label for="quick-filter">Quick filter</label>
-    <input
-      id="quick-filter"
-      type="search"
-      placeholder="Search all columns…"
-      autocomplete="off"
-      aria-describedby="status-line"
-    />
-  </div>
+  <main>
+    <header>
+      <h1>Simple Wiring · AG Grid</h1>
+      <p class="lead">
+        The minimal end-to-end integration: an AG Grid community infinite row model driving the read-only
+        Northwind <code>vProductCategory</code> view through
+        <code>POST /api/views/vProductCategory/aggrid</code>. Scroll for block paging; click headers to
+        sort (Shift+click to multi-sort); use the column filters for text/number and combined AND/OR
+        conditions; type below for a quick-filter search sent as <code>?q=</code>.
+      </p>
+    </header>
 
-  <!-- Status line (polite) and error area (assertive). The error area is populated by the datasource
-       onError callback and stays hidden until there is a message. -->
-  <p id="status-line" role="status" aria-live="polite">Loading…</p>
-  <div id="status-error" role="alert" aria-live="assertive" hidden></div>
+    <div class="toolbar">
+      <label for="quick-filter">Quick filter</label>
+      <input
+        id="quick-filter"
+        type="search"
+        placeholder="Search all columns…"
+        autocomplete="off"
+        aria-describedby="status-line"
+      />
+    </div>
 
-  <!-- AG Grid mounts here; the quartz theme class controls styling. -->
-  <div id="grid" class="ag-theme-quartz" role="region" aria-label="Products grid"></div>
+    <!-- Status line (polite) and error area (assertive). The error area is populated by the datasource
+         onError callback and stays hidden until there is a message. -->
+    <p id="status-line" role="status" aria-live="polite">Loading…</p>
+    <div id="status-error" role="alert" aria-live="assertive" hidden></div>
 
-  <!-- Built ES module output from `tsc` (client/src/main.ts -> wwwroot/js/main.js). -->
-  <script type="module" src="/js/main.js"></script>
+    <!-- AG Grid mounts here; the quartz theme class controls styling. -->
+    <div id="grid" class="ag-theme-quartz" role="region" aria-label="Products grid"></div>
+  </main>
+
+  <!-- Built ES module output from `tsc` (client/src/simpleWiring.ts -> wwwroot/js/simpleWiring.js). -->
+  <script type="module" src="js/simpleWiring.js"></script>
 </body>
 </html>

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · View Browser (Northwind)</title>
+
+  <!-- jQuery DataTables (default styling) -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css" />
+  <!-- jQuery-QueryBuilder (default theme) -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/jQuery-QueryBuilder@2.6.2/dist/css/query-builder.default.min.css" />
+
+  <style>
+    /* This showcase page uses a fixed light palette; pin the UA color-scheme to light so native
+       controls (notably the <select> popup) never render light text on our white backgrounds when the
+       OS is in dark mode. */
+    :root { color-scheme: light; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font: 15px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      color: #1c2024;
+      background: #f6f7f9;
+    }
+    header {
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 20px 28px;
+    }
+    header h1 { margin: 0 0 6px; font-size: 20px; }
+    header p { margin: 0; color: #94a3b8; font-size: 13px; }
+    header code {
+      background: #1e293b; color: #cbd5e1; padding: 1px 6px; border-radius: 4px; font-size: 12px;
+    }
+
+    /* Shared cross-page navigation (rendered by nav.ts into #nav). */
+    .showcase-nav { margin-top: 14px; }
+    .nav-list { list-style: none; display: flex; flex-wrap: wrap; gap: 8px; margin: 0; padding: 0; }
+    .nav-item { margin: 0; }
+    .nav-link {
+      display: inline-block; padding: 6px 14px; border-radius: 999px; text-decoration: none;
+      font-size: 13px; font-weight: 600; color: #cbd5e1; background: #1e293b; border: 1px solid #334155;
+    }
+    .nav-link:hover { background: #334155; color: #e2e8f0; }
+    .nav-link--active { background: #2563eb; color: #fff; border-color: #2563eb; }
+
+    main { max-width: 1100px; margin: 0 auto; padding: 24px 28px 60px; }
+    .panel {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+      padding: 18px 20px; margin-bottom: 20px;
+    }
+    .panel h2 { margin: 0 0 14px; font-size: 15px; color: #334155; text-transform: uppercase; letter-spacing: .04em; }
+    .controls { display: flex; flex-wrap: wrap; gap: 14px; align-items: end; }
+    .field { display: flex; flex-direction: column; gap: 4px; }
+    .field label { font-size: 12px; color: #64748b; font-weight: 600; }
+    select, input[type="search"], button {
+      font: inherit; padding: 8px 12px; border-radius: 8px; border: 1px solid #cbd5e1;
+      background: #fff; color: #1c2024;
+    }
+    /* Explicit option colors so the native popup stays readable regardless of OS theme. */
+    select option { background: #fff; color: #1c2024; }
+    input[type="search"] { min-width: 240px; }
+    button { cursor: pointer; background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600; }
+    button.secondary { background: #fff; color: #334155; }
+    button:hover { filter: brightness(1.05); }
+    .hint { font-size: 12px; color: #64748b; margin: 4px 0 0; }
+
+    /* Visible status/error line (RFC 7807 surfacing). Styled by class toggled from viewBrowser.ts. */
+    #status { margin: 0 0 16px; padding: 10px 14px; border-radius: 8px; font-size: 13px; display: none; }
+    #status.ok { display: block; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; }
+    #status.err { display: block; background: #fef2f2; color: #991b1b; border: 1px solid #fecaca; }
+
+    /* Explicit empty-state message (empty catalog / placeholder selection). Toggled from viewBrowser.ts. */
+    #emptyState {
+      display: none; margin: 0 0 16px; padding: 14px 16px; border-radius: 10px; font-size: 14px;
+      background: #f1f5f9; color: #475569; border: 1px dashed #cbd5e1;
+    }
+
+    table.dataTable { width: 100% !important; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Vista · View Browser</h1>
+    <p>
+      Pick any registered Northwind view and browse it end-to-end: columns are discovered from
+      <code>GET {route}/metadata</code>, the advanced filter is populated from
+      <code>GET {route}/querybuilder</code>, and every page combines paging, global search, multi-sort, and
+      the structured filter in one <code>POST {route}/datatable</code> request.
+    </p>
+    <!-- Shared cross-page navigation slot; viewBrowser.ts renders the nav bar here. -->
+    <div id="nav"></div>
+  </header>
+
+  <main>
+    <!-- Visible status/error line. -->
+    <div id="status"></div>
+
+    <!-- Empty-state message for an empty catalog or the placeholder selection. -->
+    <div id="emptyState"></div>
+
+    <div class="panel">
+      <h2>View selector &amp; global search</h2>
+      <div class="controls">
+        <div class="field">
+          <label for="viewSelector">View</label>
+          <select id="viewSelector">
+            <option value="">Select a view&hellip;</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="globalSearch">Global search</label>
+          <input id="globalSearch" type="search" placeholder="Type at least 3 characters&hellip;" />
+        </div>
+      </div>
+      <p class="hint">
+        The selector lists only explicitly-registered Vista views (secure-by-default). Global search is
+        applied server-side across the view's searchable string fields once the term reaches the minimum
+        length.
+      </p>
+    </div>
+
+    <!-- Grid + filter controls; hidden until a view is selected (toggled by viewBrowser.ts). -->
+    <div id="gridPanel" style="display:none;">
+      <div class="panel">
+        <h2>Advanced filter</h2>
+        <p class="hint">
+          The builder is populated from the view's QueryBuilder schema, so only server-allowed fields and
+          operators appear. Applied server-side through the neutral structured filter channel.
+        </p>
+        <div id="builder" style="margin-top:14px;"></div>
+        <div class="controls" style="margin-top:14px;">
+          <button id="applyFilter" type="button">Apply filter</button>
+          <button id="resetFilter" type="button" class="secondary">Reset</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <h2>Results</h2>
+        <!-- DataTables initialises on this table; the <thead> is built dynamically by viewBrowser.ts. -->
+        <table id="grid" class="display" style="width:100%">
+          <thead></thead>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Scripts: jQuery first, then DataTables and the QueryBuilder standalone bundle. -->
+  <script src="https://code.jquery.com/jquery-3.7.1.min.js"></script>
+  <script src="https://cdn.datatables.net/2.1.8/js/dataTables.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/jQuery-QueryBuilder@2.6.2/dist/js/query-builder.standalone.min.js"></script>
+  <!-- Compiled orchestration (emitted to wwwroot/js by the client tsc build) — loaded AFTER the CDN globals. -->
+  <script type="module" src="js/viewBrowser.js"></script>
+</body>
+</html>

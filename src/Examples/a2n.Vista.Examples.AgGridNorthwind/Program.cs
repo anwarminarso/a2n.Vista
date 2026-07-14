@@ -22,7 +22,7 @@ if (!File.Exists(dbFullPath))
           3. Make sure the extracted file is named "northwind.db" (rename it if needed)
 
         Then run this example again from the project directory:
-          dotnet run --project src/Examples/a2n.Vista.Examples.AgGridNorthwind
+          dotnet run --project src/Examples/Northwind
         """);
     Environment.ExitCode = 1;
     return;
@@ -32,36 +32,61 @@ if (!File.Exists(dbFullPath))
 builder.Services.AddDbContext<NorthwindDbContext>(options =>
     options.UseSqlite($"Data Source={DbRelativePath}"));
 
-// Vista core wiring (EF layer): register the Northwind central template (Gaya A / Style A). It exposes the
-// read-only vProductCategory view (Product joined to Category/Supplier — string, numeric, and FK fields),
-// so the AG Grid front-end can drive text/number/set filters, multi-sort, and quick-filter search against
-// a real view (D136, R7.1).
+// Vista core wiring (EF layer): register the Gaya A central template plus a class-per-view (Style B)
+// *writable* view. A view's route is composed at registration (default root /api/views, or via
+// RouteGroup(...)) and recorded in ViewMetadata.Route (Decision Log D101/D103); views are exposed under
+// {root}/{viewName}. The writable Style B view (vWritableMemo) declares a MapWritable whitelist and a
+// concurrency token, so its Create/Update/Delete endpoints are enabled (Requirement R16.4).
 builder.Services.AddVista(vista =>
-    vista.RegisterTemplate<AgGridNorthwindViews, NorthwindDbContext>());
+    vista
+        .RegisterTemplate<NorthwindViews, NorthwindDbContext>()
+        .Register<WritableMemoView>());
 
 // Vista HTTP layer. This public read-only sample runs without an authorizer; in a non-Development
 // environment that is a fail-closed startup error unless open access is opted into explicitly (D94),
 // so we call AllowAnonymousAccess() to make the open posture a deliberate, documented choice. A real
 // app gates access via UseAuthorizer<T>() instead.
+//
+// No developer App_Json_Context is registered: the ViewJsonContextGenerator emits a reflection-free
+// per-view JsonTypeInfo set for the typed Style B view (vWritableMemo) — covering MemoRow,
+// ViewListResult<MemoRow>, PagedResult<MemoRow>, and MemoWriteModel — and Vista auto-chains it into the
+// serialization seam ahead of the reflection fallback (Decision Log D125/D126). Combined with the
+// generated dispatch invoker (ViewInvokerStore, D123) that closes List/Detail/Create/Update over those
+// types at compile time, the vWritableMemo HTTP path runs reflection-free with no hand-authored context.
+// The Style A views (vProductCategory, vOrderDetail) project anonymous rows and stay on the reflection
+// serialization fallback by design (D96).
 builder.Services.AddVistaEndpoints(v => v
     .AllowAnonymousAccess());
 
-// Register the AG Grid server-side row model adapter (D133/D134/D135, R6.1). Each view then also exposes
-// POST {route}/aggrid for AG Grid IServerSideGetRowsRequest payloads; the quick-filter text rides
-// out-of-band as ?q= folded into AdapterRequest.Values["q"].
+// Opt in to the Vista OpenAPI emitter (Decision Log D127/D128). AddVistaOpenApi() registers the
+// metadata-driven document builder + the build-once cache (off by default; nothing is added unless this is
+// called), and MapVistaOpenApi() below exposes GET /openapi/v1.json serving the document as
+// application/json. The emitted document's operation set is, by construction, exactly the live
+// View_Operation_Set for every registered view (endpoint parity), and adding it changes no existing
+// endpoint response — both asserted by the OpenAPI self-test (dotnet run -- selftest).
+builder.Services.AddVistaOpenApi();
+
+// Register the jQuery DataTables.NET adapter (Decision Log D112). Each view then also exposes
+// POST {route}/datatable for DataTables server-side requests.
+builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdapter>();
+
+// Register the AG Grid server-side row model adapter (Decision Log D133). Each view then also exposes
+// POST {route}/aggrid, driving the showcase's Simple Wiring and Custom Renderer AG Grid pages (R7.3).
+// Additive only: this changes no existing view route, envelope, or error shape.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.AgGrid.AgGridAdapter>();
+
+// Register the jQuery-QueryBuilder metadata-schema emitter (Decision Log D116). Each view then also
+// exposes GET {route}/querybuilder returning the metadataQB schema.
+builder.Services.AddVistaMetadataAdapter<a2n.Vista.Adapters.DataTablesNet.QueryBuilderSchemaAdapter>();
 
 var app = builder.Build();
 
 // No seeding: the extracted Northwind database is the source of truth (read-only sample).
 
-// Serve the interactive demo UI from wwwroot (index.html). Static-file serving is independent of the API
-// surface — MapVistaViews still owns everything under /api/views. UseDefaultFiles rewrites "/" to
-// "/index.html" before UseStaticFiles.
-//
-// TODO (task 9): the TypeScript client under client/ builds the AG Grid front-end (vistaAgGridDatasource.ts
-// + main.ts) and emits its JS into wwwroot/js; the placeholder index.html here is replaced/extended by the
-// real front-end then.
+// Serve the interactive demo UI from wwwroot (index.html): a jQuery DataTables grid plus a
+// jQuery-QueryBuilder panel wired to the adapter endpoints (POST {route}/datatable and
+// GET {route}/querybuilder). Static-file serving is independent of the API surface — MapVistaViews still
+// owns everything under /api/views. UseDefaultFiles rewrites "/" to "/index.html" before UseStaticFiles.
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
@@ -69,17 +94,36 @@ app.UseStaticFiles();
 app.UseVistaExceptionHandling();
 app.MapVistaViews();
 
-// Guarded end-to-end self-test (R8.2, R8.6): `dotnet run -- selftest`. It drives an AG Grid
-// IServerSideGetRowsRequest (startRow/endRow block paging, two sortModel keys, a combined two-condition
-// filterModel, and a quick filter) through the same path the POST {route}/aggrid endpoint uses — the
-// AgGridAdapter (BindRequest → ToQuery) + the real Core executor + ToResponse — and asserts the
-// { rowData, rowCount } shape (rowCount = total matching before paging; rowData = the exact rows within
-// [startRow, endRow) in the requested sort order), then that the response serializes to camelCase
-// rowData/rowCount. The process exits 0 only when the self-test passes.
+// App-level view catalog for the View Browser page's selector (Decision D138). This minimal-API handler
+// resolves the in-process IViewRegistry and projects it — exactly the explicitly-registered views,
+// secure-by-default — into the browser-facing catalog. It is NOT a Vista package contract and adds no
+// new view route, envelope, or error shape (R4.4). It sits inside the host's normal middleware pipeline
+// and runs under the open-access posture opted into above (D94, R4.3).
+app.MapGet(
+    "/api/showcase/views",
+    (a2n.Vista.Ports.IViewRegistry registry) =>
+        Results.Json(a2n.Vista.Examples.AgGridNorthwind.Showcase.ShowcaseCatalog.Project(registry)));
+
+// The opt-in OpenAPI Serve_Endpoint (default GET /openapi/v1.json). It sits inside the host's normal
+// middleware pipeline (it bypasses no authentication/authorization) and returns the once-built, cached
+// OpenAPI document as application/json.
+app.MapVistaOpenApi();
+
+// Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises
+// List paging, filter/sort/search, and Detail-by-key against the shipped read-only northwind.db through
+// the real executor. The write self-test exercises Create/Update/Delete on the writable vWritableMemo
+// view against an isolated in-memory database (the read-only sample has no VistaMemos table and is never
+// mutated). Both run, print their outcomes, and the process exits 0 only when BOTH pass.
 if (args.Contains("selftest", StringComparer.OrdinalIgnoreCase))
 {
-    var passed = await AgGridSelfTest.RunAsync(app.Services);
-    Environment.ExitCode = passed ? 0 : 1;
+    var readPassed = await SelfTest.RunAsync(app.Services);
+    var writePassed = await WriteSelfTest.RunAsync();
+    // The OpenAPI self-test stands up an in-process test host (with and without the emitter) over the same
+    // Vista wiring, issues a real GET /openapi/v1.json, asserts the served document is a valid OpenAPI 3.x
+    // document whose operation set equals the registered views' live View_Operation_Set (endpoint parity),
+    // and asserts a representative existing endpoint response is byte-for-byte unchanged by the emitter.
+    var openApiPassed = await OpenApiSelfTest.RunAsync(DbRelativePath);
+    Environment.ExitCode = readPassed && writePassed && openApiPassed ? 0 : 1;
     return;
 }
 

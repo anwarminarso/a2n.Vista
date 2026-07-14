@@ -3,8 +3,8 @@ import type { IDatasource, IGetRowsParams } from 'ag-grid-community';
 /**
  * Options for {@link createVistaAgGridDatasource}.
  *
- * The datasource is deliberately thin (D136): the M17 generated TypeScript client is OpenAPI-driven and
- * the `{route}/aggrid` adapter endpoint is not part of the OpenAPI document, so this datasource is
+ * The datasource is deliberately thin (D136): the generated TypeScript client is OpenAPI-driven and the
+ * `{route}/aggrid` adapter endpoint is not part of the OpenAPI document, so this datasource is
  * hand-written against the AG Grid row-model contract.
  *
  * It targets AG Grid's community **Infinite Row Model** (`IDatasource`). AG Grid's server-side row model

@@ -136,4 +136,15 @@
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorStyleASample\a2n.Vista.GeneratorStyleASample.csproj" />
   </ItemGroup>
 
+  <!--
+    AG Grid Northwind showcase host (spec northwind-sample-showcase, task 1.3): referenced so the
+    ShowcaseCatalog.Project property test (Property 2) can exercise the real pure catalog projection.
+    The AgGridNorthwind showcase host is a net8.0-only Web SDK host (it overrides the repo-wide
+    multi-target), so the reference — and the test that consumes it — are scoped to net8.0 to keep the
+    net9.0/net10.0 builds of this multi-targeting test project green. Additive: no example code is changed.
+  -->
+  <ItemGroup Condition="'$(TargetFramework)' == 'net8.0'">
+    <ProjectReference Include="..\..\Examples\a2n.Vista.Examples.AgGridNorthwind\a2n.Vista.Examples.AgGridNorthwind.csproj" />
+  </ItemGroup>
+
 </Project>
