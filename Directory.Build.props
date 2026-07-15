@@ -9,9 +9,20 @@
     <RepositoryUrl>https://github.com/anwarminarso/a2n.Vista</RepositoryUrl>
     <PackageProjectUrl>https://github.com/anwarminarso/a2n.Vista</PackageProjectUrl>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <Version>0.0.1</Version>
+    <Version>0.0.1-beta.1</Version>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- Brand icon shown on nuget.org. The a2n wordmark, downscaled to 1024x480
+         (~328 KB) to stay under NuGet's 1 MB package-icon limit. -->
+    <PackageIcon>icon.png</PackageIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Pack the brand icon at the package root for every shipping package. Inert for
+         projects that never pack (tests, examples). Path is relative to this props file
+         (repo root) so it resolves the same for all projects. Lives in the tracked
+         assets/ folder (brand/ is git-ignored design scratch and must not be shipped). -->
+    <None Include="$(MSBuildThisFileDirectory)assets\a2n-vista-wordmark.png" Pack="true" PackagePath="icon.png" Visible="false" />
+  </ItemGroup>
 
   <ItemGroup>
     <!-- Transitive advisory acknowledged and suppressed for the audit (was declared in the former

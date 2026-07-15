@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="./assets/a2n-vista-wordmark.png" alt="a2n.Vista" width="520" />
+</p>
+
 # a2n.Vista
 
 > *Define a view, get an API. Type-safe, AOT-friendly, grid-agnostic projections for ASP.NET Core.*
