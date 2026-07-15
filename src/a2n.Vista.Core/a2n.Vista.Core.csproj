@@ -17,4 +17,26 @@
     <InternalsVisibleTo Include="a2n.Vista.EntityFrameworkCore" />
   </ItemGroup>
 
+  <!--
+    Pillar 3 delivery. The Vista source generator is bundled into this package so consumers of the
+    a2n.Vista.Core NuGet package get AOT-clean metadata/execution/serialization codegen transitively,
+    with no extra package reference. The generator runs in the CONSUMER's compilation (where views are
+    declared); Core declares no views, so running it here is a harmless no-op that also builds the
+    analyzer assembly for packing. PrivateAssets="all" keeps it out of Core's package dependencies and
+    stops it from flowing to ProjectReference consumers (which reference the generator explicitly).
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\a2n.Vista.SourceGenerators\a2n.Vista.SourceGenerators.csproj"
+                      OutputItemType="Analyzer"
+                      ReferenceOutputAssembly="false"
+                      PrivateAssets="all" />
+  </ItemGroup>
+
+  <!-- Pack the built generator dll into the NuGet analyzer path so NuGet applies it as an analyzer in
+       the consumer's build. Packed once (analyzers are TFM-agnostic), per NuGet convention. -->
+  <ItemGroup>
+    <None Include="..\a2n.Vista.SourceGenerators\bin\$(Configuration)\netstandard2.0\a2n.Vista.SourceGenerators.dll"
+          Pack="true" PackagePath="analyzers/dotnet/cs" Visible="false" />
+  </ItemGroup>
+
 </Project>

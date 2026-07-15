@@ -31,11 +31,10 @@ env:
   # Only the implemented, shippable libraries. Intentionally excluded:
   #   * the empty scaffolds (a2n.Vista.Newtonsoft + the MudBlazor/OData/GraphQL/
   #     PrimeNG/Syncfusion/TanStackTable/Telerik adapters) until they have content;
-  #   * a2n.Vista.SourceGenerators - its csproj sets IncludeBuildOutput=false with no
-  #     analyzers/dotnet/cs pack items, so `dotnet pack` would emit an empty package.
-  #     Ship it only after the packaging model is settled (standalone analyzer package
-  #     vs. bundled into a2n.Vista.Core so consumers get the generator transitively),
-  #     then add its csproj here.
+  #   * a2n.Vista.SourceGenerators - NOT shipped standalone. It is bundled into the
+  #     a2n.Vista.Core package (packed under analyzers/dotnet/cs) so consumers get the
+  #     generator transitively; packing it on its own would emit an empty package
+  #     (IncludeBuildOutput=false).
   PACK_PROJECTS: >-
     src/a2n.Vista.Core/a2n.Vista.Core.csproj
     src/a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj

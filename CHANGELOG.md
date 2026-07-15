@@ -8,7 +8,7 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-## [0.0.1-beta.1] - 2026-07-15
+## [0.0.1-beta.2] - 2026-07-15
 
 First public pre-release. The Foundation (`v0.x`) surface is working end to end on
 .NET 8/9/10: Core view authoring, EF Core execution with the write facet, ASP.NET
@@ -17,6 +17,12 @@ emitter, the standalone TypeScript client generator, and the DataTables.NET + AG
 adapters. Because this is `0.x`, anything may still change between releases.
 
 ### Added
+- **Packaging (Pillar 3 delivery)** — the `a2n.Vista.SourceGenerators` analyzer is now
+  **bundled into the `a2n.Vista.Core` package** (packed under `analyzers/dotnet/cs`)
+  rather than shipped standalone. Consumers of the Core package get the AOT-clean
+  metadata/execution/serialization codegen transitively, with no extra package
+  reference and no manual `OutputItemType="Analyzer"` wiring. Settles the previously
+  deferred source-generator packaging model.
 - **Examples** — a **Northwind sample showcase** (Decision Log D137–D140):
   the `a2n.Vista.Examples.AgGridNorthwind` host is now a three-page showcase
   behind a shared nav, reaching feature parity with the legacy DynData
@@ -305,5 +311,5 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.1...HEAD
-[0.0.1-beta.1]: https://github.com/anwarminarso/a2n.Vista/releases/tag/v0.0.1-beta.1
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.2...HEAD
+[0.0.1-beta.2]: https://github.com/anwarminarso/a2n.Vista/releases/tag/v0.0.1-beta.2
