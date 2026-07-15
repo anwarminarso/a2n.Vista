@@ -23,6 +23,9 @@ adapters. Because this is `0.x`, anything may still change between releases.
   metadata/execution/serialization codegen transitively, with no extra package
   reference and no manual `OutputItemType="Analyzer"` wiring. Settles the previously
   deferred source-generator packaging model.
+- **Packaging (presentation)** — every shipping package now carries the a2n brand
+  icon and a per-package `README.md` rendered on its nuget.org page (with an absolute
+  logo URL so it renders off-repo).
 - **Examples** — a **Northwind sample showcase** (Decision Log D137–D140):
   the `a2n.Vista.Examples.AgGridNorthwind` host is now a three-page showcase
   behind a shared nav, reaching feature parity with the legacy DynData
