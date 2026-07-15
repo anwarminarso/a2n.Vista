@@ -87,11 +87,11 @@ adapters. Because this is `0.x`, anything may still change between releases.
   `workflow_dispatch`, using **NuGet Trusted Publishing (OIDC)** via
   `NuGet/login@v1` — no long-lived API key is stored (`permissions: id-token:
   write`; the nuget.org account name is the `NUGET_USER` secret). It ships only
-  the seven implemented libraries (`Core`, `EntityFrameworkCore`, `AspNetCore`,
+  the eight implemented libraries (`Core`, `EntityFrameworkCore`, `AspNetCore`,
   `OpenApi`, `EntityFrameworkCore.Npgsql`, `Adapters.DataTablesNet`,
-  `Client.TypeScript`); the empty scaffolds and `a2n.Vista.SourceGenerators`
-  (packaging model unsettled) are intentionally excluded. Additive-only — no
-  source, wire, or package-content change.
+  `Adapters.AgGrid`, `Client.TypeScript`); the empty scaffolds and
+  `a2n.Vista.SourceGenerators` (packaging model unsettled) are intentionally
+  excluded. Additive-only — no source, wire, or package-content change.
 - **Client.TypeScript** — a standalone TypeScript client generator,
   `a2n.Vista.Client.TypeScript` (Decision Log D131/D132; M17): a .NET CLI that
   reads a Vista **OpenAPI 3.0.4** document (from a file or an HTTPS URL) and emits
