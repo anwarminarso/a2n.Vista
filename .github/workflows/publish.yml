@@ -50,6 +50,10 @@ jobs:
   publish:
     name: Pack & push to nuget.org
     runs-on: ubuntu-latest
+    # The NUGET_USER secret lives in the "nuget" GitHub Environment, so the job must
+    # be scoped to it to read the secret (and to benefit from any environment
+    # protection rules). The OIDC token's subject then carries this environment.
+    environment: nuget
     steps:
       - name: Checkout
         uses: actions/checkout@v4
