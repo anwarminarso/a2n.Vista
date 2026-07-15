@@ -29,7 +29,7 @@ env:
   DOTNET_SKIP_FIRST_TIME_EXPERIENCE: "true"
   NUGET_FEED: "https://api.nuget.org/v3/index.json"
   # Only the implemented, shippable libraries. Intentionally excluded:
-  #   * the empty scaffolds (a2n.Vista.Newtonsoft + the AgGrid/MudBlazor/OData/GraphQL/
+  #   * the empty scaffolds (a2n.Vista.Newtonsoft + the MudBlazor/OData/GraphQL/
   #     PrimeNG/Syncfusion/TanStackTable/Telerik adapters) until they have content;
   #   * a2n.Vista.SourceGenerators - its csproj sets IncludeBuildOutput=false with no
   #     analyzers/dotnet/cs pack items, so `dotnet pack` would emit an empty package.
@@ -43,6 +43,7 @@ env:
     src/a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj
     src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj
     src/Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj
+    src/Adapters/a2n.Vista.Adapters.AgGrid/a2n.Vista.Adapters.AgGrid.csproj
     src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
 
 jobs:
