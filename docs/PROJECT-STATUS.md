@@ -1055,19 +1055,21 @@ package-content change). No decision numbers — pure operational tooling.
     `user:` input is the `NUGET_USER` secret (the nuget.org **account/profile name**, not an email). No
     long-lived API key is stored. The registered Trusted Publishing policy's **Workflow File** must be
     `publish.yml` (GitHub Actions only runs `.yml`/`.yaml`).
-  - **Scope — 7 implemented libraries only:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
-    `.OpenApi`, `.EntityFrameworkCore.Npgsql`, `.Adapters.DataTablesNet`, `.Client.TypeScript`.
-    **Excluded:** the empty scaffolds (`a2n.Vista.Newtonsoft` + the AgGrid/MudBlazor/OData/GraphQL/PrimeNG/
+  - **Scope — 8 implemented libraries:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
+    `.OpenApi`, `.EntityFrameworkCore.Npgsql`, `.Adapters.DataTablesNet`, `.Adapters.AgGrid`,
+    `.Client.TypeScript` (the last ships as a `dotnet tool`, command `vista-ts`).
+    **Excluded:** the empty scaffolds (`a2n.Vista.Newtonsoft` + the MudBlazor/OData/GraphQL/PrimeNG/
     Syncfusion/TanStackTable/Telerik adapter shells — `AssemblyMarker.cs` only), and
-    **`a2n.Vista.SourceGenerators`** (its `IncludeBuildOutput=false` csproj has no `analyzers/dotnet/cs`
-    pack items, so `dotnet pack` would emit an empty package — ship only after the packaging model is
-    settled: standalone analyzer package vs. bundled into `a2n.Vista.Core`).
+    **`a2n.Vista.SourceGenerators`** — not shipped standalone; it is **bundled into `a2n.Vista.Core`**
+    (packed under `analyzers/dotnet/cs`) so consumers get the generator transitively.
 
-**Open follow-ups (flagged, not done):** (1) the `a2n.Vista.SourceGenerators` packaging model above;
-(2) `a2n.Vista.Client.TypeScript` currently packs as a plain `Exe` package (no `PackAsTool`/`ToolCommandName`)
-— decide whether it should ship as a `dotnet tool`; (3) `<Version>` is still `0.0.1` in
-`Directory.Build.props` — a real release cuts the version from the Git tag. **Verification** is the first
-green Actions run (workflows cannot be exercised locally).
+**Settled (was "open follow-ups"):** (1) **source-generator packaging** — bundled into `a2n.Vista.Core`
+under `analyzers/dotnet/cs` (verified: a local-feed package consumer's build emits the accessor/invoker/
+json-context generators); (2) **`a2n.Vista.Client.TypeScript`** now ships as a `dotnet tool`
+(`PackAsTool`, command `vista-ts`); (3) `<Version>` is `0.0.1-beta.2` in `Directory.Build.props`, but a
+real release still cuts the version from the Git tag. Every shipping package also carries the brand icon
+and a per-package `README.md` for its nuget.org page. **Verification** is the first green Actions run
+(workflows cannot be exercised locally).
 
 ### 2.20 `ag-grid-adapter` (landed; spec `.kiro/specs/ag-grid-adapter`) — M16
 

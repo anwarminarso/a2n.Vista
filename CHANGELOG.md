@@ -26,6 +26,9 @@ adapters. Because this is `0.x`, anything may still change between releases.
 - **Packaging (presentation)** — every shipping package now carries the a2n brand
   icon and a per-package `README.md` rendered on its nuget.org page (with an absolute
   logo URL so it renders off-repo).
+- **Client.TypeScript ships as a `dotnet tool`** — `PackAsTool` with the command
+  `vista-ts`. Install with `dotnet tool install --global a2n.Vista.Client.TypeScript`
+  and invoke as `vista-ts --source <doc> --out <dir>`.
 - **Examples** — a **Northwind sample showcase** (Decision Log D137–D140):
   the `a2n.Vista.Examples.AgGridNorthwind` host is now a three-page showcase
   behind a shared nav, reaching feature parity with the legacy DynData

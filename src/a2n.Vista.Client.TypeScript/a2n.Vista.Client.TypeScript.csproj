@@ -9,6 +9,10 @@
     <PackageId>a2n.Vista.Client.TypeScript</PackageId>
     <Description>TypeScript client generator from the Vista OpenAPI document.</Description>
     <PackageTags>vista;a2n;typescript;codegen;client</PackageTags>
+    <!-- Ship as a .NET global/local tool: `dotnet tool install -g a2n.Vista.Client.TypeScript`
+         then invoke as `vista-ts`. Packs under tools/<tfm> instead of lib/. -->
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>vista-ts</ToolCommandName>
   </PropertyGroup>
 
   <!--

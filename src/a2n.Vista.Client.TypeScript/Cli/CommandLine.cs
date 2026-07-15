@@ -74,7 +74,7 @@ public static class CommandLine
         "Generates a framework-agnostic TypeScript client from an OpenAPI 3.0.x/3.1.x document.",
         "",
         "Usage:",
-        "  a2n.Vista.Client.TypeScript --source <file-or-https-url> --out <dir> [options]",
+        "  vista-ts --source <file-or-https-url> --out <dir> [options]",
         "",
         "Required:",
         "  --source <file|https-url>   OpenAPI document to read: a local file path or an https URL.",

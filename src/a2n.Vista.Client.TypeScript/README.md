@@ -15,11 +15,19 @@ Reads an OpenAPI 3.x document (from a file or an HTTPS URL) and emits:
 
 ## Install
 
+Ships as a .NET tool:
+
 ```sh
-dotnet add package a2n.Vista.Client.TypeScript
+dotnet tool install --global a2n.Vista.Client.TypeScript
 ```
 
-Then run the generator against a document emitted by [`a2n.Vista.OpenApi`](https://www.nuget.org/packages/a2n.Vista.OpenApi). See the [project README](https://github.com/anwarminarso/a2n.Vista#readme) for the exact invocation.
+Then generate from a document emitted by [`a2n.Vista.OpenApi`](https://www.nuget.org/packages/a2n.Vista.OpenApi):
+
+```sh
+vista-ts --source ./openapi.json --out ./src/api
+```
+
+Add `--emit-write-facets` to include create/update/delete (off by default), and `--base-url <url>` to bake in a default base URL.
 
 ## Documentation
 
