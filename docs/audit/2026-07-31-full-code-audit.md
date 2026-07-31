@@ -83,6 +83,9 @@ covered by regression tests**. Build green on net8.0/net9.0/net10.0; suites gree
 | `DEAD-06` | **Fixed** | Reclassified: an under-implementation of R3.1, not dead. Scanning now runs the same registration unit as `Register<TView>()`, with first test coverage |
 | `DEAD-07` | **Reclassified — finding withdrawn** | Not dead code: `openapi-emitter` R12.2 requires an extension point, which is **unimplemented**. Removal reverted |
 | `DEAD-01`, `DEAD-03`, `DEAD-08` | **Open (scope call)** | Each is a spec'd surface with no acceptance criterion behind it; removal is an owner scope decision plus a spec reconciliation |
+| `PERF-03` | **Fixed** | The worksheet streams into its archive entry one row at a time; column letters resolved once per column. Byte output unchanged |
+| `DEAD-09` | **Partially fixed** | The concrete drift is closed via one shared `SourceLiterals.Literal`; the wider cross-generator dedup is deferred as a tracked task |
+| `PERF-06` | **Declined as specified** | `CompilationProvider` combined into a per-node transform invalidates every candidate on every keystroke — the fix would be a regression. Safe variant recorded |
 | `PERF-05` | **Fixed** | One shared `ViewFieldLookup.For(view)`, memoized per metadata instance and frozen; replaces four independent per-call builders |
 | `PERF-07` | **Fixed** | The metadata projection is memoized per view and its serialized payload + `ETag` computed once; the 304 path is now one string comparison |
 | Other `DEAD-*` / `PERF-*` | **Open** | Each is either an API removal (breaking) or a design change; see the notes on each |
@@ -164,9 +167,24 @@ them (see the method-correction box in §3):
   acceptance criterion behind its behaviour. Removal is defensible for all three (and for `DEAD-08` the design
   doc contradicts a tested security requirement), but each must reconcile its spec in the same change.
 
-**Still open after tranche 5:** `DEAD-01`, `DEAD-03`, `DEAD-08` (scope calls), `DEAD-07`/R12.2 (implement the
-extension point), `DEAD-09` (generator duplication — contains a real defect: the accessor-map emitters have
-drifted on key escaping), and `PERF-03`, `PERF-06`, `PERF-08`.
+### Tranche 6 (2026-07-31) — export memory, generator drift, and one finding declined
+
+- **`PERF-03` → fixed.** The XLSX worksheet streams into its archive entry one row at a time through a reused
+  builder, and the A1 column letters are resolved once per column. Peak memory is now one row regardless of the
+  export size. Byte output unchanged, with the UTF-8-preamble risk a `StreamWriter` rewrite invites pinned by a
+  test.
+- **`DEAD-09` → partially fixed.** The concrete drift the finding predicted *and* found is closed: one
+  `SourceLiterals.Literal` now serves all three emitters. Its live impact was nil (a CLR member name cannot
+  contain a quote or backslash, so escaping an identifier is byte-identical — goldens unchanged), so this was a
+  latent inconsistency. The wider cross-generator dedup is deferred as a tracked task.
+- **`PERF-06` → declined as specified.** The proposed `CompilationProvider` hoist would invalidate every
+  candidate's cached transform on every keystroke — worse than the handful of cached symbol lookups it removes.
+  A safe, equatable-`bool` variant is recorded for if profiling ever justifies it.
+
+**Still open after tranche 6:** `DEAD-01`, `DEAD-03`, `DEAD-08` (owner scope calls, each with a spec
+reconciliation), `DEAD-07`/R12.2 (implement the adapter-documentation extension point), the deferred
+cross-generator dedup from `DEAD-09`, and `PERF-08` (needs a `ViewQueryRequest` contract decision — the adapter
+must be able to say it does not need the unfiltered total).
 
 ---
 
@@ -1177,6 +1195,26 @@ internal-for-tests, but there is no `InternalsVisibleTo` for the generator assem
 re-verify the two accessor-map emitters produce byte-identical output (the standing parity guard should
 cover this).
 
+**Partially fixed (tranche 6) — the concrete drift is closed; the wider dedup is deferred.** The drift is real
+and was confirmed: `StyleAShapeGenerator` wrote accessor-map keys through an escaping `Literal(...)`, while
+`ViewAccessorGenerator` concatenated `"[\""` + name + `"\"]"` raw, in **two** places (the accessor map and the
+member-access map). There is now one writer, `SourceLiterals.Literal`, used by all three emitters; the two
+private copies became one-line delegations.
+
+Two honest qualifications. First, the **impact** was lower than the finding implies: a CLR member name cannot
+contain a quote or a backslash, so the unescaped path could not actually emit broken source — escaping an
+identifier produces identical bytes, which is why the generator goldens and the reflection-oracle parity guard
+are untouched (114/114 unchanged). The escaping matters for the values that are *not* identifiers (an
+author-supplied view name, a JSON property name), and those already went through the escaping path. So this
+was a latent inconsistency, not a live defect. Second, the remaining dedup (4× `FindViewBase` /
+`IsRecognizedViewDefinition`, 3× `IsNamedContractType`, 2× `Unwrap`, 5× hint-name builder) is a cross-generator
+refactor whose only payoff is maintainability, against a real regression risk in five incremental pipelines; it
+is deferred as a tracked task rather than swept in alongside behavioural fixes.
+
+The unreferenced generator model members this finding also lists (`WriteMapperModel.HasCrudFacet`,
+`DtoMemberModel.ShapeKind`/`MemberShapeKind`, `ShouldEmitMapper`) were **not** touched: after the §3 method
+correction, each needs a requirements cross-check before removal, exactly like the `DEAD-*` items.
+
 ---
 
 ## 4. Performance findings
@@ -1254,6 +1292,15 @@ row by row.
 just to compute an A1 reference whose column part is constant within a row. Precompute the column letters
 once into a `string[]` and append the row number directly to the output builder.
 
+**Fixed (tranche 6), both parts.** The worksheet is written straight into its archive entry through a
+`StreamWriter`, composing one row at a time into a single reused `StringBuilder` that is flushed and cleared
+per row, so peak memory is one row plus the archive's compression buffer regardless of row count. The column
+part of each A1 reference is resolved once per column into a `string[]`, and the row number is appended
+directly, so no per-cell `StringBuilder`/`string` remains. Byte output is unchanged — the writer is UTF-8
+**without** a preamble to match what `Encoding.UTF8.GetBytes` produced for the fixed parts, which is the one
+regression a `StreamWriter` rewrite invites and is now pinned by a test that also covers the row count and the
+A1 references across flush boundaries.
+
 ---
 
 ### PERF-04 — View authoring re-runs `Configure` four or more times per view
@@ -1319,6 +1366,23 @@ file, multiplied across the four class-based generators.
 
 The predicates themselves are clean — all five are cheap and syntax-only, with no semantic model access,
 which is the more important property and is already right.
+
+**Declined as specified (tranche 6) — the proposed fix is a regression.** `CompilationProvider` yields a new
+value on **every** compilation change, so combining it into a per-node transform invalidates the cached
+transform output for *every* candidate on *every* keystroke — whereas today the transform re-runs only for
+candidates whose syntax actually changed. That is the documented incremental-generator anti-pattern, and it
+would make the exact scenario this finding worries about worse, not better.
+
+The measured shape of the cost is also smaller than the finding implies: `ViewAccessorGenerator:740` is **one**
+`GetTypeByMetadataName` call per candidate class (reduced immediately to a `bool`), and
+`EmittableShapeAnalyzer:180` resolves an envelope type during shape analysis. Both are dictionary lookups in
+the compilation's cached symbol tables, on a handful of view declarations.
+
+A safe variant does exist: `context.CompilationProvider.Select((c, _) => c.GetTypeByMetadataName(X) is not
+null)` produces an **equatable `bool`**, which can be combined without breaking downstream caching. It is not
+taken now because the payoff is negligible against the risk of perturbing a pipeline whose incrementality,
+model hygiene, `WithTrackingName` values, and emission determinism are currently guaranteed and golden-tested
+(see §5 "Verified sound"). Revisit only if profiling shows generator latency actually matters.
 
 ---
 

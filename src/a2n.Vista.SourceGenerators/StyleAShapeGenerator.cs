@@ -858,10 +858,10 @@ namespace a2n.Vista.SourceGenerators
         /// <summary>
         /// Renders a C# string literal for <paramref name="value"/> with backslashes and double quotes
         /// escaped, so an arbitrary constant view name / member name emits safely into the generated source
-        /// (mirrors the sibling <c>ViewJsonContextGenerator.Literal</c>).
+        /// Delegates to the assembly-wide <see cref="SourceLiterals.Literal"/> so every emitter writes string
+        /// literals one way (audit finding <c>DEAD-09</c>).
         /// </summary>
-        private static string Literal(string value)
-            => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        private static string Literal(string value) => SourceLiterals.Literal(value);
 
         /// <summary>
         /// The invoked member's simple name for a fluent-call invocation: the <c>.Name</c> of a member access

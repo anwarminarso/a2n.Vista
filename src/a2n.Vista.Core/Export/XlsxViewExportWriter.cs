@@ -69,7 +69,6 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         ArgumentNullException.ThrowIfNull(rows);
 
         var columns = ExportColumns.For(view);
-        var sheet = BuildSheetXml(view.Name, columns, rows, cancellationToken);
 
         using (var archive = new ZipArchive(destination, ZipArchiveMode.Create, leaveOpen: true))
         {
@@ -77,28 +76,63 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
             await WriteEntryAsync(archive, "_rels/.rels", RootRelsXml, cancellationToken).ConfigureAwait(false);
             await WriteEntryAsync(archive, "xl/workbook.xml", WorkbookXml, cancellationToken).ConfigureAwait(false);
             await WriteEntryAsync(archive, "xl/_rels/workbook.xml.rels", WorkbookRelsXml, cancellationToken).ConfigureAwait(false);
-            await WriteEntryAsync(archive, "xl/worksheets/sheet1.xml", sheet, cancellationToken).ConfigureAwait(false);
+            await WriteSheetEntryAsync(archive, view.Name, columns, rows, cancellationToken).ConfigureAwait(false);
         }
     }
 
-    private static string BuildSheetXml(
+    /// <summary>
+    /// Writes the worksheet part straight into its archive entry, one row at a time.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The worksheet used to be accumulated into a single <see cref="StringBuilder"/>, returned as one
+    /// <see cref="string"/>, and then converted with <c>Encoding.UTF8.GetBytes</c> — two large-object-heap
+    /// buffers holding the whole document, the intermediate one in UTF-16 at roughly twice the byte size, on
+    /// top of the builder's own chunks (audit finding <c>PERF-03</c>). At the default 100,000-row export cap
+    /// that is the dominant allocation of the request. Peak memory is now one row's worth of characters plus
+    /// the archive's own compression buffer, whatever the row count.
+    /// </para>
+    /// <para>
+    /// Byte output is unchanged: the same markup in the same order, and the writer is UTF-8 <em>without</em> a
+    /// preamble to match what <c>Encoding.UTF8.GetBytes</c> produced.
+    /// </para>
+    /// </remarks>
+    private static async Task WriteSheetEntryAsync(
+        ZipArchive archive,
         string viewName,
         IReadOnlyList<ExportColumns.Column> columns,
         IReadOnlyList<object?> rows,
         CancellationToken cancellationToken)
     {
+        // The column part of an A1 reference is constant down a column, so resolve each one once instead of
+        // rebuilding it per cell (the related allocation the same finding calls out).
+        var columnNames = new string[columns.Count];
+        for (var c = 0; c < columns.Count; c++)
+        {
+            columnNames[c] = ColumnName(c);
+        }
+
+        var entry = archive.CreateEntry("xl/worksheets/sheet1.xml", CompressionLevel.Optimal);
+        await using var stream = entry.Open();
+        await using var writer = new StreamWriter(stream, Utf8NoPreamble);
+
+        await writer.WriteAsync(
+            "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>"
+            + "<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>")
+            .ConfigureAwait(false);
+
+        // One reused builder: a row is composed in memory, flushed, then the buffer is cleared.
         var sb = new StringBuilder();
-        sb.Append("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>");
-        sb.Append("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
 
         // Header row (row 1): always inline strings.
         sb.Append("<row r=\"1\">");
         for (var c = 0; c < columns.Count; c++)
         {
-            AppendInlineString(sb, CellRef(c, 1), columns[c].Label);
+            AppendInlineString(sb, columnNames[c], 1, columns[c].Label);
         }
 
         sb.Append("</row>");
+        await writer.WriteAsync(sb, cancellationToken).ConfigureAwait(false);
 
         // Data rows start at row 2.
         var rowNo = 1;
@@ -106,21 +140,23 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         {
             cancellationToken.ThrowIfCancellationRequested();
             rowNo++;
+
+            sb.Clear();
             sb.Append("<row r=\"").Append(rowNo).Append("\">");
             for (var c = 0; c < columns.Count; c++)
             {
                 var value = ExportColumns.Value(viewName, row, columns[c].Name);
-                AppendCell(sb, CellRef(c, rowNo), value);
+                AppendCell(sb, columnNames[c], rowNo, value);
             }
 
             sb.Append("</row>");
+            await writer.WriteAsync(sb, cancellationToken).ConfigureAwait(false);
         }
 
-        sb.Append("</sheetData></worksheet>");
-        return sb.ToString();
+        await writer.WriteAsync("</sheetData></worksheet>").ConfigureAwait(false);
     }
 
-    private static void AppendCell(StringBuilder sb, string cellRef, object? value)
+    private static void AppendCell(StringBuilder sb, string columnName, int rowNumber, object? value)
     {
         if (value is null)
         {
@@ -130,17 +166,17 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         if (IsNumeric(value))
         {
             var number = ((IFormattable)value).ToString(null, CultureInfo.InvariantCulture);
-            sb.Append("<c r=\"").Append(cellRef).Append("\" t=\"n\"><v>").Append(number).Append("</v></c>");
+            sb.Append("<c r=\"").Append(columnName).Append(rowNumber).Append("\" t=\"n\"><v>").Append(number).Append("</v></c>");
             return;
         }
 
         var text = value as string ?? (value is IFormattable f ? f.ToString(null, CultureInfo.InvariantCulture) : value.ToString());
-        AppendInlineString(sb, cellRef, text ?? string.Empty);
+        AppendInlineString(sb, columnName, rowNumber, text ?? string.Empty);
     }
 
-    private static void AppendInlineString(StringBuilder sb, string cellRef, string text)
+    private static void AppendInlineString(StringBuilder sb, string columnName, int rowNumber, string text)
     {
-        sb.Append("<c r=\"").Append(cellRef).Append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
+        sb.Append("<c r=\"").Append(columnName).Append(rowNumber).Append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
             .Append(SecurityElement.Escape(StripXmlIllegalCharacters(text)))
             .Append("</t></is></c>");
     }
@@ -224,8 +260,11 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
     private static bool IsNumeric(object value) =>
         value is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal;
 
-    /// <summary>Builds an A1-style cell reference from a zero-based column index and a 1-based row number.</summary>
-    private static string CellRef(int columnIndex, int rowNumber)
+    /// <summary>
+    /// Builds the column part of an A1-style reference (<c>A</c>, <c>B</c>, …, <c>AA</c>) from a zero-based
+    /// column index. Resolved once per column by the sheet writer, not once per cell.
+    /// </summary>
+    private static string ColumnName(int columnIndex)
     {
         var column = new StringBuilder();
         var n = columnIndex;
@@ -236,9 +275,16 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
         }
         while (n >= 0);
 
-        return column.Append(rowNumber).ToString();
+        return column.ToString();
     }
 
+    /// <summary>
+    /// UTF-8 with no byte-order mark, matching what <c>Encoding.UTF8.GetBytes</c> emits for the fixed parts, so
+    /// every part of the package is encoded identically.
+    /// </summary>
+    private static readonly UTF8Encoding Utf8NoPreamble = new(encoderShouldEmitUTF8Identifier: false);
+
+    /// <summary>Writes one of the small fixed package parts, which are constants and need no streaming.</summary>
     private static async Task WriteEntryAsync(ZipArchive archive, string path, string content, CancellationToken cancellationToken)
     {
         var entry = archive.CreateEntry(path, CompressionLevel.Optimal);

@@ -581,8 +581,9 @@ namespace a2n.Vista.SourceGenerators
         /// <summary>
         /// Renders a C# string literal for <paramref name="value"/> with backslashes and double quotes
         /// escaped, so JSON property names and CLR member names emit safely into the generated source.
+        /// Delegates to the assembly-wide <see cref="SourceLiterals.Literal"/> so every emitter writes string
+        /// literals one way (audit finding <c>DEAD-09</c>).
         /// </summary>
-        private static string Literal(string value)
-            => "\"" + value.Replace("\\", "\\\\").Replace("\"", "\\\"") + "\"";
+        private static string Literal(string value) => SourceLiterals.Literal(value);
     }
 }

@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.IO;
+using System.IO.Compression;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -620,6 +622,50 @@ public sealed class AuditRemediationTests
         // the reason a scanned view could serve unmasked rows once it became executable.
         await Assert.That(MaskSpecRegistry.TryGet("scan-target-widget", out var specs)).IsTrue();
         await Assert.That(specs!.Single().FieldName).IsEqualTo(nameof(ScanTargetWidgetRow.Secret));
+    }
+
+    // ---- PERF-03: the XLSX worksheet is streamed, not buffered whole ---------------------------------
+
+    /// <summary>
+    /// PERF-03: the worksheet part was accumulated into one <see cref="StringBuilder"/>, returned as a single
+    /// string, then converted with <c>Encoding.UTF8.GetBytes</c> — two large-object-heap buffers holding the
+    /// whole document, the intermediate one UTF-16. It is now written row by row straight into the archive
+    /// entry. This pins the parts a streaming rewrite can break: the row count and A1 references across flush
+    /// boundaries, and the absence of a UTF-8 preamble now that a <see cref="StreamWriter"/> does the encoding.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task PERF03_Xlsx_Worksheet_Streams_Every_Row_Without_A_Preamble()
+    {
+        var view = TextMetadata();
+
+        var rows = new object?[2000];
+        for (var i = 0; i < rows.Length; i++)
+        {
+            rows[i] = new AuditTextRow { Text = "row-" + i.ToString(CultureInfo.InvariantCulture) };
+        }
+
+        using var buffer = new MemoryStream();
+        await new XlsxViewExportWriter().WriteAsync(buffer, view, rows, CancellationToken.None);
+
+        buffer.Position = 0;
+        using var archive = new ZipArchive(buffer, ZipArchiveMode.Read);
+        var entry = archive.GetEntry("xl/worksheets/sheet1.xml")
+            ?? throw new InvalidOperationException("The worksheet part is missing from the package.");
+
+        using var reader = new StreamReader(entry.Open(), new UTF8Encoding(false));
+        var sheet = await reader.ReadToEndAsync();
+
+        // The part starts with the XML declaration: a StreamWriter configured with the default UTF8Encoding
+        // would have prefixed a byte-order mark and made the worksheet malformed.
+        await Assert.That(sheet.StartsWith("<?xml", StringComparison.Ordinal)).IsTrue();
+
+        // Header row plus the first and last data row, so both flush boundaries are covered.
+        await Assert.That(sheet).Contains("<row r=\"1\">");
+        await Assert.That(sheet).Contains("r=\"A2\"");
+        await Assert.That(sheet).Contains("r=\"A2001\"");
+        await Assert.That(sheet).Contains("row-1999");
+        await Assert.That(sheet).Contains("</sheetData></worksheet>");
     }
 
     // ---- Helpers -----------------------------------------------------------------------------------

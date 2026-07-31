@@ -241,7 +241,7 @@ namespace a2n.Vista.SourceGenerators
             foreach (var property in model.Properties)
             {
                 // ["Name"] = static row => ((global::TQuery)row).Name,
-                sb.Append("        [\"").Append(property.Name).Append("\"] = static row => ((")
+                sb.Append("        [").Append(SourceLiterals.Literal(property.Name)).Append("] = static row => ((")
                   .Append(model.TQueryFqn).Append(")row).").Append(property.Name).Append(',').Append(nl);
             }
 
@@ -473,8 +473,8 @@ namespace a2n.Vista.SourceGenerators
                     continue;
                 }
 
-                sb.Append("        [\"").Append(field.Name)
-                  .Append("\"] = (global::System.Linq.Expressions.Expression<global::System.Func<")
+                sb.Append("        [").Append(SourceLiterals.Literal(field.Name))
+                  .Append("] = (global::System.Linq.Expressions.Expression<global::System.Func<")
                   .Append(tquery).Append(", ").Append(field.ClrTypeFqn).Append(">>)(static (")
                   .Append(tquery).Append(" x) => x.").Append(field.Name).Append("),").Append(nl);
             }

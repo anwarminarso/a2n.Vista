@@ -1,7 +1,14 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-31 (**audit remediation, tranche 5** — the `DEAD-*` batch turned into a **method
+> Last updated: 2026-07-31 (**audit remediation, tranche 6** — `PERF-03` the XLSX worksheet now streams into its
+> archive entry one row at a time (peak memory was ~2× the document in two LOH buffers; byte output unchanged),
+> `DEAD-09` the real accessor-map escaping drift is closed behind one shared literal writer (goldens unchanged;
+> its live impact was nil, since a member name cannot contain a quote), and **`PERF-06` is declined as
+> specified** — the proposed `CompilationProvider` hoist is the incremental-generator anti-pattern and would
+> invalidate every candidate on every keystroke. See §2.27. Remaining: the `DEAD-01`/`DEAD-03`/`DEAD-08` scope
+> calls, `DEAD-07`/R12.2, the deferred generator dedup, and `PERF-08` (needs a `ViewQueryRequest` decision).)
+> Prior: 2026-07-31 (**audit remediation, tranche 5** — the `DEAD-*` batch turned into a **method
 > correction**: the audit's dead-code section established which members are *unreferenced*, never cross-checking
 > `.kiro/specs/*/requirements.md`, and that mislabelled a required-but-unimplemented feature as dead code. The
 > report now carries the three-way test to apply first. Landed: **D149** display-format metadata (server
@@ -1382,6 +1389,43 @@ Reverted after cross-check, now **open scope calls** rather than cleanups:
 - **Verified (2026-07-31, tranche 5) —** build green net8/9/10; **545 tests/TFM (net8) / 546 (net10)** in
   `a2n.Vista.Tests` (2 new), **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
   0 skipped. Both sample self-tests PASS with an unchanged 1537-byte `/metadata` payload.
+
+### 2.27 Audit remediation, tranche 6 (landed 2026-07-31) — `PERF-03`, `DEAD-09` (partial), `PERF-06` declined
+
+- **`PERF-03` — the XLSX worksheet streams.** It used to be accumulated into one `StringBuilder`, returned as a
+  single string, then converted with `Encoding.UTF8.GetBytes` — two large-object-heap buffers holding the whole
+  document, the intermediate one UTF-16 at ~2× the byte size, on top of the builder's chunks. At the default
+  100,000-row cap that was the dominant allocation of an export request. It now writes straight into the archive
+  entry, composing one row into a reused builder that is flushed and cleared per row, so peak memory is one row
+  plus the archive's compression buffer whatever the row count. The A1 column letters are resolved once per
+  column instead of per cell (the related allocation the finding calls out). Byte output is unchanged; the
+  writer is UTF-8 **without** a preamble to match the previous `GetBytes` encoding — the one regression a
+  `StreamWriter` rewrite invites, now pinned by a test that also covers the row count and the A1 references
+  across flush boundaries.
+- **`DEAD-09` — the concrete drift is closed, the wider dedup deferred.** `StyleAShapeGenerator` escaped
+  accessor-map keys through `Literal(...)`; `ViewAccessorGenerator` concatenated them raw, in two places. One
+  writer (`SourceLiterals.Literal`) now serves all three emitters. **Impact was lower than the finding
+  implies:** a CLR member name cannot contain a quote or backslash, so escaping an identifier emits identical
+  bytes — goldens and the reflection-oracle parity guard are untouched (114/114). It was a latent inconsistency,
+  not a live defect. The remaining dedup (4× `FindViewBase`, 3× `IsNamedContractType`, 2× `Unwrap`, 5× hint-name
+  builder) is a cross-generator refactor with maintainability-only payoff and real regression risk across five
+  incremental pipelines; tracked, not swept in. The unreferenced generator model members the finding also lists
+  were deliberately **not** touched — after the §2.26 method correction each needs a requirements cross-check
+  first.
+- **`PERF-06` — declined as specified.** The proposed fix (resolve well-known types from `CompilationProvider`
+  and combine that into the transform) is the documented incremental-generator anti-pattern:
+  `CompilationProvider` produces a new value on *every* compilation change, so it would invalidate the cached
+  transform for *every* candidate on *every* keystroke, while today the transform re-runs only for candidates
+  whose syntax changed. The real cost is one `GetTypeByMetadataName` per candidate class (immediately reduced to
+  a `bool`) plus one envelope lookup during shape analysis — cached dictionary lookups on a handful of
+  declarations. A safe variant is recorded in the report (`CompilationProvider.Select(... is not null)` yields an
+  equatable `bool` that combines without breaking caching); it is not taken because the payoff is negligible
+  against perturbing a pipeline whose incrementality, model hygiene, tracking names, and determinism are
+  currently guaranteed and golden-tested.
+
+- **Verified (2026-07-31, tranche 6) —** build green net8/9/10 (Debug + Release); **546 tests/TFM (net8) / 547
+  (net10)** in `a2n.Vista.Tests` (1 new), **114** generator tests with **unchanged goldens**, **143** in
+  `a2n.Vista.Client.TypeScript.Tests` — 0 failed, 0 skipped. Both sample self-tests PASS.
 
 ---
 
