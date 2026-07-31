@@ -147,7 +147,10 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
             isWritable: false,
             isMaskable: false,
             allowedOperators: _allowedOperators,
-            isPrimaryKey: _isPrimaryKey);
+            isPrimaryKey: _isPrimaryKey,
+            // D149: carried onto the metadata snapshot so the metadata endpoint publishes it. Before this
+            // the value was captured here and read by nothing, so .Format(...) was silent data loss.
+            format: _format);
     }
 
     /// <summary>

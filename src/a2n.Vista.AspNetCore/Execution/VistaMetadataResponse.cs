@@ -2,6 +2,7 @@ using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Linq;
 using System.Runtime.CompilerServices;
+using System.Text.Json.Serialization;
 using a2n.Vista.Metadata;
 
 namespace a2n.Vista.AspNetCore.Execution;
@@ -21,7 +22,21 @@ public sealed record VistaFieldMetadataResponse(
     bool IsScopable,
     bool IsHidden,
     bool IsPrimaryKey,
-    string AllowedOperators);
+    string AllowedOperators)
+{
+    /// <summary>
+    /// The author's display-format hint for the field, or <see langword="null"/> when none was set
+    /// (Decision Log D149). Published for the client to apply when rendering; the server never interprets
+    /// it, so filtering, sorting, and export are unaffected.
+    /// </summary>
+    /// <remarks>
+    /// Omitted from the payload when unset rather than emitted as <c>null</c>. Most fields carry no hint, so
+    /// writing it always would add a member per field to an endpoint whose whole point is to be cached, and
+    /// absent already means "no hint" to a client. The emitted OpenAPI schema marks it optional to match.
+    /// </remarks>
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? Format { get; init; }
+}
 
 /// <summary>
 /// Serializable projection of a <see cref="ViewMetadata"/> for the Metadata facet (Decision Log D110).
@@ -69,7 +84,10 @@ public sealed record VistaMetadataResponse(
                 f.IsScopable,
                 f.IsHidden,
                 f.IsPrimaryKey,
-                f.AllowedOperators.ToString()))
+                f.AllowedOperators.ToString())
+            {
+                Format = f.Format,
+            })
             .ToList();
 
         return new VistaMetadataResponse(

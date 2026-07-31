@@ -158,7 +158,15 @@ public static class EnvelopeSchemas
             ("isScopable", Boolean()),
             ("isHidden", Boolean()),
             ("isPrimaryKey", Boolean()),
-            ("allowedOperators", String())),
+            ("allowedOperators", String()),
+            // Optional (D149): the author's display-format hint, absent when none was set. Not in Required
+            // because it is nullable and omitted from the payload when null.
+            ("format", new OpenApiSchema
+            {
+                Type = "string",
+                Nullable = true,
+                Description = "Display-format hint for the client to apply when rendering; the server never interprets it.",
+            })),
         Required = new[]
         {
             "name", "label", "clrType", "isFilterable", "isSortable", "isSearchable",

@@ -134,6 +134,13 @@
       on the reflection path by design).
     -->
     <ProjectReference Include="..\..\Examples\a2n.Vista.GeneratorStyleASample\a2n.Vista.GeneratorStyleASample.csproj" />
+    <!--
+      Deterministic scan target for IVistaBuilder.RegisterAssembly (pilar-1-hardening R3.1/R3.7). The main
+      test assembly cannot be its own scan target: it holds view fixtures that deliberately fail at metadata
+      build time to exercise the startup guards, so scanning it would always throw. This library holds two
+      fully-valid views, one with a masked field.
+    -->
+    <ProjectReference Include="..\..\Examples\a2n.Vista.Examples.AssemblyScanTarget\a2n.Vista.Examples.AssemblyScanTarget.csproj" />
   </ItemGroup>
 
   <!--

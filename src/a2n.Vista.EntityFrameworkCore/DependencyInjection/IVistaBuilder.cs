@@ -118,10 +118,11 @@ public interface IVistaBuilder
     /// <summary>
     /// Discovers and registers every Gaya B view type (deriving from <see cref="View{TQuery}"/> /
     /// <see cref="View{TQuery, TCrud}"/>, non-abstract, with a public parameterless constructor) in
-    /// <paramref name="assembly"/>, honoring the current route group. Each view is registered
-    /// metadata-only (like <see cref="Register{TView}()"/>); pair with a source-generated plan to make
-    /// them executable. Intended for the modular-monolith case where a sub-project's assembly is
-    /// attached under a group prefix.
+    /// <paramref name="assembly"/>, honoring the current route group. Each discovered view goes through
+    /// exactly the same registration as <see cref="Register{TView}()"/> — metadata, mask specs, write facet,
+    /// and the source-generated execution plan when one exists — so a scanned view is executable on the same
+    /// terms as an explicitly registered one. Intended for the modular-monolith case where a sub-project's
+    /// assembly is attached under a group prefix.
     /// </summary>
     /// <param name="assembly">The assembly to scan for view types.</param>
     /// <returns>This builder, for chaining.</returns>

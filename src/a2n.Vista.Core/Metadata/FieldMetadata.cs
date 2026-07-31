@@ -64,6 +64,20 @@ public sealed record FieldMetadata(
     public bool IsPrimaryKey { get; init; }
 
     /// <summary>
+    /// An optional display-format hint for this field (for example <c>"N2"</c> or <c>"yyyy-MM-dd"</c>), or
+    /// <see langword="null"/> when the author set none.
+    /// </summary>
+    /// <remarks>
+    /// <b>Published, never applied (Decision Log D149).</b> The server emits this string on the metadata
+    /// endpoint for a client — a grid, a report, a generated UI — to apply when rendering the column. Vista
+    /// itself never interprets it: filtering, sorting, and export all operate on raw values, so a format hint
+    /// can never change what a query matches or what an export contains. That keeps the wire contract and the
+    /// data fidelity of exports independent of presentation. It is the successor of DynData's
+    /// <c>DataFormatString</c>.
+    /// </remarks>
+    public string? Format { get; init; }
+
+    /// <summary>
     /// Creates a <see cref="FieldMetadata"/>, auto-deriving the display label from
     /// <paramref name="name"/> when <paramref name="label"/> is not supplied.
     /// </summary>
@@ -82,6 +96,7 @@ public sealed record FieldMetadata(
     /// <param name="isMaskable">Whether the field value is masked in read responses.</param>
     /// <param name="allowedOperators">The filter operators allowed on this field.</param>
     /// <param name="isPrimaryKey">Whether the field is (part of) the entity primary key (Decision Log D104).</param>
+    /// <param name="format">The optional display-format hint published to clients (Decision Log D149).</param>
     /// <returns>A new <see cref="FieldMetadata"/> instance.</returns>
     public static FieldMetadata Create(
         string name,
@@ -95,7 +110,8 @@ public sealed record FieldMetadata(
         bool isWritable = false,
         bool isMaskable = false,
         FilterOperator allowedOperators = FilterOperator.None,
-        bool isPrimaryKey = false) =>
+        bool isPrimaryKey = false,
+        string? format = null) =>
         new(
             name,
             label ?? LabelHelper.ToTitleCase(name),
@@ -110,5 +126,6 @@ public sealed record FieldMetadata(
             allowedOperators)
         {
             IsPrimaryKey = isPrimaryKey,
+            Format = format,
         };
 }

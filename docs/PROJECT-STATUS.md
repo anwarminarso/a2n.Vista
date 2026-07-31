@@ -1,7 +1,16 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-31 (**audit remediation, tranche 4** — the metadata/authoring/read-path findings:
+> Last updated: 2026-07-31 (**audit remediation, tranche 5** — the `DEAD-*` batch turned into a **method
+> correction**: the audit's dead-code section established which members are *unreferenced*, never cross-checking
+> `.kiro/specs/*/requirements.md`, and that mislabelled a required-but-unimplemented feature as dead code. The
+> report now carries the three-way test to apply first. Landed: **D149** display-format metadata (server
+> publishes, client applies — `.Format("N2")` was silent data loss; additive, `/metadata` byte-identical when
+> unset) and **`DEAD-06`** `RegisterAssembly` now registers on the same terms as `Register<TView>()`, with its
+> first test coverage. Reverted after cross-check and now open **scope calls**: `DEAD-07` (finding withdrawn —
+> openapi-emitter **R12.2** requires an adapter-documentation extension point that is unimplemented), plus
+> `DEAD-01`/`DEAD-03`/`DEAD-08`. See §2.26. Remaining: those scope calls, `DEAD-09`, `PERF-03`/`06`/`08`.)
+> Prior: 2026-07-31 (**audit remediation, tranche 4** — the metadata/authoring/read-path findings:
 > **D147** every Vista read is now `AsNoTracking` (a tracked entity-bearing projection could let a later
 > `SaveChanges` persist a *mask* over real data) and the reflection mask is non-destructive, so an anonymous
 > Style A row is maskable at all for the first time; **D148** `ViewMetadata` equality/hash are hand-written
@@ -1320,11 +1329,59 @@ the same code and reinforce each other.
   at startup" contract literally true. The now-dead `BuildMetadataCore` virtual (its doc claimed an override
   by `View<TQuery, TCrud>`, which is deliberately *not* a subclass, D26) was removed.
 
-- **Verified (2026-07-31, tranche 4):** build green net8/9/10; **543 tests/TFM (net8) / 544 (net10)** in
+- **Verified (2026-07-31, tranche 4) —** build green net8/9/10; **543 tests/TFM (net8) / 544 (net10)** in
   `a2n.Vista.Tests`, **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
   0 skipped. Both sample self-tests PASS. Note: one `a2n.Vista.Tests` run failed with a transient
   `SQLite Error 5` on connection open and passed on the three following runs — flaky, not deterministic, and
   unrelated to these changes (no locking behaviour was touched).
+
+### 2.26 Audit remediation, tranche 5 (landed 2026-07-31; D149) — the `DEAD-*` batch became a method correction
+
+**The most important outcome of this tranche is not a fix, it is a correction to how the audit's dead-code
+section was written.** That section established which members are *unreferenced*; it never cross-checked
+`.kiro/specs/*/requirements.md`, and unreferenced is not the same as dead — an acceptance criterion can
+require a member to exist as an extension point without anything in-tree calling it. Cross-checking
+reclassified half the batch, and the audit report now carries a method-correction box with the three-way test
+to apply before touching any `DEAD-*` item (implementation gap / deliberate skeleton / genuine leftover).
+
+Landed here — the two items a requirement clearly backs:
+
+- **D149 (`DEAD-02`) — display-format metadata.** `IFieldBuilder.Format(...)` is on the authored surface
+  (`01-view.md` §5.2) and is the successor of DynData's `DataFormatString` (which D98 says Style A preserves),
+  but the captured value was read by nothing, so `.Format("N2")` was silent data loss. What needed deciding
+  was *who applies it*: **the server publishes, the client applies.** `FieldMetadata.Format` carries the hint,
+  the metadata facet publishes it, and the emitted OpenAPI schema declares it optional. Vista never interprets
+  it, so filter/sort/export keep operating on raw values — a presentation hint cannot change what a query
+  matches or what an export contains, which keeps export data fidelity independent of display. The response
+  member is omitted when unset, so a view that sets no hint has a byte-identical `/metadata` payload
+  (verified: 1537 bytes before and after). The TypeScript client is untouched by design — it types wire DTOs,
+  not metadata.
+- **`DEAD-06` (no decision needed) — `RegisterAssembly` completed.** `pilar-1-hardening` R3.1 lists it as a
+  peer of `RegisterTemplate`/`Register<TView>`; **no requirement says "metadata-only"** (that phrase was §4's
+  description of a half-finished implementation, now corrected above). Scanning registered metadata only, so a
+  scanned view became route-bearing and discoverable while staying permanently non-executable — no plan
+  adopted, no mask specs, no write facet. `Register<TView>()` and `RegisterAssembly` now share one private
+  `RegisterSource` body. It also had **zero test coverage**; it now has a test driven by a new deterministic
+  scan-target assembly, `a2n.Vista.Examples.AssemblyScanTarget` (the main test assembly cannot be its own scan
+  target — it holds fixtures that deliberately fail at metadata build time to exercise the startup guards).
+
+Reverted after cross-check, now **open scope calls** rather than cleanups:
+
+- **`DEAD-07` — finding withdrawn.** `openapi-emitter` **R12.2** requires an adapter-documentation extension
+  point "without requiring a change to the core builder". A `bool` nothing reads is the wrong shape for that,
+  so the real defect is that R12.2 is **unimplemented**. R12.1 *is* satisfied and is validated by Property 10.
+  Recommendation: implement a real contribution point; do not remove the option.
+- **`DEAD-01`, `DEAD-03`, `DEAD-08`.** Each is declared on a spec'd surface with no acceptance criterion behind
+  its behaviour: `IViewRegistry.Register<TView>()` (`pilar-1-core` tasks 4.3, ticked `[x]` but only throws —
+  and since superseded by D101/D103, which moved route composition to the registration layer),
+  `CrudOn(projectionForRead)` (`01-view.md` §5.2, no read-back criterion anywhere in the write-path spec), and
+  the TypeScript client's `DefaultBaseUrl` (absent from Requirement 10; `design.md` describes behaviour that
+  contradicts R7.1/Property 20 and R6.3). Removal is defensible for all three, but each needs an owner scope
+  call **and** a spec reconciliation in the same change.
+
+- **Verified (2026-07-31, tranche 5) —** build green net8/9/10; **545 tests/TFM (net8) / 546 (net10)** in
+  `a2n.Vista.Tests` (2 new), **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
+  0 skipped. Both sample self-tests PASS with an unchanged 1537-byte `/metadata` payload.
 
 ---
 
@@ -1407,8 +1464,10 @@ approval.
   `ViewMetadata.Route`; the AspNetCore mapper is a **dumb mapper** that maps each view at its
   `ViewMetadata.Route`. The AspNetCore-owned `RouteRoot` setter was **removed**. (`01-view.md` §13.2 D101.)
 - **Route groups + one view = one endpoint (D103, done).** `IVistaBuilder.RouteGroup(prefix, g => {...})`
-  scoping (nested groups combine), `RegisterAssembly(...)` (`[RequiresUnreferencedCode]`, metadata-only),
-  default root for ungrouped. View names are **globally unique**; a view maps to **exactly one** endpoint
+  scoping (nested groups combine), `RegisterAssembly(...)` (`[RequiresUnreferencedCode]`; registers on the
+  **same terms as `Register<TView>()`** — corrected 2026-07-31: the former "metadata-only" wording here
+  described a half-finished implementation, not a decision, and `pilar-1-hardening` R3.1 lists the two as
+  peers), default root for ungrouped. View names are **globally unique**; a view maps to **exactly one** endpoint
   (registering the same view in two groups fails fast). (`01-view.md` §13.2 D103.)
 - **Cross-assembly view discovery (D97)** is a **committed Pillar 3 requirement** (needed by the
   modular-monolith Style B use case), not an open question.
@@ -1521,7 +1580,8 @@ These record where the code intentionally differs from the early spec sketches. 
 | D146 | audit remediation (`BUG-04`, `BUG-05`) | **Landed (2026-07-31).** Concurrency is real, and the echoed token is the post-write one. Three parts: (1) `VistaConcurrencyTokenStartupValidator` fails startup closed when a view's `WithConcurrencyToken(...)` member is **not** a concurrency token in the `DbContext` model (without it the database emitted no `UPDATE ... WHERE token = @original` predicate, so the Vista-level read-then-compare allowed a lost update); (2) the executor pins the tracked entry's original token so the check happens **in the database**; (3) the new Core-resident, request-scoped `IWriteTokenSink` carries the token read back after `SaveChanges`, which the mapper emits as the update `ETag` — a **delete emits no `ETag`** at all, since the row no longer exists. No `IViewExecutor` port change, so the generated dispatch invoker is untouched. See §2.23. |
 | D147 | audit remediation (`BUG-07`) | **Landed (2026-07-31).** Every Vista read is **no-tracking**: all three execution plans apply `AsNoTracking()` to the source query — a direct generic call in `SplitViewExecutionPlan` and in the generated compiled plan (AOT-clean; the `*_VistaExecutionPlan` goldens changed), reflective in the already-`[RequiresUnreferencedCode]` `ProjectedViewExecutionPlan` whose Style A delegate erases the element type (once per request, never per row). Rationale: the masking runtime writes the masked value into the materialized row, so an entity-bearing projection returning **tracked** rows let a later `SaveChanges` on the shared request-scoped `DbContext` persist the mask over real data. Covers List/Detail/Export and the count queries. The same decision makes the **reflection mask non-destructive**: a get-only row — an anonymous Style A projection, previously not maskable at all — is rebuilt through a constructor covering every readable property (full coverage keeps the rebuild lossless; an ambiguous case-insensitive parameter match is treated as no match). See §2.25. |
 | D148 | audit remediation (`BUG-10`) | **Landed (2026-07-31).** `ViewMetadata.Equals`/`GetHashCode` are hand-written over the declarative content (name, route, types, **element-wise** `Fields`, authorization, limits, read-only flag). The synthesized record equality compared every instance field including a per-instance lock object, so two identical snapshots were never equal and the hash was an identity hash unstable across runs; it also compared `Fields` by list reference, since `IReadOnlyList<T>` has no structural equality. The D105 startup-completed `KeyFields` is **excluded from both**, so neither changes during an instance's lifetime — the property that makes a type safe in a hash-based collection. Harmless: view names are globally unique (D101/D103) and `Name` is compared, so equal snapshots describe the same view and resolve the same key. See §2.25. |
-| **D149+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D148) was the last landed change. |
+| D149 | audit remediation (`DEAD-02`) | **Landed (2026-07-31).** Display-format metadata: **the server publishes, the client applies.** `IFieldBuilder.Format(...)` (on the authored surface per `01-view.md` §5.2, and the successor of DynData's `DataFormatString`) now reaches `FieldMetadata.Format`, the `GET {route}/metadata` projection, and the emitted OpenAPI schema (optional). Vista never interprets the hint, so filter, sort, and export keep operating on raw values — presentation cannot change what a query matches or what an export contains. Previously the value was captured and read by nothing, making `.Format("N2")` silent data loss. Additive: the response member is omitted when unset, so a view that sets no hint has a byte-identical `/metadata` payload. The TypeScript client is untouched (it types wire DTOs, not metadata). See §2.26. |
+| **D150+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D149) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

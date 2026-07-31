@@ -84,7 +84,20 @@ internal sealed class VistaBuilder : IVistaBuilder
     public IVistaBuilder Register<TView>()
         where TView : class, new()
     {
-        var source = CreateViewSource<TView>();
+        RegisterSource(CreateViewSource<TView>());
+        return this;
+    }
+
+    /// <summary>
+    /// Registers one class-per-view (Gaya B) view from its authoring seam: metadata, mask specs, write
+    /// facet, and — when the source generator emitted one — the compiled execution plan that makes the view
+    /// executable. This is the whole registration unit, shared by <see cref="Register{TView}()"/> and
+    /// <see cref="RegisterAssembly"/> so a scanned view cannot end up registered differently from an
+    /// explicitly registered one.
+    /// </summary>
+    [RequiresUnreferencedCode("Gaya B registration introspects the view type at runtime to build its metadata; use the source generator path for AOT.")]
+    private void RegisterSource(IViewMetadataSource source)
+    {
         var built = source.BuildMetadata();
 
         // Source-generator Phase 2 (Decision Log D118): if the generator emitted a compiled execution
@@ -125,8 +138,6 @@ internal sealed class VistaBuilder : IVistaBuilder
         {
             _planRegistry.Add(new CompiledExecutionPlanAdapter(compiled));
         }
-
-        return this;
     }
 
     /// <inheritdoc />
@@ -201,8 +212,12 @@ internal sealed class VistaBuilder : IVistaBuilder
                 continue;
             }
 
-            var source = (IViewMetadataSource)Activator.CreateInstance(type)!;
-            _registry.Add(WithComposedRoute(source.BuildMetadata()));
+            // Full registration, identical to Register<TView>(). Registering metadata only — as this used
+            // to — made a scanned view route-bearing and discoverable while leaving it permanently
+            // non-executable: no generated execution plan was adopted, no mask specs and no write facet
+            // were published, so the endpoint existed and threw "no generated execution plan" at request
+            // time.
+            RegisterSource((IViewMetadataSource)Activator.CreateInstance(type)!);
         }
 
         return this;

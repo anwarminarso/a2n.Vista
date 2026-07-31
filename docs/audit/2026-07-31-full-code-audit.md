@@ -79,6 +79,10 @@ covered by regression tests**. Build green on net8.0/net9.0/net10.0; suites gree
 | `BUG-10` | **Fixed (D148)** | Hand-written `Equals`/`GetHashCode` over the declarative content; the startup-completed key is excluded so both are stable |
 | `PERF-02` | **Fixed** | The reflection fallback memoizes the resolved member per `(row type, field name)`, negative results included |
 | `PERF-04` | **Fixed** | `Configure` runs once per view against one cached builder; metadata, masks, the write facet, and row filters share that result |
+| `DEAD-02` | **Fixed (D149)** | Reclassified: a designed member, not dead. The format hint now reaches `FieldMetadata`, the metadata facet, and the OpenAPI schema |
+| `DEAD-06` | **Fixed** | Reclassified: an under-implementation of R3.1, not dead. Scanning now runs the same registration unit as `Register<TView>()`, with first test coverage |
+| `DEAD-07` | **Reclassified — finding withdrawn** | Not dead code: `openapi-emitter` R12.2 requires an extension point, which is **unimplemented**. Removal reverted |
+| `DEAD-01`, `DEAD-03`, `DEAD-08` | **Open (scope call)** | Each is a spec'd surface with no acceptance criterion behind it; removal is an owner scope decision plus a spec reconciliation |
 | `PERF-05` | **Fixed** | One shared `ViewFieldLookup.For(view)`, memoized per metadata instance and frozen; replaces four independent per-call builders |
 | `PERF-07` | **Fixed** | The metadata projection is memoized per view and its serialized payload + `ETag` computed once; the 304 path is now one string comparison |
 | Other `DEAD-*` / `PERF-*` | **Open** | Each is either an API removal (breaking) or a design change; see the notes on each |
@@ -142,8 +146,27 @@ were taken together because they touch the same code.
   `Name` reads — and removes the dead `BuildMetadataCore` virtual whose doc claimed an override that cannot
   exist (`View<TQuery, TCrud>` is deliberately not a subclass, D26).
 
-**Still open after tranche 4:** the `DEAD-*` items (each an API removal or a feature completion) and
-`PERF-03`, `PERF-06`, `PERF-08`.
+### Tranche 5 (2026-07-31) — the `DEAD-*` batch, and a correction to how this section was written
+
+Tranche 5 started as an API-removal batch and became a **method correction**. Cross-checking each `DEAD-*`
+item against `.kiro/specs/*/requirements.md` — which §3's original method never did — reclassified half of
+them (see the method-correction box in §3):
+
+- **`DEAD-02` → fixed (D149).** A designed member (`01-view.md` §5.2) with no defined semantics. Decided and
+  wired: the server publishes the display-format hint, the client applies it; Vista never interprets it.
+  Additive, and omitted from the payload when unset, so `/metadata` is byte-identical (1537 bytes) for a view
+  that sets no hint.
+- **`DEAD-06` → fixed.** An under-implementation of `pilar-1-hardening` R3.1, not dead code. `RegisterAssembly`
+  now shares one registration body with `Register<TView>()`, and has test coverage for the first time.
+- **`DEAD-07` → finding withdrawn.** `openapi-emitter` R12.2 *requires* an adapter-documentation extension
+  point. The flag is the wrong shape for it, so the defect is an unimplemented requirement, not dead code.
+- **`DEAD-01`, `DEAD-03`, `DEAD-08` → open, owner scope call.** Each is declared on a spec'd surface with no
+  acceptance criterion behind its behaviour. Removal is defensible for all three (and for `DEAD-08` the design
+  doc contradicts a tested security requirement), but each must reconcile its spec in the same change.
+
+**Still open after tranche 5:** `DEAD-01`, `DEAD-03`, `DEAD-08` (scope calls), `DEAD-07`/R12.2 (implement the
+extension point), `DEAD-09` (generator duplication — contains a real defect: the accessor-map emitters have
+drifted on key escaping), and `PERF-03`, `PERF-06`, `PERF-08`.
 
 ---
 
@@ -881,6 +904,26 @@ Each item was cross-checked with a grep across all of `src/` — including `src/
 `src/Adapters`, and the source generators (whose emitted output references Core members **by name inside
 string literals**, so generator `.cs` files were grepped for the member names too).
 
+> ### Method correction (added 2026-07-31, during tranche 5)
+>
+> **This section's method establishes that a member is _unreferenced_, not that it is _dead_.** The two are
+> not the same: an acceptance criterion can require a member to exist as an extension point without anything
+> in-tree calling it, and a published API sketch can declare a member whose behaviour was never specified.
+> The grep was never cross-checked against `.kiro/specs/*/requirements.md`, so this section mislabelled at
+> least one required-but-unimplemented feature as dead code.
+>
+> Before acting on any `DEAD-*` item, classify it against the requirements:
+>
+> 1. **An acceptance criterion covers it** → it is an *implementation gap*, not dead code. Implement it, or
+>    record the gap explicitly. Removing it silently drops a requirement.
+> 2. **A design/spec surface declares it, no acceptance criterion defines its behaviour** → a deliberate
+>    skeleton. Removal is a *scope decision* for the owner, and must reconcile the spec in the same change.
+> 3. **Nothing in requirements, design, or tasks covers it** → genuine leftover. Safe to remove.
+>
+> The per-item reclassification is recorded on each finding below and summarised in the tranche 5 note.
+> `DEAD-04` and `DEAD-05` were already fixed in tranche 1/2 and are unaffected — both were behavioural
+> defects, not API-surface questions.
+
 ### DEAD-01 — `IViewRegistry.Register<TView>()` is a public member that always throws
 
 | | |
@@ -902,6 +945,15 @@ The comment's premise is obsolete — the authoring builders and the source gene
 **Fix.** Remove the member from `IViewRegistry` (technically breaking, but it can never have worked), or
 implement it as a thin wrapper over the authoring path.
 
+**Reclassified (tranche 5) → category 1, then superseded.** `pilar-1-core/tasks.md` 4.3 specifies
+`IViewRegistry` as "(`Register<TView>`, hook template, `Get`, `All`); jalur reflection
+`[RequiresUnreferencedCode]`" and is **ticked `[x]`** although the member only throws; requirement 1.2 also
+names `Register<TView>` as a registration entry. So this is a task marked done that was never implemented —
+not a leftover. What settles it is **D101/D103**: registration now owns route composition, and a Core-level
+`Register<TView>` would produce a view whose `Route` is the bare name, i.e. a broken view. The correct
+disposition is removal justified as *superseded by D101/D103*, with the tasks.md tick corrected — **not** as
+dead code. Still pending an owner scope call.
+
 ---
 
 ### DEAD-02 — The `Format(...)` field-builder feature is entirely inert
@@ -919,6 +971,17 @@ exporters.
 
 **Fix.** Either carry it onto `FieldMetadata` and through to the metadata/OpenAPI/TS-client surfaces, or
 delete the three members. Silent no-op is the worst of the three options.
+
+**Reclassified (tranche 5) → category 2. Fixed by carrying it (D149).** `docs/spec/01-view.md` §5.2 declares
+`IFieldBuilder<TProp> Format(string formatString)` on the authored surface, so this is a designed member, not
+an accident — and it is the successor of DynData's `DataFormatString`, which D98 says Style A preserves. No
+acceptance criterion defines *who applies* the format, so that is the part that needed deciding: **the server
+publishes it, the client applies it** (D149). `FieldMetadata.Format` now carries the hint, the metadata facet
+publishes it, and the emitted OpenAPI schema declares it optional. Vista never interprets it, so filter, sort,
+and export keep operating on raw values — a format hint cannot change what a query matches or what an export
+contains. Purely additive, and the response omits the member when unset, so a view that sets no hint has a
+byte-identical `/metadata` payload (verified: 1537 bytes before and after). The TypeScript client is
+deliberately untouched — it types wire DTOs, not metadata.
 
 ---
 
@@ -944,6 +1007,13 @@ The parameter is documented as "an optional read-back projection … used after 
 supplies one silently gets default behaviour.
 
 **Fix.** Remove the parameter, or capture it on `CrudFacetState` and honour it in the write read-back.
+
+**Reclassified (tranche 5) → category 2. Not removed; pending an owner scope call.** The parameter appears
+verbatim in `docs/spec/01-view.md` §5.2 (the `CrudOn<TEntity>(Expression<Func<TEntity, TQuery>>? = null)`
+signature), so it is a designed skeleton. But a grep for `read-back|projectionForRead` across the entire
+`write-path` spec returns **nothing**: the signature was designed, the behaviour never specified. Removing it
+is therefore a scope decision (is post-write read-back in this release?), and if taken it must reconcile
+`01-view.md` §5.2 in the same change. A tranche-5 removal was drafted and **reverted** for this reason.
 
 ---
 
@@ -1008,6 +1078,17 @@ It is never invoked anywhere in `src/` and has no test coverage.
 **Fix.** Route it through the same body as `Register<TView>()`, or remove it until it can be completed.
 Shipping a public API that yields discoverable-but-broken endpoints is worse than not shipping it.
 
+**Reclassified (tranche 5) → category 1. Fixed by completing it.** `pilar-1-hardening` requirement **3.1**
+lists `RegisterAssembly` as a peer of `RegisterTemplate`/`Register<TView>` under `RouteGroup`, and **3.7**
+only adds the `[RequiresUnreferencedCode]` marking — **no requirement says "metadata-only"**. That phrase came
+from `PROJECT-STATUS.md` §4's summary of D103, where a description of the half-finished implementation read
+like a decision (now corrected there). So this was an under-implementation of R3.1, and the fix is the first
+option: `Register<TView>()` and `RegisterAssembly` now share one private `RegisterSource` body, so a scanned
+view gets metadata, mask specs, the write facet, and the generated execution plan on identical terms. It also
+had **no test coverage**; it now has one, driven by a dedicated deterministic scan-target assembly
+(`a2n.Vista.Examples.AssemblyScanTarget`) — the main test assembly cannot be its own scan target because it
+holds fixtures that deliberately fail at metadata build time to exercise the startup guards.
+
 ---
 
 ### DEAD-07 — `VistaOpenApiOptions.IncludeAdapterEndpoints` does nothing
@@ -1021,6 +1102,16 @@ The only reference outside its declaration is a test asserting it is `false`. A 
 and observe no change.
 
 **Fix.** Wire it, or mark it `[Obsolete]`/remove until the adapter-documentation phase lands.
+
+**Reclassified (tranche 5) → category 1. This finding was wrong; the member must not be removed.**
+`openapi-emitter` requirement **12.2** states: "THE OpenApi_Emitter SHALL expose an extension point through
+which adapter documentation MAY be contributed in a later phase, without requiring a change to the core
+builder." A `bool` that nothing reads is not an extension point, so the real defect is that **R12.2 is
+unimplemented** — the design doc reduced it to a flag ("extension hook") and the code kept the flag. Note also
+that the test asserting `IncludeAdapterEndpoints == false` is not "the only reference": R12.1 is validated by
+Property 10 (adapter endpoints absent from the v1 document), which passes. R12.1 is satisfied; R12.2 is not.
+A tranche-5 removal was drafted and **reverted**. The correct fix is to implement a real contribution point
+and let the flag either gain a reader or become unnecessary.
 
 ---
 
@@ -1048,6 +1139,18 @@ stderr.WriteLine("The generation pipeline is not yet wired (pending task 12.2)."
 
 **Fix.** Remove the `--base-url` option and its documentation (or implement it), and make the `runner`
 parameter non-nullable so the dead branch disappears.
+
+**Reclassified (tranche 5) → category 3, plus a specification defect. Not removed; pending an owner scope
+call.** `typescript-client` requirement **10** (CLI invocation and configuration) does not mention a base URL
+at all — only the source location, the output directory, and the write-facet flag. The option appears only in
+the requirements *glossary* ("transport/base-URL defaults") and in `design.md`, which describes it as "baked
+into the generated client's default ctor arg". That description **contradicts** requirement 7.1 as encoded in
+Property 20 (a supplied `DefaultBaseUrl` must never appear in any generated file) and requirement 6.3 (the
+client accepts a base URL **at construction**). So the option cannot be implemented as designed without
+breaking a tested security requirement. Removal is the right call, but it must reconcile the glossary and
+`design.md` in the same change — which is why a tranche-5 removal was drafted and **reverted** pending that
+decision. `DefaultTransportHint` (same file, "reserved; fetch-backed default is emitted regardless") is the
+same category but was **not** part of this audit finding.
 
 ---
 

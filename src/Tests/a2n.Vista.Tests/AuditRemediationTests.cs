@@ -27,6 +27,7 @@ using Microsoft.Extensions.DependencyInjection;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
+using a2n.Vista.Examples.AssemblyScanTarget;
 using PurchasingFixtures = a2n.Vista.Tests.AuditFixtures.Purchasing;
 using SalesFixtures = a2n.Vista.Tests.AuditFixtures.Sales;
 
@@ -564,6 +565,63 @@ public sealed class AuditRemediationTests
         await Assert.That(view.ConfigureCalls).IsEqualTo(1);
     }
 
+    // ---- DEAD-02: the Format hint reaches the metadata surface --------------------------------------
+
+    /// <summary>
+    /// DEAD-02: <c>IFieldBuilder.Format(...)</c> is part of the authored surface (<c>01-view.md</c> §5.2), but
+    /// the captured value was read by nothing — <see cref="FieldMetadata"/> had no format member, so
+    /// <c>.Format("N2")</c> was silent data loss. It must now reach the metadata snapshot and the
+    /// <c>GET {route}/metadata</c> projection (D149), while a field with no hint stays <see langword="null"/>.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task DEAD02_Format_Hint_Reaches_Metadata_And_The_Response()
+    {
+        var view = Metadata<AuditFormatView>("audit-format");
+
+        var priced = view.Fields.Single(f => f.Name == nameof(AuditFormatRow.Price));
+        var plain = view.Fields.Single(f => f.Name == nameof(AuditFormatRow.Name));
+
+        await Assert.That(priced.Format).IsEqualTo("N2");
+        await Assert.That(plain.Format).IsNull();
+
+        // Published on the metadata facet, which is what a grid/report client reads.
+        var response = VistaMetadataResponse.From(view);
+        await Assert.That(response.Fields.Single(f => f.Name == nameof(AuditFormatRow.Price)).Format).IsEqualTo("N2");
+        await Assert.That(response.Fields.Single(f => f.Name == nameof(AuditFormatRow.Name)).Format).IsNull();
+    }
+
+    // ---- DEAD-06: an assembly scan registers on the same terms as Register<TView>() -----------------
+
+    /// <summary>
+    /// DEAD-06: <c>RegisterAssembly</c> registered <em>metadata only</em>, so a scanned view became
+    /// route-bearing and discoverable while staying permanently non-executable — no mask specs, no write
+    /// facet, no generated execution plan adopted. pilar-1-hardening R3.1 lists it as a peer of
+    /// <c>Register&lt;TView&gt;()</c>, so it must run the same registration unit.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task DEAD06_Assembly_Scan_Registers_Like_An_Explicit_Registration()
+    {
+        var services = new ServiceCollection();
+        services.AddVista(v => v.RegisterAssembly(typeof(ScanTargetWidgetView).Assembly));
+        using var provider = services.BuildServiceProvider();
+
+        var registry = provider.GetRequiredService<IViewRegistry>();
+        var widget = registry.Get("scan-target-widget");
+        var gadget = registry.Get("scan-target-gadget");
+
+        // Both views are discovered, with the route composed at registration (D101/D103).
+        await Assert.That(widget).IsNotNull();
+        await Assert.That(gadget).IsNotNull();
+        await Assert.That(widget!.Route).IsEqualTo("/api/views/scan-target-widget");
+
+        // The masked field's runtime mask specs are published — the part the metadata-only scan skipped, and
+        // the reason a scanned view could serve unmasked rows once it became executable.
+        await Assert.That(MaskSpecRegistry.TryGet("scan-target-widget", out var specs)).IsTrue();
+        await Assert.That(specs!.Single().FieldName).IsEqualTo(nameof(ScanTargetWidgetRow.Secret));
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
 
     private static ViewMetadata AuditMetadata(params FieldMetadata[] fields) =>
@@ -663,6 +721,34 @@ internal sealed class AuditTypedSource
     public DateOnly Day { get; set; }
 
     public TimeOnly Moment { get; set; }
+}
+
+internal sealed class AuditFormatRow
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public decimal Price { get; set; }
+}
+
+/// <summary>A view that sets a display-format hint on one field only (DEAD-02 / D149).</summary>
+internal sealed class AuditFormatView : View<AuditFormatRow>
+{
+    protected override void Configure(IViewBuilder<AuditFormatRow> b) =>
+        b.Named("audit-format")
+         .From<AuditFormatSource>(s => new AuditFormatRow { Id = s.Id, Name = s.Name, Price = s.Price })
+         .Field(x => x.Id, f => f.PrimaryKey())
+         .Field(x => x.Price, f => f.Format("N2"));
+}
+
+internal sealed class AuditFormatSource
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+
+    public decimal Price { get; set; }
 }
 
 internal sealed class AuditCountingRow

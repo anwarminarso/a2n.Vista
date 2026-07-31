@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Scan target for IVistaBuilder.RegisterAssembly (pilar-1-hardening R3.1/R3.7).
+
+    RegisterAssembly discovers every non-abstract Style B view type with a public parameterless
+    constructor in the assembly it is handed. It therefore cannot be tested against the main test
+    assembly: that one holds dozens of view fixtures, several of which deliberately fail at metadata
+    build time (missing key, missing write facet) to exercise the startup guards, so scanning it would
+    always throw. This library exists to be a small, deterministic, fully-valid scan target.
+
+    It declares exactly two read-only views, both with an explicit key, one carrying a masked field so
+    the test can observe that scanning publishes mask specs (which the former metadata-only scan did
+    not). It deliberately does NOT reference the source generator, so the views stay metadata-only and
+    the test asserts registration behaviour rather than generated-plan adoption.
+
+    Multi-targeting (net8.0;net9.0;net10.0) is inherited from Directory.Build.props — do NOT override.
+  -->
+  <PropertyGroup>
+    <RootNamespace>a2n.Vista.Examples.AssemblyScanTarget</RootNamespace>
+    <AssemblyName>a2n.Vista.Examples.AssemblyScanTarget</AssemblyName>
+    <IsPackable>false</IsPackable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- View<TQuery> and the authoring builder live in Core; nothing else is needed to be scannable. -->
+    <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
+  </ItemGroup>
+
+</Project>
