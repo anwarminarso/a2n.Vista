@@ -124,8 +124,15 @@ jobs:
       - name: Restore
         run: dotnet restore src/a2n.Vista.slnx
 
+      # ContinuousIntegrationBuild normalizes source paths so the published assemblies and symbols
+      # are reproducible. It is set HERE and not in Directory.Build.props on purpose: it is a
+      # packaging concern, and enabling it for every CI build rewrites [CallerFilePath] to `/_/...`,
+      # which breaks any test that locates a repository file that way.
       - name: Build (Release)
-        run: dotnet build src/a2n.Vista.slnx -c Release --no-restore -p:Version=${{ steps.ver.outputs.version }}
+        run: >-
+          dotnet build src/a2n.Vista.slnx -c Release --no-restore
+          -p:Version=${{ steps.ver.outputs.version }}
+          -p:ContinuousIntegrationBuild=true
 
       - name: Pack
         shell: bash
@@ -135,7 +142,8 @@ jobs:
           for proj in $PACK_PROJECTS; do
             echo "==> packing $proj"
             dotnet pack "$proj" -c Release --no-build -o artifacts \
-              -p:Version=${{ steps.ver.outputs.version }}
+              -p:Version=${{ steps.ver.outputs.version }} \
+              -p:ContinuousIntegrationBuild=true
           done
           ls -l artifacts
 

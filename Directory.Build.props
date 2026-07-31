@@ -30,11 +30,14 @@
     <IncludeSymbols>true</IncludeSymbols>
     <SymbolPackageFormat>snupkg</SymbolPackageFormat>
     <!--
-      Deterministic, normalized paths in CI builds only: GitHub Actions sets CI=true, so a local
-      build keeps its absolute paths (which is what a local debugger wants) while a published
-      package is reproducible.
+      NOTE on ContinuousIntegrationBuild (deterministic, normalized source paths): it is set by
+      `.github/workflows/publish.yml` on the release build/pack only, NOT here. Reproducible paths
+      are a *packaging* concern, and turning them on for every CI build breaks any test that locates
+      a repository file through [CallerFilePath] — the compiler rewrites those paths to `/_/...`, so
+      writing to them fails with UnauthorizedAccessException. `RepresentativeValuesFixtureExportTests`
+      does exactly that, and a repo-wide `Condition="'$(CI)' == 'true'"` made all three test TFMs
+      fail in CI while passing locally. Keep it scoped to the publish workflow.
     -->
-    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- Brand icon shown on nuget.org. The a2n wordmark, downscaled to 1024x480
          (~328 KB) to stay under NuGet's 1 MB package-icon limit. -->
