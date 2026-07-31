@@ -1,5 +1,8 @@
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
+using System.Runtime.CompilerServices;
 using a2n.Vista.Metadata;
 
 namespace a2n.Vista.Export;
@@ -80,12 +83,46 @@ public static class ExportColumns
     }
 
     /// <summary>Reads the value of the property named <paramref name="name"/> from <paramref name="row"/>.</summary>
+    /// <remarks>
+    /// The resolved <see cref="PropertyInfo"/> is memoized per <c>(row type, name)</c> pair. This method runs
+    /// once per exported <em>cell</em>, so an uncached <see cref="Type.GetProperty(string)"/> here cost a name
+    /// lookup per cell — a million lookups for a 100,000-row × 10-column Style A export (audit finding
+    /// <c>PERF-02</c>). A negative result is cached too, so a name that does not exist on the row type is
+    /// looked up once rather than on every row.
+    /// </remarks>
     /// <param name="row">The projected row object, or <see langword="null"/>.</param>
     /// <param name="name">The property/field name.</param>
     /// <returns>The value, or <see langword="null"/> when the row or property is absent.</returns>
     [RequiresUnreferencedCode("Export reads projected row values by reflection over the (possibly anonymous) row type; use the source generator path for AOT.")]
-    public static object? Value(object? row, string name) =>
-        row?.GetType().GetProperty(name)?.GetValue(row);
+    public static object? Value(object? row, string name)
+    {
+        if (row is null)
+        {
+            return null;
+        }
+
+        var rowType = row.GetType();
+        if (!PropertyCache.TryGetValue(rowType, out var byName))
+        {
+            byName = PropertyCache.GetValue(rowType, static _ => new ConcurrentDictionary<string, PropertyInfo?>(StringComparer.Ordinal));
+        }
+
+        if (!byName.TryGetValue(name, out var property))
+        {
+            // Deliberately resolved here rather than in a cache factory lambda: a lambda is compiled into a
+            // separate method that does not inherit this method's [RequiresUnreferencedCode], so the trim
+            // analyser would flag the reflective lookup there.
+            property = rowType.GetProperty(name);
+            byName[name] = property;
+        }
+
+        return property?.GetValue(row);
+    }
+
+    // Per-row-type member cache for the reflection fallback. Keyed weakly by Type so a row type from a
+    // collectible assembly (or a short-lived test host) is not rooted by the cache; the inner map is
+    // concurrent because export requests run in parallel.
+    private static readonly ConditionalWeakTable<Type, ConcurrentDictionary<string, PropertyInfo?>> PropertyCache = new();
 
     // Isolates the reflection fallback so the AOT-clean Value(viewName, row, fieldName) overload — and the
     // export writers that call it — are not forced to be [RequiresUnreferencedCode]. The suppression is

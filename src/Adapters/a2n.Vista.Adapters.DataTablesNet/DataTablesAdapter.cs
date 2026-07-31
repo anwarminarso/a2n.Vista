@@ -82,7 +82,7 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(view);
 
-        var fields = BuildFieldLookup(view);
+        var fields = ViewFieldLookup.For(view);
 
         // Paging (D144): DataTables is offset-based, so `start` is carried verbatim as the absolute Offset
         // instead of being divided into a page index. Dividing lost rows twice — integer division snapped an
@@ -220,17 +220,6 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
             1 => children[0],
             _ => new FilterAnd(children),
         };
-    }
-
-    private static Dictionary<string, FieldMetadata> BuildFieldLookup(ViewMetadata view)
-    {
-        var lookup = new Dictionary<string, FieldMetadata>(view.Fields.Count, StringComparer.Ordinal);
-        foreach (var field in view.Fields)
-        {
-            lookup[field.Name] = field;
-        }
-
-        return lookup;
     }
 
     private static void BindColumns(IReadOnlyDictionary<string, IReadOnlyList<string>> values, DataTablesQuery query)

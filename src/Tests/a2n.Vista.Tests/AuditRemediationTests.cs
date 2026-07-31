@@ -11,6 +11,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using a2n.Vista.Adapters;
 using a2n.Vista.Adapters.DataTablesNet;
+using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Authoring;
 using a2n.Vista.Contracts;
@@ -356,6 +357,95 @@ public sealed class AuditRemediationTests
         // A value under the cap is passed through untouched.
         var normal = new HardLimits(HardLimits.DefaultMaxPageSize, 250);
         await Assert.That(normal.MaxExportRows).IsEqualTo(250);
+    }
+
+    // ---- PERF-05: the field lookup is built once per metadata instance ------------------------------
+
+    /// <summary>
+    /// PERF-05: every consumer used to rebuild an identical name → field dictionary per call — three filter
+    /// channels per List request plus a fourth for a grid adapter. Field metadata is immutable after
+    /// registration, so the lookup must be memoized per metadata instance while keeping ordinal, last-wins
+    /// matching.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task PERF05_Field_Lookup_Is_Memoized_Per_Metadata_Instance()
+    {
+        var view = TextMetadata();
+
+        var first = ViewFieldLookup.For(view);
+        var second = ViewFieldLookup.For(view);
+
+        await Assert.That(ReferenceEquals(first, second)).IsTrue();
+
+        // Every field stays reachable by its exact name — and only by that spelling (ordinal matching, so a
+        // differently cased name cannot reach a field the whitelist governs).
+        foreach (var field in view.Fields)
+        {
+            await Assert.That(first.TryGetValue(field.Name, out var resolved)).IsTrue();
+            await Assert.That(resolved).IsEqualTo(field);
+        }
+
+        await Assert.That(first.ContainsKey("Text")).IsTrue();
+        await Assert.That(first.ContainsKey("text")).IsFalse();
+
+        // Keyed by reference, not by record equality: a `with`-derived clone gets its own entry.
+        var clone = view with { };
+        await Assert.That(ReferenceEquals(ViewFieldLookup.For(clone), first)).IsFalse();
+    }
+
+    // ---- PERF-02: the export reflection fallback resolves each member once -------------------------
+
+    /// <summary>
+    /// PERF-02: the fallback ran one <c>GetProperty</c> per exported <em>cell</em> — a million name lookups
+    /// for a 100,000-row × 10-column Style A export. The resolved member must be cached per
+    /// <c>(row type, name)</c> pair without changing what a read returns, including the misses.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task PERF02_Export_Reflection_Fallback_Caches_The_Member_Per_Row_Type()
+    {
+        var row = new AuditTextRow { Text = "first" };
+        await Assert.That(ExportColumns.Value(row, nameof(AuditTextRow.Text))).IsEqualTo("first");
+
+        // The second read comes from the cache and must still observe live row state, not a captured value.
+        row.Text = "second";
+        await Assert.That(ExportColumns.Value(row, nameof(AuditTextRow.Text))).IsEqualTo("second");
+
+        // Keyed per row type: the same name on a different type resolves that type's member, or nothing.
+        var typed = new AuditTypedRow { Key = Guid.Empty };
+        await Assert.That(ExportColumns.Value(typed, nameof(AuditTypedRow.Key))).IsEqualTo(Guid.Empty);
+
+        // A negative result is cached too, and a cached miss must stay a null read rather than a throw.
+        await Assert.That(ExportColumns.Value(typed, nameof(AuditTextRow.Text))).IsNull();
+        await Assert.That(ExportColumns.Value(typed, nameof(AuditTextRow.Text))).IsNull();
+        await Assert.That(ExportColumns.Value(null, nameof(AuditTextRow.Text))).IsNull();
+    }
+
+    // ---- PERF-07: the metadata response is projected once per view ---------------------------------
+
+    /// <summary>
+    /// PERF-07: <c>GET {route}/metadata</c> re-projected, re-serialized, and re-hashed immutable metadata on
+    /// every request, including the 304 path. The projection must be memoized per metadata instance, and
+    /// because the response is now shared its field list must be genuinely read-only. (The HTTP
+    /// <c>ETag</c>/<c>If-None-Match</c>/304 contract itself is pinned by
+    /// <c>HttpEndpointIntegrationTests.Metadata_Caching_Enabled_Emits_ETag_And_Honors_If_None_Match</c>.)
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task PERF07_Metadata_Response_Is_Projected_Once_Per_View()
+    {
+        var view = TextMetadata();
+
+        var first = VistaMetadataResponse.From(view);
+        var second = VistaMetadataResponse.From(view);
+
+        await Assert.That(ReferenceEquals(first, second)).IsTrue();
+        await Assert.That(first.Fields is IList<VistaFieldMetadataResponse> { IsReadOnly: true }).IsTrue();
+
+        // The projection is otherwise unchanged: hidden fields dropped, projection order preserved.
+        await Assert.That(string.Join(",", first.Fields.Select(f => f.Name)))
+            .IsEqualTo(string.Join(",", view.Fields.Where(f => !f.IsHidden).Select(f => f.Name)));
     }
 
     // ---- Helpers -----------------------------------------------------------------------------------

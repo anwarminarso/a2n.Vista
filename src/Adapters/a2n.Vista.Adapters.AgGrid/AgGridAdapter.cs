@@ -100,7 +100,7 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(view);
 
-        var fields = BuildFieldLookup(view);
+        var fields = ViewFieldLookup.For(view);
 
         // Block paging (D135, revised by D144): PageSize = EndRow - StartRow, and StartRow is carried
         // verbatim as the absolute Offset instead of being divided into a page index — a block boundary is
@@ -202,18 +202,6 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
             1 => leaves[0],
             _ => new FilterOr(leaves),
         };
-    }
-
-    /// <summary>Builds a case-sensitive (ordinal) field lookup keyed by field name.</summary>
-    private static Dictionary<string, FieldMetadata> BuildFieldLookup(ViewMetadata view)
-    {
-        var lookup = new Dictionary<string, FieldMetadata>(view.Fields.Count, StringComparer.Ordinal);
-        foreach (var field in view.Fields)
-        {
-            lookup[field.Name] = field;
-        }
-
-        return lookup;
     }
 
     /// <summary>

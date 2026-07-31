@@ -94,7 +94,7 @@ public class FilterCompiler
 
         EnforceLimits(node, view.Limits);
 
-        var fields = BuildFieldLookup(view.Fields);
+        var fields = ViewFieldLookup.For(view);
         var parameter = Expression.Parameter(typeof(T), "x");
 
         // RUC path: each whitelisted field resolves to a member by reflecting over T with
@@ -136,7 +136,7 @@ public class FilterCompiler
 
         EnforceLimits(node, view.Limits);
 
-        var fields = BuildFieldLookup(view.Fields);
+        var fields = ViewFieldLookup.For(view);
         var parameter = Expression.Parameter(typeof(T), "x");
 
         // Compiled path: each whitelisted field resolves to its generated member-access lambda, whose
@@ -167,17 +167,6 @@ public class FilterCompiler
         }
 
         return ParameterReplaceVisitor.Replace(accessor.Body, accessor.Parameters[0], parameter);
-    }
-
-    private static Dictionary<string, FieldMetadata> BuildFieldLookup(IReadOnlyList<FieldMetadata> fields)
-    {
-        var lookup = new Dictionary<string, FieldMetadata>(fields.Count, StringComparer.Ordinal);
-        foreach (var field in fields)
-        {
-            lookup[field.Name] = field;
-        }
-
-        return lookup;
     }
 
     private Expression Build(

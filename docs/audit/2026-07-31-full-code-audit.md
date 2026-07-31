@@ -75,6 +75,9 @@ covered by regression tests**. Build green on net8.0/net9.0/net10.0; suites gree
 | `DEAD-04` | **Fixed** | `HardLimits.MaxExportRows` clamps to `AbsoluteMaxExportRows` on every construction path, including `with` |
 | `PERF-01` | **Partially fixed** | `Results.Stream` removes one full payload copy; true streaming to `Response.Body` remains |
 | `DEAD-05` | **Fixed (D144)** | DataTables honours per-column `searchable`/`orderable` and rejects `regex=true` instead of executing it as a literal `Contains`. `DataTablesResponse.Error` is still unused |
+| `PERF-02` | **Fixed** | The reflection fallback memoizes the resolved member per `(row type, field name)`, negative results included |
+| `PERF-05` | **Fixed** | One shared `ViewFieldLookup.For(view)`, memoized per metadata instance and frozen; replaces four independent per-call builders |
+| `PERF-07` | **Fixed** | The metadata projection is memoized per view and its serialized payload + `ETag` computed once; the 304 path is now one string comparison |
 | Other `DEAD-*` / `PERF-*` | **Open** | Each is either an API removal (breaking) or a design change; see the notes on each |
 
 ### Tranche 2 (2026-07-31) — the decision-bearing findings
@@ -93,9 +96,27 @@ know about:
   (**D146**). This surfaced five test fixtures with exactly that misconfiguration; both shipped samples were
   already correct. A successful delete no longer emits an `ETag`.
 
-**Still open after tranche 2:** `BUG-07` (`AsNoTracking` + non-destructive masking), `BUG-10` (record equality
+### Tranche 3 (2026-07-31) — the contract-free caching findings
+
+`PERF-02`, `PERF-05` and `PERF-07` are fixed. All three are pure memoization of data that is immutable after
+registration, so **no route, envelope, error shape, or public contract changes** and no decision was needed.
+Each cache is a `ConditionalWeakTable` keyed by reference — record equality over `ViewMetadata` is not a
+dependable cache key (`BUG-10`), and weak keying means a short-lived metadata instance (a test fixture, a
+disposed host) leaks nothing.
+
+- **`PERF-05`** — the four independent per-call field-lookup builders (`FilterCompiler` ×2, both grid
+  adapters) collapse into one `ViewFieldLookup.For(view)` in Core, built once per metadata instance as a
+  `FrozenDictionary`. Ordinal, last-wins matching is unchanged; frozen because the lookup is now shared
+  across requests.
+- **`PERF-02`** — `ExportColumns.Value(row, name)` memoizes the resolved `PropertyInfo` per
+  `(row type, name)`, misses included. Reads still observe live row state.
+- **`PERF-07`** — `VistaMetadataResponse.From` memoizes the projection per view, and the mapper caches the
+  serialized payload with its `ETag` keyed on that response instance, so a 304 costs one string comparison
+  instead of a full serialization plus a SHA-256. The shared response's field list is wrapped read-only.
+
+**Still open after tranche 3:** `BUG-07` (`AsNoTracking` + non-destructive masking), `BUG-10` (record equality
 vs mutable key state), the remaining `DEAD-*` items (each an API removal or a feature completion), and
-`PERF-02`–`PERF-08`.
+`PERF-03`, `PERF-04`, `PERF-06`, `PERF-08` (each a design change, not just caching).
 
 ---
 
@@ -1062,6 +1083,12 @@ unaffected; Style A — the ergonomic authoring style the project deliberately p
 **Fix.** Cache a `PropertyInfo` (better: a compiled getter delegate) per `(rowType, fieldName)` in a
 `ConcurrentDictionary` on the fallback path.
 
+**Fixed (tranche 3).** The `PropertyInfo` is memoized per `(row type, name)` — a `ConditionalWeakTable<Type,
+ConcurrentDictionary<string, PropertyInfo?>>`, so a collectible row type is not rooted by the cache and a
+name that does not exist on the type is looked up once rather than per row. The compiled-getter variant was
+not taken: emitting a delegate over an anonymous (internal) row type runs into expression-compilation
+visibility limits, and removing the per-cell name lookup is where the order of magnitude was.
+
 ---
 
 ### PERF-03 — The XLSX writer materializes the whole worksheet as a string, then copies it
@@ -1121,6 +1148,11 @@ adapters each build a fourth.
 **Fix.** Build the lookup once at registration and hang it off the execution plan, or memoize per
 `ViewMetadata` via a `ConditionalWeakTable`.
 
+**Fixed (tranche 3).** The `ConditionalWeakTable` option, exposed as `ViewFieldLookup.For(view)` in
+`a2n.Vista.Core/Metadata`, and adopted by all four call sites — which also removes the duplicated builder
+from both grid adapters. The result is a `FrozenDictionary`, so the shared lookup cannot be mutated through
+a downcast.
+
 ---
 
 ### PERF-06 — Generators call `GetTypeByMetadataName` inside the per-node transform
@@ -1159,6 +1191,14 @@ client a download while costing the server the full serialization and hash — o
 
 **Fix.** Compute the JSON and ETag once per view into a `ConcurrentDictionary<string, (string Json, string
 ETag)>`, reducing the 304 path to one string comparison.
+
+**Fixed (tranche 3), in two layers.** `VistaMetadataResponse.From` memoizes the projection per
+`ViewMetadata`, and the mapper memoizes the serialized payload + `ETag` keyed on **that response instance**
+rather than on the view name. Instance keying matters: a name-keyed static cache would be shared by every
+host in the process, so two test hosts registering the same view name could serve each other's bytes. The
+shared response's field list is wrapped in a `ReadOnlyCollection` because it is no longer per-request. The
+authorization pipeline is untouched — the facet is still authorized (and `ShapeQuery` still runs) on every
+request, including the ones answered from cache.
 
 ---
 

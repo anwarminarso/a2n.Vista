@@ -1,7 +1,14 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-31 (**audit remediation, tranche 2** — the decision-bearing findings are settled and
+> Last updated: 2026-07-31 (**audit remediation, tranche 3** — the three contract-free caching findings are
+> fixed: **`PERF-05`** one shared `ViewFieldLookup.For(view)` replaces four per-call field-lookup builders,
+> **`PERF-02`** the export reflection fallback memoizes its member lookup instead of resolving it per cell,
+> **`PERF-07`** the metadata projection, payload, and `ETag` are computed once per view so a 304 is one string
+> comparison. Pure memoization: **no decision needed, no contract/route/envelope/error change**; every cache is
+> a reference-keyed `ConditionalWeakTable`. See §2.24. Remaining open audit items: `BUG-07`, `BUG-10`, the
+> `DEAD-*` API removals, and `PERF-03`/`04`/`06`/`08` — each needs a design change, not just caching.)
+> Prior: 2026-07-31 (**audit remediation, tranche 2** — the decision-bearing findings are settled and
 > implemented: **D143** masked fields default non-sortable (closes the `ORDER BY` + paging probing vector),
 > **D144** paging carries an absolute `Offset` so the page-size clamp can no longer move a grid's window,
 > **D145** the endpoint authorizes before it binds (no more `428`/`400` to an unauthorized caller), **D146**
@@ -1236,6 +1243,38 @@ their `DbContext` model never configured — exactly the defect the audit descri
 - **Verified (2026-07-31, tranche 2):** build green net8/9/10; **536 tests/TFM (net8) / 537 (net10)** in
   `a2n.Vista.Tests`, **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
   0 skipped. Both sample self-tests (Northwind read + write + OpenAPI, AgGridNorthwind) PASS.
+
+### 2.24 Audit remediation, tranche 3 (landed 2026-07-31) — `PERF-02`, `PERF-05`, `PERF-07`
+
+The caching findings: three hot paths that recomputed data which is **immutable after registration**. All
+three fixes are pure memoization — **no new decision, and no route, envelope, error shape, or public contract
+change**. Deliberately taken as one tranche so the remaining audit work splits cleanly into "needs a design
+decision" (`BUG-07`, `PERF-03`/`04`/`06`/`08`) and "one breaking batch" (the `DEAD-*` API removals).
+
+- **`PERF-05`** — new `ViewFieldLookup.For(view)` (`src/a2n.Vista.Core/Metadata/ViewFieldLookup.cs`) is the
+  single name → `FieldMetadata` lookup, memoized per metadata instance and returned as a `FrozenDictionary`.
+  It replaces four independent per-call builders (`FilterCompiler` ×2 — a List request compiles up to three
+  filter channels — plus a duplicated copy in each grid adapter). Ordinal, last-wins matching unchanged.
+- **`PERF-02`** — `ExportColumns.Value(row, name)` memoizes the resolved `PropertyInfo` per
+  `(row type, name)`, misses included. This ran **per exported cell**: ~1M `GetProperty` calls for a
+  100,000-row × 10-column Style A export.
+- **`PERF-07`** — `VistaMetadataResponse.From` memoizes the projection per view, and the mapper caches the
+  serialized payload with its `ETag`; a 304 is now one string comparison instead of a full serialization plus
+  a SHA-256 over the whole payload. Authorization is unchanged: the facet is still authorized (and
+  `ShapeQuery` still runs) on every request.
+
+**Cache-keying convention worth reusing:** every cache is a `ConditionalWeakTable` keyed **by reference**, not
+by value. `ViewMetadata` is a record whose equality is not a dependable cache key (`BUG-10`, still open), a
+`with`-derived clone correctly gets its own entry, and weak keying means a short-lived metadata instance (a
+test fixture, a disposed host) leaks nothing. `PERF-07` keys on the *response instance* rather than the view
+name for the same reason a name-keyed static cache is wrong here: it would be shared by every host in the
+process, so two test hosts registering the same view name could serve each other's bytes.
+
+- **Verified (2026-07-31, tranche 3):** build green net8/9/10 Release (warning set unchanged from §2.22);
+  **539 tests/TFM (net8) / 540 (net10)** in `a2n.Vista.Tests`, **143** in
+  `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed, 0 skipped. Both sample self-tests
+  PASS, including the OpenAPI step's byte-for-byte `/metadata` coexistence check (1537 bytes, unchanged),
+  which is direct evidence the `PERF-07` cache did not alter the payload.
 
 ---
 

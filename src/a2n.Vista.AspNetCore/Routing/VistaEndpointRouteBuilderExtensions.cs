@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -252,8 +253,13 @@ public static class VistaEndpointRouteBuilderExtensions
 
         // Metadata is stable between deploys; an ETag (hash of the serialized payload) lets clients skip
         // re-downloading it. Off by default so edits are visible immediately during development (D110 follow-up).
-        var json = JsonSerializer.Serialize(metadata, VistaJson.Options);
-        var etag = ComputeETag(json);
+        //
+        // The payload and its hash are computed once per view (PERF-07). Before this, the "cache" saved the
+        // client a download while costing the server a full serialization plus a SHA-256 over the whole
+        // payload on every request — including the 304 path, which now reduces to one string comparison.
+        // Keyed on the metadata response instance, which ViewRequestExecutor serves from its own per-view
+        // memo, so the cached bytes can never describe a different view than the one being served.
+        var (json, etag) = GetCachedMetadataPayload(metadata);
 
         http.Response.Headers.ETag = etag;
         http.Response.Headers.CacheControl = $"private, max-age={options.MetadataCacheMaxAgeSeconds}";
@@ -265,6 +271,35 @@ public static class VistaEndpointRouteBuilderExtensions
 
         return Results.Content(json, "application/json");
     }
+
+    /// <summary>
+    /// Returns the serialized metadata payload and its <c>ETag</c> for <paramref name="metadata"/>, computing
+    /// them on first use. Entries are keyed weakly by response instance, so they are collected with the view
+    /// metadata they were derived from.
+    /// </summary>
+    [RequiresUnreferencedCode(AotMessage)]
+    private static MetadataPayload GetCachedMetadataPayload(VistaMetadataResponse metadata)
+    {
+        if (MetadataPayloadCache.TryGetValue(metadata, out var cached))
+        {
+            return cached;
+        }
+
+        // Serialized here rather than in a cache factory lambda: a lambda is compiled into a separate method
+        // that does not inherit this method's [RequiresUnreferencedCode] annotation.
+        var json = JsonSerializer.Serialize(metadata, VistaJson.Options);
+        var payload = new MetadataPayload(json, ComputeETag(json));
+
+        // A concurrent first request may compute the same payload twice; both are byte-identical, so
+        // last-writer-wins is harmless.
+        MetadataPayloadCache.AddOrUpdate(metadata, payload);
+        return payload;
+    }
+
+    private static readonly ConditionalWeakTable<VistaMetadataResponse, MetadataPayload> MetadataPayloadCache = new();
+
+    /// <summary>The precomputed <c>GET {route}/metadata</c> response body and its strong <c>ETag</c>.</summary>
+    private sealed record MetadataPayload(string Json, string ETag);
 
     /// <summary>Computes a strong, quoted <c>ETag</c> from the serialized metadata payload (SHA-256 hex).</summary>
     private static string ComputeETag(string json)
