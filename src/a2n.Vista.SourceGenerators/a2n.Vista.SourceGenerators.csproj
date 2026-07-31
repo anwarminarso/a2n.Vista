@@ -4,9 +4,15 @@
     <TargetFramework>netstandard2.0</TargetFramework>
     <RootNamespace>a2n.Vista.SourceGenerators</RootNamespace>
     <AssemblyName>a2n.Vista.SourceGenerators</AssemblyName>
-    <PackageId>a2n.Vista.SourceGenerators</PackageId>
     <Description>Vista compile-time source generators for metadata, endpoints, and AOT.</Description>
-    <PackageTags>vista;a2n;source-generator;roslyn;aot</PackageTags>
+    <!--
+      Not a package of its own. The generator ships INSIDE a2n.Vista.Core, which packs this project's dll
+      into `analyzers/dotnet/cs` so consumers get the codegen transitively with no extra reference (see
+      a2n.Vista.Core.csproj). Because `IncludeBuildOutput` is false here, packing this project produced no
+      content and failed the whole solution's `dotnet pack` with NU5017 — a release blocker. Declaring it
+      unpackable states the intent instead of half-declaring a package that cannot be built.
+    -->
+    <IsPackable>false</IsPackable>
     <IsRoslynComponent>true</IsRoslynComponent>
     <EnforceExtendedAnalyzerRules>true</EnforceExtendedAnalyzerRules>
     <IncludeBuildOutput>false</IncludeBuildOutput>

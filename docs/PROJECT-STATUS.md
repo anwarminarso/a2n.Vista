@@ -1702,6 +1702,60 @@ The Spec 02 gap analysis that drove `query-engine-hardening` is now **resolved**
   both v1.x. **With M9-P6 landed, M9 (the Source Generator, Pillar 3) is complete.** **Dependency note:**
   **M17 (TS client) landed (2026-07-14, D131/D132, §2.18)** on the OpenAPI document (M18) — it consumes the
   emitted document only and references no Vista package.
+### 7.1 Open items from the 2026-07-31 audit (tranches 3–6 landed; see §2.24–§2.27)
+
+Ordered by what blocks a release first. The report (`docs/audit/2026-07-31-full-code-audit.md`) carries the
+per-finding detail; the §3 method-correction box there is mandatory reading before touching any `DEAD-*` item.
+
+- **`openapi-emitter` R12.2 — the adapter-documentation extension point is UNIMPLEMENTED.** The requirement
+  says the emitter "SHALL expose an extension point through which adapter documentation MAY be contributed in
+  a later phase, without requiring a change to the core builder". A `bool IncludeAdapterEndpoints` that nothing
+  reads is the wrong shape for that. R12.1 *is* satisfied (validated by Property 10). **Recommended:** a real
+  contribution point (e.g. `IVistaOpenApiDocumentContributor` collected by `AddVistaOpenApi()` and invoked by
+  the builder after the core paths), which also gives the flag a reader or makes it unnecessary. Bounded:
+  one interface, one collection, one invocation, plus tests. This is the one open item that is a **requirement
+  gap**, not a preference. (Audit `DEAD-07`, finding withdrawn as "dead code".)
+- **Three API-surface scope calls — each needs a decision AND a spec reconciliation in the same change.**
+  All three are declared on a spec'd surface with no acceptance criterion defining their behaviour, so removal
+  is a scope decision, not a cleanup:
+  - `IViewRegistry.Register<TView>()` always throws. `pilar-1-core` tasks 4.3 declares it and is ticked `[x]`;
+    **the tick is wrong**. Superseded in substance by D101/D103 (registration owns route composition, so a
+    Core-level entry would produce a view whose `Route` is the bare name). Removal must correct tasks 4.3.
+    (Audit `DEAD-01`.)
+  - `CrudOn<TEntity>(projectionForRead)` discards its parameter. The signature is in `01-view.md` §5.2; a grep
+    for read-back across the whole `write-path` spec returns nothing. Decide: is post-write read-back in this
+    release? If not, drop the parameter and reconcile §5.2. (Audit `DEAD-03`.)
+  - TypeScript client `DefaultBaseUrl` / `DefaultTransportHint` are parsed and ignored. Requirement 10 never
+    mentions a base URL; only the glossary and `design.md` do, and `design.md`'s "baked into the generated
+    client's default ctor arg" **contradicts** R7.1/Property 20 (a supplied base URL must never appear in any
+    generated file) and R6.3 (supplied at construction). Removal must reconcile the glossary and `design.md`.
+    The `CliHost` nullable-`runner` "pending task 12.2" branch is unreachable and goes with it.
+    (Audit `DEAD-08`.)
+- **`PERF-08` — every AG Grid block fetch pays a discarded unfiltered `COUNT`.** Needs a contract decision: a
+  flag on `ViewQueryRequest` (e.g. `SkipUnfilteredTotal`) or a distinct executor entry point, so an adapter can
+  say it does not need the baseline count. Three round-trips where two suffice, on the hottest path of an
+  infinite-scroll grid.
+- **`PERF-01` (remaining half) — export still materializes every row before writing.** Tranche 1 removed one
+  full payload copy (`Results.Stream`) and tranche 6 made the XLSX writer stream, so the writer no longer
+  buffers the document. What remains is `ExportRowsAsync` materializing up to `MaxExportRows` (default 100,000,
+  absolute cap 1,000,000) as `IReadOnlyList<object?>` before any writing starts. The real fix is a streamed row
+  source through the writer to `Response.Body`.
+- **`DEAD-09` (remaining half) — cross-generator deduplication.** 4× `FindViewBase`/`IsRecognizedViewDefinition`,
+  3× `IsNamedContractType`, 2× `Unwrap`, 5× hint-name builder. Maintainability-only payoff against regression
+  risk in five incremental pipelines, so deliberately deferred. The concrete drift it predicted is already
+  closed (`SourceLiterals.Literal`). The unreferenced generator model members it lists
+  (`WriteMapperModel.HasCrudFacet`, `DtoMemberModel.ShapeKind`/`MemberShapeKind`, `ShouldEmitMapper`) each need
+  a requirements cross-check before removal — same discipline as the `DEAD-*` items.
+- **`PERF-06` — declined, do not re-raise without profiling data.** Hoisting the generators' well-known type
+  lookups into `CompilationProvider` and combining that into the per-node transform is the documented
+  incremental-generator anti-pattern: it invalidates every candidate's cached transform on every keystroke,
+  which is worse than the handful of cached symbol lookups it removes. A safe equatable-`bool` variant is
+  recorded in the report if latency ever measurably matters.
+- **Test-suite flake to watch.** One `a2n.Vista.Tests` run failed with a transient `SQLite Error 5` on
+  connection open and passed on the next three runs. Not reproduced since; unrelated to the tranche changes (no
+  locking behaviour was touched). Worth a dedicated look if it recurs, since a flaky suite erodes the parity
+  guards everything else depends on.
+
 - **Observability (D100) & versioning (D99)** — designed, not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
