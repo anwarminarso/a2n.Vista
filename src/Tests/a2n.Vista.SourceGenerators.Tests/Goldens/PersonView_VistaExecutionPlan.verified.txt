@@ -49,7 +49,8 @@ file sealed class PersonView_VistaExecutionPlan : global::a2n.Vista.EntityFramew
         global::System.IServiceProvider services,
         global::a2n.Vista.Ports.IViewScope scope)
     {
-        global::System.Linq.IQueryable<global::App.Person> source = dbContext.Set<global::App.Person>();
+        global::System.Linq.IQueryable<global::App.Person> source =
+            global::Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(dbContext.Set<global::App.Person>());
 
         for (var i = 0; i < _rowFilters.Count; i++)
         {

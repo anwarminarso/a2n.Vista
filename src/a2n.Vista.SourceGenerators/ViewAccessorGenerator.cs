@@ -557,7 +557,12 @@ namespace a2n.Vista.SourceGenerators
             sb.Append("        global::System.IServiceProvider services,").Append(nl);
             sb.Append("        global::a2n.Vista.Ports.IViewScope scope)").Append(nl);
             sb.Append("    {").Append(nl);
-            sb.Append("        global::System.Linq.IQueryable<").Append(tsource).Append("> source = dbContext.Set<").Append(tsource).Append(">();").Append(nl);
+            // No-tracking: a Vista read never hands the caller entities attached to the request-scoped
+            // DbContext the write path shares, so masking a materialized row can never be persisted by a
+            // later SaveChanges (audit finding BUG-07). Emitted as a static call on the closed generic, so
+            // the path stays reflection-free.
+            sb.Append("        global::System.Linq.IQueryable<").Append(tsource).Append("> source =").Append(nl);
+            sb.Append("            global::Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(dbContext.Set<").Append(tsource).Append(">());").Append(nl);
             sb.Append(nl);
             sb.Append("        for (var i = 0; i < _rowFilters.Count; i++)").Append(nl);
             sb.Append("        {").Append(nl);

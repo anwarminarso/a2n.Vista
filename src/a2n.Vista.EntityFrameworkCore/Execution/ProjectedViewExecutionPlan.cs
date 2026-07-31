@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using a2n.Vista.Authoring;
 using a2n.Vista.Ports;
 using Microsoft.EntityFrameworkCore;
@@ -115,6 +116,41 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
             ?? throw new InvalidOperationException(
                 $"The captured query for view '{ViewName}' produced a null queryable.");
 
-        return queryable;
+        return AsNoTracking(queryable);
+    }
+
+    private static readonly MethodInfo AsNoTrackingMethod =
+        typeof(EntityFrameworkQueryableExtensions)
+            .GetMethods(BindingFlags.Public | BindingFlags.Static)
+            .Single(m => m.Name == nameof(EntityFrameworkQueryableExtensions.AsNoTracking)
+                         && m.IsGenericMethodDefinition
+                         && m.GetParameters().Length == 1);
+
+    /// <summary>
+    /// Marks the captured Style A query as no-tracking. A Vista read never hands the caller entities attached
+    /// to the request-scoped <see cref="DbContext"/> the write path shares: the masking runtime writes the
+    /// masked value into the materialized row, so a tracked row meant a later <c>SaveChanges</c> on that
+    /// context could persist the mask over real data (audit finding <c>BUG-07</c>). A Style A view registered
+    /// as <c>(db, sp) =&gt; db.Set&lt;Entity&gt;()</c> is exactly that case.
+    /// </summary>
+    /// <remarks>
+    /// The combined delegate erases the element type, so the generic <c>AsNoTracking&lt;T&gt;</c> is closed
+    /// reflectively. That is confined to this already-<see cref="RequiresUnreferencedCodeAttribute"/> plan and
+    /// runs once per request, never per row; the AOT-clean generated plan emits the call directly. A
+    /// value-typed projection cannot satisfy the <c>class</c> constraint and tracks nothing anyway, so it is
+    /// returned unchanged.
+    /// </remarks>
+    [RequiresUnreferencedCode("Closes EntityFrameworkQueryableExtensions.AsNoTracking<T> over the captured query's runtime element type; use the source generator path for AOT.")]
+    private static IQueryable AsNoTracking(IQueryable queryable)
+    {
+        var elementType = queryable.ElementType;
+        if (elementType.IsValueType)
+        {
+            return queryable;
+        }
+
+        return (IQueryable)AsNoTrackingMethod
+            .MakeGenericMethod(elementType)
+            .Invoke(null, [queryable])!;
     }
 }

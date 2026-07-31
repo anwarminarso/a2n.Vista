@@ -448,7 +448,135 @@ public sealed class AuditRemediationTests
             .IsEqualTo(string.Join(",", view.Fields.Where(f => !f.IsHidden).Select(f => f.Name)));
     }
 
+    // ---- BUG-07: reads are untracked, and the reflection mask is non-destructive --------------------
+
+    /// <summary>
+    /// BUG-07 (tracking): there was no <c>AsNoTracking</c> anywhere on the read path, so an entity-bearing
+    /// Style A view (<c>(db, sp) =&gt; db.Set&lt;Entity&gt;()</c>) handed back rows attached to the
+    /// request-scoped context the write path shares — and the masking runtime writes into the materialized
+    /// row, so a later <c>SaveChanges</c> could persist the mask over real data.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task BUG07_Entity_Bearing_Style_A_Read_Does_Not_Track()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        await connection.OpenAsync();
+
+        var options = new DbContextOptionsBuilder<AuditWidgetContext>().UseSqlite(connection).Options;
+        using var context = new AuditWidgetContext(options);
+        await context.Database.EnsureCreatedAsync();
+        context.Widgets.Add(new AuditWidgetSource { Name = "one" });
+        await context.SaveChangesAsync();
+        context.ChangeTracker.Clear();
+
+        using var services = new ServiceCollection().BuildServiceProvider();
+        var plan = new ProjectedViewExecutionPlan(
+            "audit-style-a-tracking",
+            typeof(AuditWidgetSource),
+            (db, _) => db.Set<AuditWidgetSource>());
+
+        var queryable = (IQueryable<AuditWidgetSource>)plan.CreateScopedQueryable(context, services, new ViewScope());
+        var rows = queryable.ToList();
+
+        await Assert.That(rows.Count).IsEqualTo(1);
+        await Assert.That(context.ChangeTracker.Entries().Count).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// BUG-07 (masking): the reflection fallback refused any row whose masked member has no setter, so the
+    /// path advertised as "the RUC path for Style A" could not mask an <b>anonymous</b> row at all — the one
+    /// row shape Style A is built around. It must rebuild the row through its constructor, leaving the
+    /// original untouched and every other member intact.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task BUG07_Reflection_Mask_Rebuilds_A_Get_Only_Anonymous_Row()
+    {
+        const string viewName = "audit-mask-anonymous";
+        MaskSpecRegistry.Register(
+            viewName,
+            new[] { new MaskSpec("Secret", static _ => true, static _ => "***") });
+
+        var row = new { Id = 7, Secret = "plaintext", Note = "keep" };
+        using var services = new ServiceCollection().BuildServiceProvider();
+
+        var applier = MaskApplier.CreateWithReflectionFallback(
+            viewName, row.GetType(), Array.Empty<MaskAccessor>(), services);
+        await Assert.That(applier.HasWork).IsTrue();
+
+        var masked = applier.Apply(row);
+
+        await Assert.That(ReferenceEquals(masked, row)).IsFalse();
+        await Assert.That(row.Secret).IsEqualTo("plaintext");
+        await Assert.That(ExportColumns.Value(masked, "Secret")).IsEqualTo("***");
+        await Assert.That(ExportColumns.Value(masked, "Id")).IsEqualTo(7);
+        await Assert.That(ExportColumns.Value(masked, "Note")).IsEqualTo("keep");
+    }
+
+    // ---- BUG-10: ViewMetadata equality is content-based and its hash is stable ----------------------
+
+    /// <summary>
+    /// BUG-10: <see cref="ViewMetadata"/> is a record, and the synthesized equality compared every instance
+    /// field — including a per-instance lock object — so two identical snapshots were never equal and the
+    /// hash code was an identity hash. It also compared <c>Fields</c> by list reference. Equality is now
+    /// hand-written over the declarative content, and the startup-completed key is excluded so the hash
+    /// cannot change during an instance's lifetime.
+    /// </summary>
+    [Test]
+    public async Task BUG10_Metadata_Equality_Is_Content_Based_With_A_Stable_Hash()
+    {
+        var left = AuditMetadata(FieldMetadata.Create("Id", typeof(int)), FieldMetadata.Create("Name", typeof(string)));
+
+        // Distinct instances, distinct field-list instances, identical content.
+        var right = AuditMetadata(FieldMetadata.Create("Id", typeof(int)), FieldMetadata.Create("Name", typeof(string)));
+
+        await Assert.That(left).IsEqualTo(right);
+        await Assert.That(left.GetHashCode()).IsEqualTo(right.GetHashCode());
+
+        // A content difference is still a difference.
+        await Assert.That(left).IsNotEqualTo(AuditMetadata(FieldMetadata.Create("Id", typeof(int))));
+
+        // The D105 startup-completed key is excluded from both, so the hash is stable for the lifetime of
+        // an instance that is sitting in a hash-based collection.
+        var keyed = left with { KeyFields = new[] { "Id" } };
+        await Assert.That(keyed.GetHashCode()).IsEqualTo(left.GetHashCode());
+    }
+
+    // ---- PERF-04: Configure runs once per view instance ---------------------------------------------
+
+    /// <summary>
+    /// PERF-04: each of <c>BuildMetadata</c>, <c>GetMaskSpecs</c>, <c>GetCrudFacetDefinition</c>, and
+    /// <c>GetSourceRowFilters</c> used to create its own builder and re-run <c>Configure</c> — four or more
+    /// full authoring passes per view, and the metadata published to the registry was a different instance
+    /// from the one <c>Name</c> read. One cached authoring result now serves all of them.
+    /// </summary>
+    [Test]
+    [UnconditionalSuppressMessage("Trimming", Il2026, Justification = Why)]
+    public async Task PERF04_View_Configure_Runs_Once_Per_Instance()
+    {
+        var view = new AuditCountingView();
+
+        _ = view.Name;
+        _ = view.Name;
+        _ = view.GetSourceRowFilters<AuditWidgetSource>();
+
+        await Assert.That(view.ConfigureCalls).IsEqualTo(1);
+    }
+
     // ---- Helpers -----------------------------------------------------------------------------------
+
+    private static ViewMetadata AuditMetadata(params FieldMetadata[] fields) =>
+        new(
+            Name: "audit-equality",
+            Route: "/api/views/audit-equality",
+            QueryType: typeof(AuditTypedRow),
+            CrudType: null,
+            CrudEntityType: null,
+            Fields: fields,
+            Authorization: null,
+            Limits: HardLimits.Default,
+            IsReadOnly: true);
 
     private static AdapterRequest RawRequest(params (string Key, string Value)[] pairs)
     {
@@ -535,6 +663,27 @@ internal sealed class AuditTypedSource
     public DateOnly Day { get; set; }
 
     public TimeOnly Moment { get; set; }
+}
+
+internal sealed class AuditCountingRow
+{
+    public int Id { get; set; }
+
+    public string Name { get; set; } = string.Empty;
+}
+
+/// <summary>A view that counts its own <c>Configure</c> invocations (PERF-04).</summary>
+internal sealed class AuditCountingView : View<AuditCountingRow>
+{
+    public int ConfigureCalls { get; private set; }
+
+    protected override void Configure(IViewBuilder<AuditCountingRow> b)
+    {
+        ConfigureCalls++;
+        b.Named("audit-configure-count")
+         .From<AuditWidgetSource>(s => new AuditCountingRow { Id = s.Id, Name = s.Name })
+         .Key(x => x.Id);
+    }
 }
 
 internal sealed class AuditTypedRow

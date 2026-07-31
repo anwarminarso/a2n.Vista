@@ -58,6 +58,7 @@ internal interface IViewMetadataSource
 public abstract class View<TQuery> : IConfiguredView, IViewMetadataSource
     where TQuery : class
 {
+    private ViewBuilder<TQuery>? _configured;
     private ViewMetadata? _metadata;
 
     /// <summary>
@@ -88,12 +89,8 @@ public abstract class View<TQuery> : IConfiguredView, IViewMetadataSource
     /// </summary>
     /// <typeparam name="TSource">The EF source entity type the view projects from.</typeparam>
     public IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>> GetSourceRowFilters<TSource>()
-        where TSource : class
-    {
-        var builder = new ViewBuilder<TQuery>();
-        Configure(builder);
-        return builder.GetSourceRowFilters<TSource>();
-    }
+        where TSource : class =>
+        GetConfiguredBuilder().GetSourceRowFilters<TSource>();
 
     /// <inheritdoc />
     void IConfiguredView.ConfigureCore(IViewBuilderCore builder)
@@ -110,16 +107,9 @@ public abstract class View<TQuery> : IConfiguredView, IViewMetadataSource
             $"The builder must implement IViewBuilder<{typeof(TQuery).Name}>.", nameof(builder));
     }
 
-    ViewMetadata IViewMetadataSource.BuildMetadata() => BuildMetadataCore();
+    ViewMetadata IViewMetadataSource.BuildMetadata() => GetOrBuildMetadata();
 
-    IReadOnlyList<MaskSpec> IViewMetadataSource.GetMaskSpecs()
-    {
-        // Mirror GetSourceRowFilters: re-run Configure against a fresh builder and read back the captured
-        // mask specs — no reflection, so the path stays AOT-clean.
-        var builder = new ViewBuilder<TQuery>();
-        Configure(builder);
-        return builder.MaskSpecs;
-    }
+    IReadOnlyList<MaskSpec> IViewMetadataSource.GetMaskSpecs() => GetConfiguredBuilder().MaskSpecs;
 
     // A read-only view (View<TQuery>) has no write facet, so it registers none.
     CrudFacetDefinition? IViewMetadataSource.GetCrudFacetDefinition() => null;
@@ -129,20 +119,33 @@ public abstract class View<TQuery> : IConfiguredView, IViewMetadataSource
     /// internal builder. Intended for the registry and DI wiring.
     /// </summary>
     /// <returns>The built metadata.</returns>
-    internal ViewMetadata BuildMetadata() => BuildMetadataCore();
+    internal ViewMetadata BuildMetadata() => GetOrBuildMetadata();
 
     /// <summary>
-    /// Creates the builder, runs <see cref="Configure"/>, and emits metadata. Overridden by
-    /// <see cref="View{TQuery, TCrud}"/> to use the write-capable builder.
+    /// Runs <see cref="Configure"/> once against a single internal builder and caches it, so metadata, mask
+    /// specs, and row filters are all read back from the <em>same</em> authoring result.
     /// </summary>
-    private protected virtual ViewMetadata BuildMetadataCore()
+    /// <remarks>
+    /// Previously each of those members created its own builder and re-ran <see cref="Configure"/> — four or
+    /// more full authoring passes per view, each repeating the projection walk and field-metadata
+    /// construction. The correctness side of that mattered more than the cost: the
+    /// <see cref="ViewMetadata"/> published to the registry was a different instance from the one
+    /// <see cref="Name"/> read. Caching also makes the documented "called once by the registry/DI at
+    /// startup" contract literally true. Authoring runs single-threaded at startup, so no lock is taken.
+    /// </remarks>
+    private ViewBuilder<TQuery> GetConfiguredBuilder()
     {
-        var builder = new ViewBuilder<TQuery>();
-        Configure(builder);
-        return builder.Build();
+        if (_configured is null)
+        {
+            var builder = new ViewBuilder<TQuery>();
+            Configure(builder);
+            _configured = builder;
+        }
+
+        return _configured;
     }
 
-    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore();
+    private ViewMetadata GetOrBuildMetadata() => _metadata ??= GetConfiguredBuilder().Build();
 }
 
 /// <summary>
@@ -162,6 +165,7 @@ public abstract class View<TQuery, TCrud> : IConfiguredView, IViewMetadataSource
     where TQuery : class
     where TCrud : class
 {
+    private ViewBuilder<TQuery, TCrud>? _configured;
     private ViewMetadata? _metadata;
 
     /// <summary>
@@ -190,12 +194,8 @@ public abstract class View<TQuery, TCrud> : IConfiguredView, IViewMetadataSource
     /// </summary>
     /// <typeparam name="TSource">The EF source entity type the view projects from.</typeparam>
     public IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>> GetSourceRowFilters<TSource>()
-        where TSource : class
-    {
-        var builder = new ViewBuilder<TQuery, TCrud>();
-        Configure(builder);
-        return builder.GetSourceRowFilters<TSource>();
-    }
+        where TSource : class =>
+        GetConfiguredBuilder().GetSourceRowFilters<TSource>();
 
     /// <inheritdoc />
     void IConfiguredView.ConfigureCore(IViewBuilderCore builder)
@@ -213,40 +213,38 @@ public abstract class View<TQuery, TCrud> : IConfiguredView, IViewMetadataSource
             nameof(builder));
     }
 
-    ViewMetadata IViewMetadataSource.BuildMetadata() => BuildMetadataCore();
+    ViewMetadata IViewMetadataSource.BuildMetadata() => GetOrBuildMetadata();
 
-    IReadOnlyList<MaskSpec> IViewMetadataSource.GetMaskSpecs()
-    {
-        // Mirror GetSourceRowFilters: re-run Configure against a fresh builder and read back the captured
-        // mask specs — no reflection, so the path stays AOT-clean.
-        var builder = new ViewBuilder<TQuery, TCrud>();
-        Configure(builder);
-        return builder.MaskSpecs;
-    }
+    IReadOnlyList<MaskSpec> IViewMetadataSource.GetMaskSpecs() => GetConfiguredBuilder().MaskSpecs;
 
-    CrudFacetDefinition? IViewMetadataSource.GetCrudFacetDefinition()
-    {
-        // Mirror GetMaskSpecs: re-run Configure against a fresh builder and read back the captured write
-        // facet. The facet's shape is validated when metadata is built (ValidateWriteFacet, R3.2/R4.4);
-        // registration always builds metadata before publishing the facet.
-        var builder = new ViewBuilder<TQuery, TCrud>();
-        Configure(builder);
-        return builder.CrudFacet;
-    }
+    // The facet's shape is validated when metadata is built (ValidateWriteFacet, R3.2/R4.4); registration
+    // always builds metadata before publishing the facet.
+    CrudFacetDefinition? IViewMetadataSource.GetCrudFacetDefinition() => GetConfiguredBuilder().CrudFacet;
 
     /// <summary>
     /// Builds the <see cref="ViewMetadata"/> for this view by running <see cref="Configure"/> against an
     /// internal builder. Intended for the registry and DI wiring.
     /// </summary>
     /// <returns>The built metadata.</returns>
-    internal ViewMetadata BuildMetadata() => BuildMetadataCore();
+    internal ViewMetadata BuildMetadata() => GetOrBuildMetadata();
 
-    private ViewMetadata BuildMetadataCore()
+    /// <summary>
+    /// Runs <see cref="Configure"/> once against a single internal builder and caches it, so metadata, mask
+    /// specs, the write facet, and row filters are all read back from the <em>same</em> authoring result
+    /// (see the read-only base's counterpart for the rationale). Authoring runs single-threaded at startup,
+    /// so no lock is taken.
+    /// </summary>
+    private ViewBuilder<TQuery, TCrud> GetConfiguredBuilder()
     {
-        var builder = new ViewBuilder<TQuery, TCrud>();
-        Configure(builder);
-        return builder.Build();
+        if (_configured is null)
+        {
+            var builder = new ViewBuilder<TQuery, TCrud>();
+            Configure(builder);
+            _configured = builder;
+        }
+
+        return _configured;
     }
 
-    private ViewMetadata GetOrBuildMetadata() => _metadata ??= BuildMetadataCore();
+    private ViewMetadata GetOrBuildMetadata() => _metadata ??= GetConfiguredBuilder().Build();
 }

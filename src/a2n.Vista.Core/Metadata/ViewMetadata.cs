@@ -103,4 +103,95 @@ public sealed record ViewMetadata(
             _keyFieldsCompleted = true;
         }
     }
+
+    /// <summary>
+    /// Compares two snapshots by their declarative content: name, route, row/write types, field list
+    /// (element-wise), authorization, limits, and read-only flag.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <b>Why this is hand-written.</b> A record's synthesized equality compares <em>every</em> instance
+    /// field, including the ones declared outside the primary constructor. This type declares three
+    /// (<c>_keyFieldsGate</c>, <c>_keyFields</c>, <c>_keyFieldsCompleted</c>), and the gate is a fresh
+    /// <see cref="object"/> per instance — so the synthesized <c>Equals</c> could never return
+    /// <see langword="true"/> for two distinct instances and the synthesized <c>GetHashCode</c> was an
+    /// identity hash, unstable across runs. It also compared <see cref="Fields"/> by reference, because
+    /// <see cref="IReadOnlyList{T}"/> has no structural equality. Both are fixed here.
+    /// </para>
+    /// <para>
+    /// <b>Why the key is excluded.</b> <see cref="KeyFields"/> is completed after construction by the
+    /// startup model hook (<see cref="CompleteKeyFields"/>, Decision Log D105), so including it would make
+    /// equality and the hash code change during an instance's lifetime — the one property that makes a type
+    /// unsafe to put in a hash-based collection. Excluding it costs nothing in practice: view names are
+    /// globally unique (D101/D103) and <see cref="Name"/> is compared, so two snapshots that compare equal
+    /// describe the same view and therefore resolve the same key.
+    /// </para>
+    /// </remarks>
+    /// <param name="other">The snapshot to compare with.</param>
+    /// <returns><see langword="true"/> when both describe the same view shape.</returns>
+    public bool Equals(ViewMetadata? other)
+    {
+        if (ReferenceEquals(this, other))
+        {
+            return true;
+        }
+
+        return other is not null
+            && string.Equals(Name, other.Name, StringComparison.Ordinal)
+            && string.Equals(Route, other.Route, StringComparison.Ordinal)
+            && QueryType == other.QueryType
+            && CrudType == other.CrudType
+            && CrudEntityType == other.CrudEntityType
+            && IsReadOnly == other.IsReadOnly
+            && Authorization == other.Authorization
+            && Limits == other.Limits
+            && FieldsEqual(Fields, other.Fields);
+    }
+
+    /// <inheritdoc />
+    public override int GetHashCode()
+    {
+        var hash = new HashCode();
+        hash.Add(Name, StringComparer.Ordinal);
+        hash.Add(Route, StringComparer.Ordinal);
+        hash.Add(QueryType);
+        hash.Add(CrudType);
+        hash.Add(CrudEntityType);
+        hash.Add(IsReadOnly);
+        hash.Add(Authorization);
+        hash.Add(Limits);
+
+        // Fields is immutable once the authoring builder has run, so it is safe to hash; KeyFields is not
+        // (see the Equals remarks).
+        hash.Add(Fields.Count);
+        foreach (var field in Fields)
+        {
+            hash.Add(field);
+        }
+
+        return hash.ToHashCode();
+    }
+
+    private static bool FieldsEqual(IReadOnlyList<FieldMetadata> left, IReadOnlyList<FieldMetadata> right)
+    {
+        if (ReferenceEquals(left, right))
+        {
+            return true;
+        }
+
+        if (left is null || right is null || left.Count != right.Count)
+        {
+            return false;
+        }
+
+        for (var i = 0; i < left.Count; i++)
+        {
+            if (left[i] != right[i])
+            {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }

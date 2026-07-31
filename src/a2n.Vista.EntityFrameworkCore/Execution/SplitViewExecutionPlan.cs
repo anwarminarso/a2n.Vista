@@ -82,8 +82,12 @@ public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(scope);
 
-        // 1. Base source query (D11 convention or explicit factory).
-        var source = _sourceFactory(dbContext, services);
+        // 1. Base source query (D11 convention or explicit factory), read as no-tracking: a Vista read never
+        //    hands the caller entities attached to the request-scoped DbContext the write path shares. Without
+        //    it, an entity-bearing projection yields tracked rows, and the masking runtime writes the masked
+        //    value into the materialized row — so a later SaveChanges on that context could persist the mask
+        //    over real data (audit finding BUG-07). Reads are also cheaper without snapshot tracking.
+        var source = _sourceFactory(dbContext, services).AsNoTracking();
 
         // 2. Authored, server-trusted row filters (pre-projection, not whitelist-validated; R6.3).
         for (var i = 0; i < _authoredRowFilters.Count; i++)

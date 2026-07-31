@@ -1,7 +1,15 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-31 (**audit remediation, tranche 3** — the three contract-free caching findings are
+> Last updated: 2026-07-31 (**audit remediation, tranche 4** — the metadata/authoring/read-path findings:
+> **D147** every Vista read is now `AsNoTracking` (a tracked entity-bearing projection could let a later
+> `SaveChanges` persist a *mask* over real data) and the reflection mask is non-destructive, so an anonymous
+> Style A row is maskable at all for the first time; **D148** `ViewMetadata` equality/hash are hand-written
+> over declarative content (the synthesized record equality compared a per-instance lock object, so two
+> identical snapshots were never equal); plus `PERF-04` — `Configure` now runs **once** per view against one
+> cached builder, so metadata, masks, the write facet, and row filters all come from the same authoring
+> result. See §2.25. Remaining open audit items: the `DEAD-*` API removals and `PERF-03`/`06`/`08`.)
+> Prior: 2026-07-31 (**audit remediation, tranche 3** — the three contract-free caching findings are
 > fixed: **`PERF-05`** one shared `ViewFieldLookup.For(view)` replaces four per-call field-lookup builders,
 > **`PERF-02`** the export reflection fallback memoizes its member lookup instead of resolving it per cell,
 > **`PERF-07`** the metadata projection, payload, and `ETag` are computed once per view so a 304 is one string
@@ -1276,6 +1284,48 @@ process, so two test hosts registering the same view name could serve each other
   PASS, including the OpenAPI step's byte-for-byte `/metadata` coexistence check (1537 bytes, unchanged),
   which is direct evidence the `PERF-07` cache did not alter the payload.
 
+### 2.25 Audit remediation, tranche 4 (landed 2026-07-31; D147–D148) — `BUG-07`, `BUG-10`, `PERF-04`
+
+The three findings that all live in the metadata/authoring/read-path area, taken together because they touch
+the same code and reinforce each other.
+
+- **D147 (`BUG-07`), two parts.** (1) **Reads are no-tracking.** There was no `AsNoTracking` anywhere on the
+  read path, so an entity-bearing projection — an identity projection, or a Style A view registered as
+  `(db, sp) => db.Set<Entity>()` — returned rows attached to the request-scoped `DbContext` the write path
+  shares. The masking runtime writes the masked value into the materialized row, so a later `SaveChanges` on
+  that context could **persist the mask over real data**. All three plans now apply `AsNoTracking()` to the
+  source: `SplitViewExecutionPlan` and the generated plan as a direct generic call (AOT-clean; the
+  `*_VistaExecutionPlan` goldens were updated), `ProjectedViewExecutionPlan` reflectively because its Style A
+  delegate erases the element type — acceptable there, since that plan is already `[RequiresUnreferencedCode]`
+  and the call runs once per request, never per row. (2) **The reflection mask is non-destructive.** It used
+  to refuse any row whose masked member has no setter, so the path advertised as the Style A fallback could
+  not mask an **anonymous** row at all — the one shape Style A is built around. It now rebuilds the row
+  through a constructor that takes every readable property by name (the anonymous-type and positional-record
+  shape), leaving the original untouched. Requiring full coverage is what makes the rebuild lossless; an
+  ambiguous case-insensitive parameter match is treated as no match, so a wrong member can never be written.
+  The `Apply` doc comment, which claimed a `with`-rebuild that did not exist, was corrected.
+- **D148 (`BUG-10`).** `ViewMetadata.Equals`/`GetHashCode` are now hand-written over the declarative content.
+  The synthesized record equality compared *every* instance field including a per-instance lock object, so
+  two identical snapshots were **never** equal and the hash was an identity hash, unstable across runs; it
+  also compared `Fields` by list reference, since `IReadOnlyList<T>` has no structural equality. The
+  D105 startup-completed `KeyFields` is **excluded from both**, so neither can change during an instance's
+  lifetime — the property that makes a type safe in a hash-based collection. The exclusion costs nothing:
+  view names are globally unique (D101/D103) and `Name` is compared, so two snapshots that compare equal
+  describe the same view and resolve the same key.
+- **`PERF-04`** (no decision needed). `View<TQuery>`/`View<TQuery, TCrud>` run `Configure` **once** against a
+  single cached builder, and metadata, mask specs, the write facet, and row filters are all read back from
+  that one authoring result. Previously each member built its own builder — four or more full authoring
+  passes per view — and, more importantly, the `ViewMetadata` published to the registry was a different
+  instance from the one `Name` read. This also makes the already-documented "called once by the registry/DI
+  at startup" contract literally true. The now-dead `BuildMetadataCore` virtual (its doc claimed an override
+  by `View<TQuery, TCrud>`, which is deliberately *not* a subclass, D26) was removed.
+
+- **Verified (2026-07-31, tranche 4):** build green net8/9/10; **543 tests/TFM (net8) / 544 (net10)** in
+  `a2n.Vista.Tests`, **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
+  0 skipped. Both sample self-tests PASS. Note: one `a2n.Vista.Tests` run failed with a transient
+  `SQLite Error 5` on connection open and passed on the three following runs — flaky, not deterministic, and
+  unrelated to these changes (no locking behaviour was touched).
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1338,6 +1388,13 @@ approval.
 - **Filter/Sort/Search default-allow (D42, supersedes D3/D14).** All projection fields are
   filter/sort/searchable by default (search = string only); opt out per field. Security boundary = the
   curated projection.
+- **Every Vista read is no-tracking (D147).** All three execution plans (`SplitViewExecutionPlan`,
+  `ProjectedViewExecutionPlan`, and the source-generated compiled plan) apply `AsNoTracking()` to the
+  source query, so a read never hands the caller entities attached to the request-scoped `DbContext` the
+  write path shares. Rationale: the masking runtime writes the masked value into the materialized row, so a
+  tracked row let a later `SaveChanges` persist the mask over real data. Applies to List, Detail, Export,
+  and the count queries. Same decision made the reflection mask **non-destructive** for a get-only row.
+  (Audit `BUG-07`; §2.25.)
 
 ### Authoring & routing
 - **Two authoring styles are permanent (D96).** Style A (central template, anonymous) **and** Style B
@@ -1462,7 +1519,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D144 | audit remediation (`BUG-02`) | **Landed (2026-07-31).** Paging carries an **absolute row offset**: `ViewQueryRequest.Offset` (optional, `null` = the unchanged page model) is authoritative when set, and both grid adapters now pass `start`/`startRow` verbatim instead of dividing by the client's page size. Rationale: the division lost rows twice — integer division snapped an unaligned offset, and the executor's page-size clamp then moved the window, returning wrong rows with no error. Clamping is now a pure size concern: the window start never moves. Supersedes the D135 `Page = StartRow / PageSize` mapping. DataTables additionally rejects `start < 0` and `search[regex]=true` (`AdapterBindException` → 400) and honours per-column `searchable`/`orderable` (audit `DEAD-05`). See §2.23. |
 | D145 | audit remediation (`BUG-03`) | **Landed (2026-07-31).** **Authorize before bind**: `ViewRequestExecutor.AuthorizeFacetAsync` is the pre-gate the endpoint mapper calls before reading the body, binding the model, reading the key, or applying the 428 precondition gate; the adapter handler calls it before the body read + adapter bind. The decision is memoized per request in `HttpContext.Items`, so an authorizer still sees exactly one `IsAllowedAsync` call per (view, facet) per request. Rationale: an unauthorized caller used to receive `428` or a `400` bind error instead of `403`, disclosing that the view exists, is writable, and declares a token — and could force JSON parsing work. See §2.23. |
 | D146 | audit remediation (`BUG-04`, `BUG-05`) | **Landed (2026-07-31).** Concurrency is real, and the echoed token is the post-write one. Three parts: (1) `VistaConcurrencyTokenStartupValidator` fails startup closed when a view's `WithConcurrencyToken(...)` member is **not** a concurrency token in the `DbContext` model (without it the database emitted no `UPDATE ... WHERE token = @original` predicate, so the Vista-level read-then-compare allowed a lost update); (2) the executor pins the tracked entry's original token so the check happens **in the database**; (3) the new Core-resident, request-scoped `IWriteTokenSink` carries the token read back after `SaveChanges`, which the mapper emits as the update `ETag` — a **delete emits no `ETag`** at all, since the row no longer exists. No `IViewExecutor` port change, so the generated dispatch invoker is untouched. See §2.23. |
-| **D147+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D146) was the last landed change. |
+| D147 | audit remediation (`BUG-07`) | **Landed (2026-07-31).** Every Vista read is **no-tracking**: all three execution plans apply `AsNoTracking()` to the source query — a direct generic call in `SplitViewExecutionPlan` and in the generated compiled plan (AOT-clean; the `*_VistaExecutionPlan` goldens changed), reflective in the already-`[RequiresUnreferencedCode]` `ProjectedViewExecutionPlan` whose Style A delegate erases the element type (once per request, never per row). Rationale: the masking runtime writes the masked value into the materialized row, so an entity-bearing projection returning **tracked** rows let a later `SaveChanges` on the shared request-scoped `DbContext` persist the mask over real data. Covers List/Detail/Export and the count queries. The same decision makes the **reflection mask non-destructive**: a get-only row — an anonymous Style A projection, previously not maskable at all — is rebuilt through a constructor covering every readable property (full coverage keeps the rebuild lossless; an ambiguous case-insensitive parameter match is treated as no match). See §2.25. |
+| D148 | audit remediation (`BUG-10`) | **Landed (2026-07-31).** `ViewMetadata.Equals`/`GetHashCode` are hand-written over the declarative content (name, route, types, **element-wise** `Fields`, authorization, limits, read-only flag). The synthesized record equality compared every instance field including a per-instance lock object, so two identical snapshots were never equal and the hash was an identity hash unstable across runs; it also compared `Fields` by list reference, since `IReadOnlyList<T>` has no structural equality. The D105 startup-completed `KeyFields` is **excluded from both**, so neither changes during an instance's lifetime — the property that makes a type safe in a hash-based collection. Harmless: view names are globally unique (D101/D103) and `Name` is compared, so equal snapshots describe the same view and resolve the same key. See §2.25. |
+| **D149+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D148) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

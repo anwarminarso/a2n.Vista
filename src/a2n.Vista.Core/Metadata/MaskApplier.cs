@@ -131,7 +131,12 @@ public sealed class MaskApplier
     /// original value is never returned (R7.6).
     /// </summary>
     /// <param name="row">The materialized row to mask. Must not be <see langword="null"/>.</param>
-    /// <returns>The masked row (the same instance for mutable rows, a rebuilt instance for record rows).</returns>
+    /// <returns>
+    /// The masked row: the same instance when every masked member is writable — which on the reflection path
+    /// includes init-only and record members, since reflection can set those — and a rebuilt instance when a
+    /// masked member is get-only, as on an anonymous Style A projection. Callers must use the return value
+    /// rather than assume the argument was mutated.
+    /// </returns>
     public object Apply(object row)
     {
         ArgumentNullException.ThrowIfNull(row);
@@ -245,9 +250,10 @@ public sealed class MaskApplier
 
         if (property.SetMethod is null)
         {
-            throw new MaskingException(
-                $"View '{viewName}' masked field '{fieldName}' on row type '{rowType}' has no setter, so the " +
-                "mask cannot be written back. Use a settable or init-only property, or a record row.");
+            // A get-only member — in practice an anonymous Style A projection, since an init-only or record
+            // member still exposes a setter to reflection. Rebuild the row through its constructor instead
+            // of failing: refusing here meant the documented Style A fallback could not mask at all.
+            return BuildRebuildAccessor(viewName, rowType, fieldName, property);
         }
 
         return new MaskAccessor(
@@ -259,6 +265,142 @@ public sealed class MaskApplier
                 property.SetValue(row, value);
                 return row;
             });
+    }
+
+    /// <summary>
+    /// Builds a mask accessor for a row whose masked member is get-only, by rebuilding the row through a
+    /// constructor that takes every readable property by name — the shape an anonymous type (and a
+    /// positional record) exposes.
+    /// </summary>
+    /// <remarks>
+    /// Requiring the constructor to cover <em>every</em> readable property is what makes the rebuild lossless:
+    /// a partial constructor would silently drop the members it does not take. Resolution happens once when
+    /// the applier is built (per request), so only the property reads and the constructor call are per-row.
+    /// </remarks>
+    [RequiresUnreferencedCode("Reflection mask accessors read/write the masked property by name; use the source generator path for AOT.")]
+    private static MaskAccessor BuildRebuildAccessor(
+        string viewName,
+        Type rowType,
+        string fieldName,
+        PropertyInfo masked)
+    {
+        var properties = rowType.GetProperties(BindingFlags.Public | BindingFlags.Instance);
+
+        ConstructorInfo? constructor = null;
+        PropertyInfo[]? arguments = null;
+
+        foreach (var candidate in rowType.GetConstructors(BindingFlags.Public | BindingFlags.Instance))
+        {
+            var parameters = candidate.GetParameters();
+            if (parameters.Length != properties.Length)
+            {
+                continue;
+            }
+
+            var mapped = new PropertyInfo[parameters.Length];
+            var matched = true;
+            for (var i = 0; i < parameters.Length; i++)
+            {
+                var property = FindProperty(properties, parameters[i].Name);
+                if (property?.GetMethod is null
+                    || !parameters[i].ParameterType.IsAssignableFrom(property.PropertyType))
+                {
+                    matched = false;
+                    break;
+                }
+
+                mapped[i] = property;
+            }
+
+            if (matched)
+            {
+                constructor = candidate;
+                arguments = mapped;
+                break;
+            }
+        }
+
+        var maskedIndex = arguments is null ? -1 : IndexOfProperty(arguments, fieldName);
+        if (constructor is null || arguments is null || maskedIndex < 0)
+        {
+            throw new MaskingException(
+                $"View '{viewName}' masked field '{fieldName}' on row type '{rowType}' has no setter, and the " +
+                "row type has no constructor taking every readable property by name, so the mask cannot be " +
+                "written without losing data. Use a settable or init-only property, a record, or an anonymous " +
+                "projection.");
+        }
+
+        var index = maskedIndex;
+        var argumentProperties = arguments;
+        var rebuild = constructor;
+
+        return new MaskAccessor(
+            fieldName,
+            masked.GetValue,
+            (row, value) =>
+            {
+                var args = new object?[argumentProperties.Length];
+                for (var i = 0; i < args.Length; i++)
+                {
+                    args[i] = i == index ? value : argumentProperties[i].GetValue(row);
+                }
+
+                return rebuild.Invoke(args);
+            });
+    }
+
+    /// <summary>
+    /// Maps a constructor parameter name to the property it initializes: an exact (ordinal) match first,
+    /// then a single case-insensitive match. The fallback is what lets a hand-written immutable DTO
+    /// (<c>Row(int id)</c> initializing <c>Id</c>) rebuild as well as an anonymous type or a positional
+    /// record, whose parameter names already match exactly. An ambiguous case-insensitive match is treated
+    /// as no match, so a wrong member can never be written.
+    /// </summary>
+    private static PropertyInfo? FindProperty(PropertyInfo[] properties, string? name)
+    {
+        if (name is null)
+        {
+            return null;
+        }
+
+        foreach (var property in properties)
+        {
+            if (string.Equals(property.Name, name, StringComparison.Ordinal))
+            {
+                return property;
+            }
+        }
+
+        PropertyInfo? insensitive = null;
+        foreach (var property in properties)
+        {
+            if (!string.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            if (insensitive is not null)
+            {
+                return null;
+            }
+
+            insensitive = property;
+        }
+
+        return insensitive;
+    }
+
+    private static int IndexOfProperty(PropertyInfo[] properties, string name)
+    {
+        for (var i = 0; i < properties.Length; i++)
+        {
+            if (string.Equals(properties[i].Name, name, StringComparison.Ordinal))
+            {
+                return i;
+            }
+        }
+
+        return -1;
     }
 
     private MaskingException Fail(string fieldName, string action, Exception inner) =>

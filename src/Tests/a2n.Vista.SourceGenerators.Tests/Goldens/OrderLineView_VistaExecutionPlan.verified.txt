@@ -39,7 +39,8 @@ file sealed class OrderLineView_VistaExecutionPlan : global::a2n.Vista.EntityFra
         global::System.IServiceProvider services,
         global::a2n.Vista.Ports.IViewScope scope)
     {
-        global::System.Linq.IQueryable<global::App.OrderLine> source = dbContext.Set<global::App.OrderLine>();
+        global::System.Linq.IQueryable<global::App.OrderLine> source =
+            global::Microsoft.EntityFrameworkCore.EntityFrameworkQueryableExtensions.AsNoTracking(dbContext.Set<global::App.OrderLine>());
 
         for (var i = 0; i < _rowFilters.Count; i++)
         {

@@ -65,17 +65,20 @@ covered by regression tests**. Build green on net8.0/net9.0/net10.0; suites gree
 | `BUG-04` | **Fixed (D146)** | Startup fails closed when the declared token is not a model concurrency token, and the executor pins the entry's original token so the database performs the check atomically |
 | `BUG-05` | **Fixed (D146)** | The post-write token rides the new request-scoped `IWriteTokenSink` and is what the update emits as `ETag`; a delete emits no `ETag`. No `IViewExecutor` port change, so the generated dispatch invoker is untouched |
 | `BUG-06` | **Fixed** | Write bind failures emit fixed, Vista-authored text plus the stable code; the serializer message rides `InnerException` for server-side logging only |
-| `BUG-07` | **Open** | Needs the `AsNoTracking` + clone-on-mask decision (touches the Style A read path) |
+| `BUG-07` | **Fixed (D147)** | See the tranche 4 note below |
 | `BUG-08` | **Fixed** | Components keyed by `(Type, policy)` with deterministic namespace-derived disambiguation |
 | `BUG-09` | **Fixed** | The write-facet guard gates on the resolved `keyFields`, so `Key(...)` satisfies it |
-| `BUG-10` | **Open** | Latent; needs the mutable-key-state extraction from the record |
+| `BUG-10` | **Fixed (D148)** | See the tranche 4 note below |
 | `BUG-11` | **Fixed** | CSV neutralizes leading `= + - @ TAB CR`; the XLSX writer strips XML-illegal control characters (surrogate pairs preserved) |
 | `BUG-12` | **Fixed** | A negated empty group keeps its `FilterNot`; only an un-negated empty group is a no-op |
 | `BUG-13` | **Fixed** | The net10 branch maps `additionalProperties` like the net9 one |
 | `DEAD-04` | **Fixed** | `HardLimits.MaxExportRows` clamps to `AbsoluteMaxExportRows` on every construction path, including `with` |
 | `PERF-01` | **Partially fixed** | `Results.Stream` removes one full payload copy; true streaming to `Response.Body` remains |
 | `DEAD-05` | **Fixed (D144)** | DataTables honours per-column `searchable`/`orderable` and rejects `regex=true` instead of executing it as a literal `Contains`. `DataTablesResponse.Error` is still unused |
+| `BUG-07` | **Fixed (D147)** | All three execution plans read `AsNoTracking`, and the reflection mask rebuilds a get-only row instead of refusing it |
+| `BUG-10` | **Fixed (D148)** | Hand-written `Equals`/`GetHashCode` over the declarative content; the startup-completed key is excluded so both are stable |
 | `PERF-02` | **Fixed** | The reflection fallback memoizes the resolved member per `(row type, field name)`, negative results included |
+| `PERF-04` | **Fixed** | `Configure` runs once per view against one cached builder; metadata, masks, the write facet, and row filters share that result |
 | `PERF-05` | **Fixed** | One shared `ViewFieldLookup.For(view)`, memoized per metadata instance and frozen; replaces four independent per-call builders |
 | `PERF-07` | **Fixed** | The metadata projection is memoized per view and its serialized payload + `ETag` computed once; the 304 path is now one string comparison |
 | Other `DEAD-*` / `PERF-*` | **Open** | Each is either an API removal (breaking) or a design change; see the notes on each |
@@ -114,9 +117,33 @@ disposed host) leaks nothing.
   serialized payload with its `ETag` keyed on that response instance, so a 304 costs one string comparison
   instead of a full serialization plus a SHA-256. The shared response's field list is wrapped read-only.
 
-**Still open after tranche 3:** `BUG-07` (`AsNoTracking` + non-destructive masking), `BUG-10` (record equality
-vs mutable key state), the remaining `DEAD-*` items (each an API removal or a feature completion), and
-`PERF-03`, `PERF-04`, `PERF-06`, `PERF-08` (each a design change, not just caching).
+### Tranche 4 (2026-07-31) — the metadata / authoring / read-path findings
+
+`BUG-07`, `BUG-10` and `PERF-04` are fixed and settled as **D147–D148** (`PERF-04` needed no decision). They
+were taken together because they touch the same code.
+
+- **`BUG-07` (D147), two parts.** *Reads are no-tracking:* all three execution plans apply `AsNoTracking()`
+  to the source — a direct generic call in `SplitViewExecutionPlan` and in the generated compiled plan (the
+  `*_VistaExecutionPlan` goldens changed), reflective in the already-RUC `ProjectedViewExecutionPlan` whose
+  Style A delegate erases the element type, where it runs once per request and never per row. That removes
+  the persistence hazard the finding described as unverified: with no tracked row, the in-place mask cannot
+  reach `SaveChanges`. *The reflection mask is non-destructive:* a get-only row is rebuilt through a
+  constructor covering every readable property, so an **anonymous** Style A row is maskable for the first
+  time (it previously threw). Full coverage keeps the rebuild lossless; an ambiguous case-insensitive
+  parameter match is treated as no match, so a wrong member can never be written. The misleading `Apply`
+  doc comment was corrected.
+- **`BUG-10` (D148).** Hand-written `Equals`/`GetHashCode` over the declarative content, with `Fields`
+  compared **element-wise** (the synthesized version compared the list by reference). The startup-completed
+  `KeyFields` is excluded from both, so neither can change during an instance's lifetime; that is harmless
+  because view names are globally unique and `Name` is compared.
+- **`PERF-04`.** `Configure` runs **once** per view against one cached builder, and metadata, mask specs, the
+  write facet, and row filters are all read back from it. This also fixes the correctness side-effect the
+  finding called out — the metadata published to the registry is no longer a different instance from the one
+  `Name` reads — and removes the dead `BuildMetadataCore` virtual whose doc claimed an override that cannot
+  exist (`View<TQuery, TCrud>` is deliberately not a subclass, D26).
+
+**Still open after tranche 4:** the `DEAD-*` items (each an API removal or a feature completion) and
+`PERF-03`, `PERF-06`, `PERF-08`.
 
 ---
 
@@ -656,6 +683,13 @@ summary claims it returns "a rebuilt instance for record rows", but no `with`-re
 mask clone-and-return rather than mutate — or fail fast with a clear message when the row type cannot be
 masked non-destructively. Correct the doc comment either way.
 
+**Fixed (tranche 4, D147).** In the execution plans, not `MaterializeAsync`: the executor's `TRow` carries no
+`class` constraint and the plan seam is type-erased, so there is no typed choke point downstream. With reads
+untracked the in-place mask can no longer reach `SaveChanges`, so cloning was not needed for mutable rows —
+what *was* needed is the get-only case, where the mask now rebuilds the row through its constructor. Note
+`SplitViewExecutionPlan` could not actually hit the identity-projection case (Style B rejects `x => x`), so
+the realistic vector was the Style A one the finding names.
+
 ---
 
 ### BUG-08 — OpenAPI component schemas are keyed by simple type name
@@ -749,6 +783,13 @@ actively firing. It remains a trap on a type documented as an immutable snapshot
 
 **Fix.** Move the mutable key state into a separate non-record holder referenced by the record, or override
 `Equals`/`GetHashCode` explicitly to compare only the logical content.
+
+**Fixed (tranche 4, D148)** — the second option. The holder was rejected: a record's `with` uses a
+compiler-generated copy constructor that copies fields, so a clone would **share** the holder and completing
+one clone's key would silently complete the original's. A hand-written copy constructor avoids that but must
+enumerate every property by hand, which is a maintenance trap on a positional record. Explicit
+`Equals`/`GetHashCode` has neither problem, and it also fixed the reference-only `Fields` comparison the
+synthesized version performed.
 
 ---
 
@@ -1130,6 +1171,11 @@ is worth fixing for clarity alone.
 
 **Fix.** Build once into a cached authoring result (metadata + masks + facet + row filters) and serve all
 four members from it.
+
+**Fixed (tranche 4).** The cached result is the configured `ViewBuilder` itself rather than a new record, so
+the generic `GetSourceRowFilters<TSource>()` still resolves per `TSource` off the one authoring pass. The dead
+`BuildMetadataCore` virtual went with it: its doc claimed an override by `View<TQuery, TCrud>`, which is
+deliberately not a subclass (D26), so nothing could ever have overridden it.
 
 ---
 
