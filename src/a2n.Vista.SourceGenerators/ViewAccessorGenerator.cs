@@ -1201,6 +1201,7 @@ namespace a2n.Vista.SourceGenerators
             isSortable = true;
             isMaskable = false;
             var filterableExplicitlySet = false;
+            var sortableExplicitlySet = false;
 
             if (fieldOverrides.TryGetValue(name, out var configure) && configure.Body is { } configureBody)
             {
@@ -1223,6 +1224,7 @@ namespace a2n.Vista.SourceGenerators
 
                         case "Sortable":
                             isSortable = ReadBoolArgument(args, defaultValue: true);
+                            sortableExplicitlySet = true;
                             break;
 
                         case "Operators":
@@ -1240,6 +1242,13 @@ namespace a2n.Vista.SourceGenerators
                 {
                     // D95: masked fields default non-filterable absent an explicit opt-in (R8.1).
                     isFilterable = false;
+                }
+
+                if (!sortableExplicitlySet)
+                {
+                    // D143: and non-sortable, closing the ORDER BY + paging probing vector. Kept in lockstep
+                    // with ViewBuilder so generated metadata stays byte-identical to the reflection oracle.
+                    isSortable = false;
                 }
             }
         }

@@ -36,15 +36,43 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
             Search = new DtSearch
             {
                 Value = GetString(values, "search[value]") ?? string.Empty,
-                Regex = GetBool(values, "search[regex]"),
+                Regex = GetBool(values, "search[regex]", defaultValue: false),
             },
             JsonQB = GetString(values, "jsonQB") ?? GetString(values, "jsonqb"),
             ExternalFilter = GetString(values, "externalFilter") ?? GetString(values, "externalfilter"),
         };
         // usePGSQL / case-sensitivity flags are read and discarded (provider-detected, D70).
 
+        // Validate the row offset at bind time, mirroring the AG Grid adapter's range check: a negative
+        // `start` is a malformed request, not something to silently normalize to the first row.
+        if (query.Start < 0)
+        {
+            throw new AdapterBindException(
+                $"The DataTables row offset is invalid: start={query.Start} (require start >= 0).");
+        }
+
+        // `regex=true` asks for regular-expression matching, which is not part of the neutral filter
+        // contract. Executing it as a literal Contains would silently answer a different question, so it is
+        // rejected loudly instead (the same posture as AG Grid's Advanced Filter).
+        if (query.Search.Regex)
+        {
+            throw new AdapterBindException(
+                "DataTables regex search (search[regex]=true) is not supported: regular-expression filtering "
+                + "is not part of the neutral filter contract.");
+        }
+
         BindColumns(values, query);
         BindOrder(values, query);
+
+        foreach (var column in query.Columns)
+        {
+            if (column.Search is { Regex: true })
+            {
+                throw new AdapterBindException(
+                    $"DataTables per-column regex search is not supported (column '{column.Data}').");
+            }
+        }
+
         return query;
     }
 
@@ -56,9 +84,12 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
 
         var fields = BuildFieldLookup(view);
 
-        // Paging: pass a non-positive Length through unchanged so the engine rejects "all rows" (R3.1).
+        // Paging (D144): DataTables is offset-based, so `start` is carried verbatim as the absolute Offset
+        // instead of being divided into a page index. Dividing lost rows twice — integer division snapped an
+        // unaligned `start`, and the engine's later page-size clamp shifted the window. A non-positive
+        // Length is still passed through unchanged so the engine rejects "all rows" (R3.1).
         var pageSize = request.Length;
-        var page = request.Length > 0 ? request.Start / request.Length : 0;
+        var offset = request.Start;
 
         var sort = BuildSort(request);
         var search = BuildGlobalSearch(request, view);
@@ -68,11 +99,12 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
         return new ViewQueryRequest(
             Filter: filter,
             Sort: sort,
-            Page: page,
+            Page: 0,
             PageSize: pageSize,
             SelectFields: null,
             Search: search,
-            Scope: scope);
+            Scope: scope,
+            Offset: offset);
     }
 
     /// <inheritdoc />
@@ -107,6 +139,13 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
             if (string.IsNullOrEmpty(column.Data))
             {
                 // Non-field UI column (e.g. an action column): not sortable.
+                continue;
+            }
+
+            if (!column.Orderable)
+            {
+                // The request itself declares the column non-orderable; honor that rather than sorting by it
+                // anyway. (The engine's own IsSortable whitelist still applies on top of this.)
                 continue;
             }
 
@@ -155,6 +194,13 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
 
         foreach (var column in request.Columns)
         {
+            // A column the request declares non-searchable contributes no leaf: binding `searchable:false`
+            // and then filtering on it anyway answered a different question than the client asked.
+            if (!column.Searchable)
+            {
+                continue;
+            }
+
             var value = column.Search.Value;
             if (!string.IsNullOrEmpty(column.Data) && !string.IsNullOrWhiteSpace(value))
             {
@@ -201,12 +247,16 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
             {
                 Data = GetString(values, dataKey) ?? string.Empty,
                 Name = GetString(values, $"columns[{i}][name]") ?? string.Empty,
-                Searchable = GetBool(values, $"columns[{i}][searchable]"),
-                Orderable = GetBool(values, $"columns[{i}][orderable]"),
+                // Absent → allowed: DataTables always sends both flags, and a hand-built request that omits
+                // them means "no per-column restriction". The engine's own whitelist still governs, so
+                // default-allow here cannot widen what the view exposes; it only stops an omitted transport
+                // flag from silently disabling search/sort.
+                Searchable = GetBool(values, $"columns[{i}][searchable]", defaultValue: true),
+                Orderable = GetBool(values, $"columns[{i}][orderable]", defaultValue: true),
                 Search = new DtSearch
                 {
                     Value = GetString(values, $"columns[{i}][search][value]") ?? string.Empty,
-                    Regex = GetBool(values, $"columns[{i}][search][regex]"),
+                    Regex = GetBool(values, $"columns[{i}][search][regex]", defaultValue: false),
                 },
             });
         }
@@ -249,9 +299,14 @@ public sealed class DataTablesAdapter : ViewAdapter<DataTablesQuery, DataTablesR
         return value;
     }
 
-    private static bool GetBool(IReadOnlyDictionary<string, IReadOnlyList<string>> values, string key)
+    private static bool GetBool(
+        IReadOnlyDictionary<string, IReadOnlyList<string>> values,
+        string key,
+        bool defaultValue)
     {
         var text = GetString(values, key);
-        return string.Equals(text, "true", StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrEmpty(text)
+            ? defaultValue
+            : string.Equals(text, "true", StringComparison.OrdinalIgnoreCase);
     }
 }

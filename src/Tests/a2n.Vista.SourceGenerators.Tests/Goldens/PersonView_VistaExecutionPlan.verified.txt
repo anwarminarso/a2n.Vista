@@ -15,7 +15,6 @@ file sealed class PersonView_VistaExecutionPlan : global::a2n.Vista.EntityFramew
     {
         ["Id"] = (global::System.Linq.Expressions.Expression<global::System.Func<global::App.PersonRow, int>>)(static (global::App.PersonRow x) => x.Id),
         ["Name"] = (global::System.Linq.Expressions.Expression<global::System.Func<global::App.PersonRow, string>>)(static (global::App.PersonRow x) => x.Name),
-        ["Email"] = (global::System.Linq.Expressions.Expression<global::System.Func<global::App.PersonRow, string>>)(static (global::App.PersonRow x) => x.Email),
     };
 
     private static readonly global::a2n.Vista.Metadata.MaskAccessor[] MaskAccessorArray = new global::a2n.Vista.Metadata.MaskAccessor[]

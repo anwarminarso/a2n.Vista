@@ -24,9 +24,11 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// </para>
 /// <para>
 /// <b>Fail-closed, not fail-open.</b> Silently dropping a row-level security predicate would be a data
-/// leak (Requirement R6.3). Therefore, when the view declares any authored row filter, this plan
-/// throws rather than returning unscoped rows. A Gaya A view with no <c>WithRowFilter&lt;TSource&gt;</c>
-/// (for example the Northwind <c>vProductCategory</c> sample) executes normally.
+/// leak (Requirement R6.3). Therefore this plan throws rather than returning unscoped rows whenever the
+/// view declares an authored row filter <b>or</b> the request scope carries one
+/// (<see cref="IViewScope.RowFilterCount"/> &gt; 0). A Gaya A view with no
+/// <c>WithRowFilter&lt;TSource&gt;</c> served to a request whose authorizer added no row filter (for
+/// example the Northwind <c>vProductCategory</c> sample) executes normally.
 /// </para>
 /// <para>
 /// <b>Recommended Core change (not made here).</b> Align Gaya A capture with §4.1 by having
@@ -90,17 +92,23 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
         ArgumentNullException.ThrowIfNull(services);
         ArgumentNullException.ThrowIfNull(scope);
 
-        if (_authoredRowFilterCount > 0)
+        // Fail closed on BOTH sources of server-trusted predicates: the authored TemplateRowFilters and
+        // the per-request scope pushed in by IViewAuthorizer.ShapeQuery. The scope is type-erased here
+        // (TSource is hidden behind the captured projection), so it is inspected through
+        // IViewScope.RowFilterCount rather than GetRowFilters<TSource>().
+        var scopeRowFilterCount = scope.RowFilterCount;
+
+        if (_authoredRowFilterCount > 0 || scopeRowFilterCount > 0)
         {
-            // Fail closed: the view declared server-trusted TSource row filters that cannot be honored
-            // through the combined Gaya A delegate. Returning rows here would bypass row-level security.
+            // Returning rows here would bypass row-level security (tenant isolation, ownership).
             throw new NotSupportedException(
-                $"View '{ViewName}' declares {_authoredRowFilterCount} server-trusted row filter(s) over its " +
-                "source entity, but its central-template (Gaya A) query captured the source and projection as a " +
-                "single delegate, so those predicates cannot be applied pre-projection (§4.1). Executing it would " +
-                "silently drop row-level security. Resolve by aligning the Gaya A capture with §4.1 (retain the " +
-                "source query and projection separately so a SplitViewExecutionPlan can be built), or author the " +
-                "view in the class-per-view (Gaya B) style.");
+                $"View '{ViewName}' has {_authoredRowFilterCount} authored and {scopeRowFilterCount} " +
+                "request-scoped server-trusted row filter(s) over its source entity, but its central-template " +
+                "(Gaya A) query captured the source and projection as a single delegate, so those predicates " +
+                "cannot be applied pre-projection (§4.1). Executing it would silently drop row-level security. " +
+                "Resolve by aligning the Gaya A capture with §4.1 (retain the source query and projection " +
+                "separately so a SplitViewExecutionPlan can be built), or author the view in the class-per-view " +
+                "(Gaya B) style.");
         }
 
         var queryable = _projectedFactory(dbContext, services)

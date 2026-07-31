@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Reflection;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -38,11 +39,29 @@ public sealed class DtoSchemaGenerator
     private readonly SortedDictionary<string, OpenApiSchema> _components =
         OpenApiCollections.CreateMap<OpenApiSchema>();
     private readonly List<string> _notices = new();
-    private readonly HashSet<string> _inProgress = new(StringComparer.Ordinal);
+
+    // Components are identified by CLR type (plus the visibility policy applied to it), NOT by simple type
+    // name: two row types named `OrderRow` in different namespaces are different schemas and must not
+    // collapse onto one component. The reservation also acts as the recursion/cycle guard — a nested
+    // occurrence of a type already being built resolves to the reserved name instead of recursing.
+    private readonly Dictionary<ComponentKey, string> _componentNames = new();
+    private readonly HashSet<string> _takenNames = new(StringComparer.Ordinal);
 
     // Maps BCL scalar CLR types to their conventional OpenAPI type/format (Requirement 4.4). The instances
     // are immutable records, so sharing a single instance per type is safe.
     private static readonly IReadOnlyDictionary<Type, OpenApiSchema> ScalarSchemas = BuildScalarSchemas();
+
+    /// <summary>The fixed description attached to a maskable field's schema (no value is disclosed).</summary>
+    private const string MaskableDescription =
+        "Maskable field: the server may substitute this value per request, so the response value is not "
+        + "guaranteed to be the stored one.";
+
+    /// <summary>
+    /// The component identity: the CLR type plus the field-visibility policy applied to it. The policy is
+    /// part of the identity because the same row type described under two different policies is two
+    /// different schemas.
+    /// </summary>
+    private readonly record struct ComponentKey(Type Type, string? PolicyKey);
 
     /// <summary>
     /// Creates a generator bound to the serialization seam's options. The seam's
@@ -73,11 +92,16 @@ public sealed class DtoSchemaGenerator
     /// that cannot be described yields the permissive empty schema plus a <see cref="Notices"/> entry.
     /// </summary>
     /// <param name="type">The CLR type whose serialized JSON shape to describe.</param>
+    /// <param name="policy">
+    /// An optional per-view field-visibility policy applied to <paramref name="type"/>'s own members
+    /// (never to nested types): hidden fields are omitted from the schema and maskable fields are annotated.
+    /// Pass <see langword="null"/> to describe the type exactly as it serializes.
+    /// </param>
     [RequiresUnreferencedCode("Per-view DTO schema generation reflects over CLR row/write types under the seam options.")]
-    public OpenApiSchema GenerateSchema(Type type)
+    public OpenApiSchema GenerateSchema(Type type, DtoSchemaPolicy? policy = null)
     {
         ArgumentNullException.ThrowIfNull(type);
-        return BuildTypeSchema(type);
+        return BuildTypeSchema(type, policy);
     }
 
     /// <summary>
@@ -86,7 +110,7 @@ public sealed class DtoSchemaGenerator
     public static string ComponentRef(string componentName) => "#/components/schemas/" + componentName;
 
     [RequiresUnreferencedCode("Reflects over the CLR type to describe its serialized JSON shape.")]
-    private OpenApiSchema BuildTypeSchema(Type type)
+    private OpenApiSchema BuildTypeSchema(Type type, DtoSchemaPolicy? policy = null)
     {
         try
         {
@@ -94,7 +118,7 @@ public sealed class DtoSchemaGenerator
             var underlying = Nullable.GetUnderlyingType(type);
             if (underlying is not null)
             {
-                var inner = BuildTypeSchema(underlying);
+                var inner = BuildTypeSchema(underlying, policy);
                 // A $ref cannot carry a sibling `nullable` in OpenAPI 3.0; only decorate inline schemas.
                 return inner.Ref is null ? inner with { Nullable = true } : inner;
             }
@@ -134,7 +158,7 @@ public sealed class DtoSchemaGenerator
             // Anything else that looks like a POCO -> its own component schema + $ref (Requirement 4.5).
             if (IsPocoLike(type))
             {
-                var name = RegisterComponent(type);
+                var name = RegisterComponent(type, policy);
                 return new OpenApiSchema { Ref = ComponentRef(name) };
             }
 
@@ -148,38 +172,116 @@ public sealed class DtoSchemaGenerator
     }
 
     [RequiresUnreferencedCode("Reflects over the POCO's properties to describe its serialized JSON shape.")]
-    private string RegisterComponent(Type type)
+    private string RegisterComponent(Type type, DtoSchemaPolicy? policy)
     {
-        var name = ComponentName(type);
+        var key = new ComponentKey(type, policy?.Key);
 
-        // Already emitted or currently being built (cycle guard): resolve to the $ref name only.
-        if (_components.ContainsKey(name) || _inProgress.Contains(name))
+        // Already emitted, or currently being built (cycle guard): resolve to the reserved name only.
+        if (_componentNames.TryGetValue(key, out var reserved))
         {
-            return name;
+            return reserved;
         }
 
-        _inProgress.Add(name);
-        try
-        {
-            _components[name] = BuildObjectComponent(type);
-        }
-        finally
-        {
-            _inProgress.Remove(name);
-        }
-
+        var name = ReserveComponentName(type, policy);
+        _componentNames[key] = name;
+        _components[name] = BuildObjectComponent(type, policy);
         return name;
     }
 
+    /// <summary>
+    /// Reserves a unique, deterministic component name for <paramref name="type"/>. The simple type name is
+    /// preferred; on collision with an already-reserved name the namespace's last segment, then the full
+    /// namespace, then an ordinal suffix disambiguate it, so two same-named types in different namespaces
+    /// (or the same type under two different visibility policies) never share one component.
+    /// </summary>
+    private string ReserveComponentName(Type type, DtoSchemaPolicy? policy)
+    {
+        var baseName = ComponentName(type);
+        if (_takenNames.Add(baseName))
+        {
+            return baseName;
+        }
+
+        foreach (var qualifier in NameQualifiers(type, policy))
+        {
+            var candidate = qualifier + "_" + baseName;
+            if (_takenNames.Add(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        for (var ordinal = 2; ; ordinal++)
+        {
+            var candidate = baseName + "_" + ordinal.ToString(CultureInfo.InvariantCulture);
+            if (_takenNames.Add(candidate))
+            {
+                return candidate;
+            }
+        }
+    }
+
+    /// <summary>
+    /// The ordered disambiguation qualifiers for a colliding component name: the namespace's last segment,
+    /// the full namespace (dots replaced so the name stays <c>$ref</c>-safe), then the policy key (the view
+    /// name) when the collision comes from one type described under two different field-visibility policies.
+    /// </summary>
+    private static IEnumerable<string> NameQualifiers(Type type, DtoSchemaPolicy? policy)
+    {
+        var ns = type.Namespace;
+        if (!string.IsNullOrEmpty(ns))
+        {
+            var lastDot = ns.LastIndexOf('.');
+            if (lastDot >= 0 && lastDot < ns.Length - 1)
+            {
+                yield return Sanitize(ns[(lastDot + 1)..]);
+            }
+
+            yield return Sanitize(ns);
+        }
+
+        if (policy is not null)
+        {
+            yield return Sanitize(policy.Key);
+        }
+    }
+
+    /// <summary>Replaces every character that is not <c>$ref</c>-safe with an underscore.</summary>
+    private static string Sanitize(string value)
+    {
+        var builder = new System.Text.StringBuilder(value.Length);
+        foreach (var ch in value)
+        {
+            builder.Append(char.IsLetterOrDigit(ch) ? ch : '_');
+        }
+
+        return builder.ToString();
+    }
+
     [RequiresUnreferencedCode("Reflects over the POCO's properties to describe its serialized JSON shape.")]
-    private OpenApiSchema BuildObjectComponent(Type type)
+    private OpenApiSchema BuildObjectComponent(Type type, DtoSchemaPolicy? policy)
     {
         var properties = OpenApiCollections.CreateMap<OpenApiSchema>();
 
         foreach (var property in GetSerializableProperties(type))
         {
+            // A hidden field is deliberately withheld from the view's own metadata facet, so it is not
+            // described here either — publishing its name and type would disclose exactly what the author
+            // chose to withhold (D95 field flags).
+            if (policy is not null && policy.IsHidden(property.Name))
+            {
+                continue;
+            }
+
             var jsonName = ResolvePropertyName(property);
             var memberSchema = BuildTypeSchema(property.PropertyType);
+
+            // A maskable field's value may be substituted per request, so the schema says so. Only an inline
+            // schema is annotated: in OpenAPI 3.0 a $ref cannot carry sibling keywords.
+            if (policy is not null && policy.IsMaskable(property.Name) && memberSchema.Ref is null)
+            {
+                memberSchema = memberSchema with { Description = MaskableDescription };
+            }
 
             // Reference-type nullability is a member-level concern (NullabilityInfoContext); value-type
             // nullability was already applied by BuildTypeSchema for Nullable<T>.

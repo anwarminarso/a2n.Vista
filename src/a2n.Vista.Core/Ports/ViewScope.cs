@@ -24,6 +24,9 @@ public sealed class ViewScope : IViewScope
     private readonly Dictionary<Type, List<object>> _filtersBySource = [];
 
     /// <inheritdoc />
+    public int RowFilterCount { get; private set; }
+
+    /// <inheritdoc />
     public void AddRowFilter<TSource>(Expression<Func<TSource, bool>> filter) where TSource : class
     {
         ArgumentNullException.ThrowIfNull(filter);
@@ -35,6 +38,7 @@ public sealed class ViewScope : IViewScope
         }
 
         list.Add(filter);
+        RowFilterCount++;
     }
 
     /// <inheritdoc />

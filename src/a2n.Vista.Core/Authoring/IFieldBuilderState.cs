@@ -30,6 +30,14 @@ internal interface IFieldBuilderState
     /// </summary>
     bool SearchableExplicitlySet { get; }
 
+    /// <summary>
+    /// Whether <c>Sortable(...)</c> was explicitly called. A masked field defaults to non-sortable
+    /// (D143, closing the same probing vector as D95: ordering plus paging leaks the relative order of the
+    /// hidden values, which for a numeric or date column is close to a binary search); an explicit opt-in
+    /// here overrides that default.
+    /// </summary>
+    bool SortableExplicitlySet { get; }
+
     /// <summary>The display/format string hint, or <see langword="null"/> when none was set.</summary>
     string? FormatString { get; }
 

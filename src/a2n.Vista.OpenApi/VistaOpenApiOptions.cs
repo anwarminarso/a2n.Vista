@@ -56,6 +56,27 @@ public sealed class VistaOpenApiOptions
     public bool IncludeAdapterEndpoints { get; set; }
 
     /// <summary>
+    /// Whether <c>MapVistaOpenApi()</c> attaches <c>RequireAuthorization()</c> to the mapped document
+    /// endpoint. Defaults to <see langword="true"/> (secure by default).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// An ASP.NET Core endpoint that carries no authorization metadata is <b>anonymous</b> even when
+    /// <c>UseAuthentication</c>/<c>UseAuthorization</c> are in the pipeline. Since the document publishes
+    /// every mapped view's route, operation set, writability, and row/write schemas, the endpoint defaults
+    /// to requiring an authorized caller rather than inheriting an implicitly open posture.
+    /// </para>
+    /// <para>
+    /// The requirement is skipped when the host explicitly opted into anonymous access through the D94
+    /// switch (<c>AddVistaEndpoints(b =&gt; b.AllowAnonymousAccess())</c>): in that posture the views
+    /// themselves are open by reviewed choice, and there may be no authentication scheme to authorize
+    /// against. Set this to <see langword="false"/> to publish the document anonymously while the views
+    /// stay authorized — a deliberate, reviewable opt-out.
+    /// </para>
+    /// </remarks>
+    public bool RequireAuthorization { get; set; } = true;
+
+    /// <summary>
     /// Validates the options at configuration time, throwing a descriptive <see cref="ArgumentException"/>
     /// on the first invalid value so misconfiguration fails fast rather than at request time.
     /// </summary>

@@ -68,8 +68,10 @@ public static class VistaWriteBinding
         }
         catch (JsonException ex)
         {
+            // Fixed, leak-free text (the parser message carries byte/line positions and, for conversion
+            // failures, CLR type names); the cause rides InnerException for server-side logging.
             throw new VistaInvalidRequestException(
-                $"The request body is not valid JSON: {ex.Message}", WriteErrorCode.MalformedBody);
+                "The request body is not valid JSON.", WriteErrorCode.MalformedBody, ex);
         }
 
         // R15.1: an array body is a bulk batch, which is not enabled in this milestone.
@@ -154,8 +156,15 @@ public static class VistaWriteBinding
         }
         catch (JsonException ex)
         {
+            // Leak-free by contract: a System.Text.Json conversion message embeds the target CLR type and
+            // the member path (for example "could not be converted to System.Int32. Path: $.Model.Quantity"),
+            // which would disclose internal type names and the write model's layout in the 400 body. The
+            // client gets Vista-authored text plus the stable code; the cause is kept as InnerException for
+            // server-side logging only.
             throw new VistaInvalidRequestException(
-                $"The write 'model' payload is not valid: {ex.Message}", WriteErrorCode.MalformedBody);
+                "The write 'model' payload does not match the view's write contract.",
+                WriteErrorCode.MalformedBody,
+                ex);
         }
     }
 
@@ -189,7 +198,7 @@ public static class VistaWriteBinding
         catch (JsonException ex)
         {
             throw new VistaInvalidRequestException(
-                $"The request 'key' is invalid: {ex.Message}", WriteErrorCode.MissingKey);
+                "The request 'key' is invalid.", WriteErrorCode.MissingKey, ex);
         }
     }
 

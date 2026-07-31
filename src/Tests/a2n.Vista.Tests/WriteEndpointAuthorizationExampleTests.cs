@@ -78,6 +78,37 @@ public sealed class WriteEndpointAuthorizationExampleTests
         await Assert.That(app.ReadName(1)).IsEqualTo("keep");
     }
 
+    /// <summary>
+    /// Audit `BUG-03` / Decision Log D145: a malformed body from an unauthorized caller must still be
+    /// <b>403</b>, not the <c>400</c> bind error. The bind error would confirm the view exists and is
+    /// writable, and it made the server parse an unauthorized caller's payload first.
+    /// </summary>
+    [Test]
+    public async Task Denied_Caller_With_Malformed_Body_Gets_403_Not_400()
+    {
+        await using var app = await TestApp.StartAsync(AuthorizerMode.Deny);
+
+        var response = await app.Client.PostAsync($"{Route}/create", Json("{ this is not json"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+    }
+
+    /// <summary>
+    /// Audit `BUG-03` / D145: an update with no <c>key</c> from an unauthorized caller is <b>403</b>, not the
+    /// <c>400</c> missing-key error — the request never reaches the binder.
+    /// </summary>
+    [Test]
+    public async Task Denied_Caller_With_Missing_Key_Gets_403_Not_400()
+    {
+        await using var app = await TestApp.StartAsync(AuthorizerMode.Deny);
+        app.Seed(1, "before");
+
+        var response = await app.Client.PostAsync($"{Route}/update", Json("{\"model\":{\"name\":\"after\"}}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Forbidden);
+        await Assert.That(app.ReadName(1)).IsEqualTo("before");
+    }
+
     private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
 
     private enum AuthorizerMode

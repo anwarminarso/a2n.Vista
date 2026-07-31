@@ -408,6 +408,14 @@ public sealed class VistaOpenApiDocumentTransformer : IOpenApiDocumentTransforme
             result.Required = new HashSet<string>(schema.Required);
         }
 
+        // Open-map semantics must survive the 2.x mapping exactly as they do on the 1.x branch below:
+        // without this, the merged ProblemDetails schema and every dictionary-shaped schema silently lose
+        // `additionalProperties` on net10, so the same app emits a different document per target framework.
+        if (schema.AdditionalProperties is not null)
+        {
+            result.AdditionalPropertiesAllowed = schema.AdditionalProperties.Value;
+        }
+
         if (schema.Discriminator is not null)
         {
             result.Discriminator = MapDiscriminator(schema.Discriminator, host);

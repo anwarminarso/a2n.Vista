@@ -95,6 +95,16 @@ public sealed class PipelineRunner : IPipelineRunner
         var posture = new SecurityPostureBuilder().Build(resolved);
         var views = new OperationGraphBuilder().Build(resolved, reLift, notices, posture);
 
+        // Every view name is derived from the untrusted document (an operationId or a path segment) and flows
+        // into an emitted file path and TypeScript symbol. Validate the whole set here, before anything is
+        // emitted, so an unsafe name is a typed abort rather than an unhandled exception in the emitter or a
+        // write outside the output directory.
+        var unsafeName = ViewNameGuard.FirstUnsafe(views);
+        if (unsafeName is not null)
+        {
+            return GenerationResult.Failure(unsafeName, notices.ToSortedList());
+        }
+
         // The per-view DTO component names to emit as interfaces: each view's by-name RowType/CrudType.
         var dtoComponentNames = CollectDtoComponentNames(views);
 

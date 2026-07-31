@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using a2n.Vista.AspNetCore.Configuration;
 using a2n.Vista.OpenApi;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
@@ -21,11 +22,14 @@ namespace Microsoft.AspNetCore.Builder;
 /// on the first request, by <see cref="a2n.Vista.OpenApi.VistaOpenApiDocumentCache"/>.
 /// </para>
 /// <para>
-/// <b>Security (Requirement 11.3).</b> This is a plain mapped endpoint that sits <em>inside</em> the host's
-/// normal middleware pipeline, so the application's authentication and authorization apply to it exactly as
-/// to any other endpoint. It deliberately does <b>not</b> call <c>AllowAnonymous()</c> and bypasses nothing
-/// — a host that wants the document public configures that itself (for example with a fitting authorization
-/// policy on the returned <see cref="IEndpointConventionBuilder"/>).
+/// <b>Security (Requirement 11.3).</b> The endpoint sits <em>inside</em> the host's normal middleware
+/// pipeline and, by default, carries <c>RequireAuthorization()</c>. That default matters: an endpoint with
+/// no authorization metadata is <b>anonymous</b> even when <c>UseAuthentication</c>/<c>UseAuthorization</c>
+/// are configured, and the document publishes every mapped view's route, operation set, writability, and
+/// row/write schemas. The requirement is skipped only when the host opted into anonymous access through the
+/// D94 switch (<c>AllowAnonymousAccess()</c>) or explicitly set
+/// <see cref="a2n.Vista.OpenApi.VistaOpenApiOptions.RequireAuthorization"/> to <see langword="false"/>. A
+/// host that needs a specific policy attaches it to the returned <see cref="IEndpointConventionBuilder"/>.
 /// </para>
 /// <para>
 /// <b>AOT posture (Requirement 13.3).</b> Serving the document reaches the RUC document build, so this
@@ -59,12 +63,23 @@ public static class VistaOpenApiEndpointRouteBuilderExtensions
         ArgumentNullException.ThrowIfNull(endpoints);
 
         var options = endpoints.ServiceProvider.GetRequiredService<VistaOpenApiOptions>();
+        var endpointOptions = endpoints.ServiceProvider.GetRequiredService<VistaEndpointOptions>();
         var cache = endpoints.ServiceProvider.GetRequiredService<VistaOpenApiDocumentCache>();
 
         // A normal GET endpoint: it participates in the host auth pipeline and bypasses nothing (R11.3).
         // The cached JSON is built once, on first request, then reused (design "Runtime path").
-        return endpoints.MapGet(
+        var endpoint = endpoints.MapGet(
             options.EndpointPath,
             (Delegate)(() => Results.Text(cache.GetJson(), "application/json")));
+
+        // Secure by default: without authorization metadata this endpoint would be anonymous regardless of
+        // the host's authentication/authorization middleware. Skipped for the reviewed D94 anonymous
+        // posture (where no authentication scheme need exist) and for the explicit opt-out.
+        if (options.RequireAuthorization && !endpointOptions.AllowAnonymous)
+        {
+            endpoint.RequireAuthorization();
+        }
+
+        return endpoint;
     }
 }

@@ -274,7 +274,10 @@ public sealed class VistaOpenApiDocumentBuilder
             && facet.ConcurrencyToken is not null;
 
         // --- Row (TRow) schema + the per-view ViewListResult<TRow> wrapper -------------------------
-        var rowSchema = generator.GenerateSchema(view.QueryType);
+        // The view's field flags govern what the row schema may describe: a Hidden() field is dropped from
+        // the metadata facet, so it must not surface here either, and a maskable field is annotated.
+        var fieldPolicy = DtoSchemaPolicy.ForView(view);
+        var rowSchema = generator.GenerateSchema(view.QueryType, fieldPolicy);
         var rowRef = rowSchema.Ref;
         if (rowRef is null)
         {

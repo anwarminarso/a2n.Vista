@@ -1,7 +1,20 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-14 (`northwind-sample-showcase` **LANDED** — D137–D140, purely additive at the
+> Last updated: 2026-07-31 (**audit remediation, tranche 2** — the decision-bearing findings are settled and
+> implemented: **D143** masked fields default non-sortable (closes the `ORDER BY` + paging probing vector),
+> **D144** paging carries an absolute `Offset` so the page-size clamp can no longer move a grid's window,
+> **D145** the endpoint authorizes before it binds (no more `428`/`400` to an unauthorized caller), **D146**
+> a declared concurrency token must be model-backed, the database performs the atomic check, and the update
+> `ETag` is the post-write token (a delete emits none). See §2.23. Remaining open audit items: `BUG-07`,
+> `BUG-10`, the `DEAD-*` API removals, and `PERF-02`–`PERF-08`.)
+> Prior: 2026-07-31 (**audit remediation, tranche 1** — the self-contained findings of
+> `docs/audit/2026-07-31-full-code-audit.md` are fixed with a regression test each; two behaviour-visible
+> defaults changed: **D141** Style A row-level security now fails closed when the request scope carries a
+> filter it cannot apply pre-projection (`IViewScope.RowFilterCount` added), and **D142** the OpenAPI document
+> endpoint is authorized by default (skipped under the D94 anonymous opt-in or an explicit opt-out). See
+> §2.22 for the fixed/open split; the report carries the per-finding table.)
+> Prior: 2026-07-14 (`northwind-sample-showcase` **LANDED** — D137–D140, purely additive at the
 > sample/example layer (no Core/EF/AspNetCore/adapter contract, route, envelope, or error change). The
 > `a2n.Vista.Examples.AgGridNorthwind` host became a **three-page showcase** behind a shared nav, reaching
 > feature parity with the legacy DynData "Table Browser" on the read surface. **D137** — the single
@@ -1165,6 +1178,65 @@ sample/example layer**: no Core/EF/AspNetCore/adapter contract, route, envelope,
   self-tests PASS (19 OpenAPI paths, 4 views incl. the writable memo); the other example self-tests stay
   green and unchanged.
 
+### 2.22 Audit remediation, tranche 1 (landed 2026-07-31; report `docs/audit/2026-07-31-full-code-audit.md`)
+
+The 2026-07-31 full code audit reported 36 findings (6 security, 13 correctness, 9 dead code, 8 performance)
+against a zero-error build. **Tranche 1 — every finding whose fix is self-contained and needs no new contract
+decision — is fixed**, with a regression test per finding (`AuditRemediationTests`,
+`PathTraversalContainmentTests`, plus new cases in `OpenApiServingCoexistenceTests` and
+`WriteMapperDiagnosticsTests`). Two behaviour-visible defaults changed: **D141** (fail-closed Style A scope)
+and **D142** (authorized-by-default OpenAPI document endpoint).
+
+Fixed: `SEC-01` (D141), `SEC-02` posture (D142), `SEC-03` (hidden fields no longer published in
+`components.schemas`; maskable fields annotated), `SEC-05` (`.Key(nameof(...))` now guarded — the key
+recognizer resolves compile-time constants through the semantic model), `SEC-06` (view-name validation +
+output-path containment in the TypeScript client generator), `BUG-01` (typed filter-value mismatch → 400, not
+500), `BUG-06` (leak-free write bind messages), `BUG-08` (OpenAPI components keyed by type identity),
+`BUG-09` (`Key(...)` satisfies the write facet's key requirement), `BUG-11` (CSV formula-injection defence +
+XLSX XML-illegal character stripping), `BUG-12` (negated empty QueryBuilder group), `BUG-13` (net10
+`additionalProperties`), `DEAD-04` (absolute export cap enforced), `PERF-01` (one full payload copy removed).
+
+Still open, each needing a decision or a port change before code: `SEC-04` (masked fields sortable — needs a
+D95-adjacent decision), `BUG-02` (adapter paging contract), `BUG-03` (authorize before bind), `BUG-04`/`BUG-05`
+(atomic concurrency token + post-write token round-trip), `BUG-07` (`AsNoTracking` + non-destructive masking),
+`BUG-10` (record equality vs mutable key state), the remaining `DEAD-*` (API removals) and `PERF-*` items.
+The audit report carries the per-finding status table.
+
+- **Verified (2026-07-31):** build green net8/9/10 (Release + Debug); **527 tests/TFM (net8) / 528 (net10)** in
+  `a2n.Vista.Tests`, **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
+  0 skipped. Note: the audit's "0 warnings" claim does not hold on the current SDK — `DataTablesAdapter.cs:92`
+  (CS8619) and three `TUnitAssertions0015` warnings pre-date this work (confirmed at `HEAD`).
+
+### 2.23 Audit remediation, tranche 2 (landed 2026-07-31; D143–D146)
+
+The findings that needed a **decision** before code. Each is now settled and implemented, with regression
+tests (`AuditRemediationTests`, `ConcurrencyTokenGuardTests`, new cases in
+`WriteEndpointAuthorizationExampleTests`, updated `AgGrid*` paging tests and `ConcurrencyAbortPropertyTests`).
+
+- **D143 (`SEC-04`)** — masked fields default **non-sortable**, closing the `ORDER BY` + paging probing vector
+  D95 left open. The `Sortable(...)` opt-in still wins. Mirrored in `ViewAccessorGenerator`, so generated
+  metadata stays byte-identical to the reflection oracle (the masked field's member accessor is no longer
+  emitted — the `PersonView_VistaExecutionPlan` golden was updated accordingly).
+- **D144 (`BUG-02`, `DEAD-05`)** — `ViewQueryRequest.Offset` carries the absolute row offset; both adapters
+  pass `start`/`startRow` verbatim. The engine's `ResolveWindow` honours the offset, so the page-size clamp
+  can no longer move the window. DataTables now rejects `start < 0` and `search[regex]=true`, and honours
+  per-column `searchable`/`orderable` (transport flags default to allow when absent; the engine whitelist
+  still governs).
+- **D145 (`BUG-03`)** — the mapper authorizes through `AuthorizeFacetAsync` **before** binding, for both the
+  write handler and the adapter handler; the decision is memoized per request so the authorizer is consulted
+  once per (view, facet).
+- **D146 (`BUG-04`, `BUG-05`)** — a declared concurrency token must be model-backed (startup fail-closed), the
+  original token value is pinned so the database performs the atomic check, and the update `ETag` is the
+  post-write token published through the new request-scoped `IWriteTokenSink`; a delete emits no `ETag`.
+
+**Fixture consequence worth knowing:** the D146 startup guard found five test fixtures that declared a token
+their `DbContext` model never configured — exactly the defect the audit described. Each now calls
+`IsConcurrencyToken()`. Both Northwind samples were already correct.
+
+- **Verified (2026-07-31, tranche 2):** build green net8/9/10; **536 tests/TFM (net8) / 537 (net10)** in
+  `a2n.Vista.Tests`, **143** in `a2n.Vista.Client.TypeScript.Tests`, **114** generator tests — 0 failed,
+  0 skipped. Both sample self-tests (Northwind read + write + OpenAPI, AgGridNorthwind) PASS.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1345,7 +1417,13 @@ These record where the code intentionally differs from the early spec sketches. 
 | D138 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** View-catalog exposure: an additive read-only endpoint `GET /api/showcase/views` returning a pure `ShowcaseCatalog.Project(IViewRegistry)` (name + route + humanized title; `[]` on empty), secure-by-default (only registered views) and inside the host auth pipeline. Additive — no existing route/envelope/error change. See §2.21. |
 | D139 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** Page technology: static HTML + TypeScript compiled by `tsc` (no bundler), emitting into `wwwroot/js`; `tsc --noEmit` typecheck gate + fast-check property tests for the pure transforms (`columns.ts`, `search.ts`). See §2.21. |
 | D140 | `northwind-sample-showcase` spec | **Landed (2026-07-14).** Registered Northwind view set: a third read-only view `vOrder` added so `vProductCategory`/`vOrderDetail`/`vOrder` span string/numeric/date/FK/composite-key, exercising the query-builder operators and column affordances. See §2.21. |
-| **D141+** | **next free** | Use for new decisions. `northwind-sample-showcase` (D137–D140) was the last landed spec. |
+| D141 | audit remediation (`docs/audit/2026-07-31-full-code-audit.md`, `SEC-01`) | **Landed (2026-07-31).** Style A row-level-security posture: `IViewScope` gains `RowFilterCount` (a type-erased count) so the combined-delegate `ProjectedViewExecutionPlan` can detect a populated request scope it cannot AND pre-projection and **fail closed**, instead of silently serving unscoped rows. Extends the existing authored-row-filter guard to the `IViewAuthorizer.ShapeQuery` scope. Source-breaking only for an external `IViewScope` implementation (none in-tree). See §2.22. |
+| D142 | audit remediation (`SEC-02`) | **Landed (2026-07-31).** The OpenAPI document endpoint is authorized by default: `MapVistaOpenApi()` attaches `RequireAuthorization()` unless the host opted into anonymous access via D94 `AllowAnonymousAccess()` or explicitly set `VistaOpenApiOptions.RequireAuthorization = false`. Rationale: an endpoint with no authorization metadata is anonymous even behind `UseAuthentication`/`UseAuthorization`, and the document publishes every view's route, operation set, writability, and row schemas. Per-caller document filtering through `IViewAuthorizer` is **deferred** (it makes the document per-identity and needs a caching decision). See §2.22. |
+| D143 | audit remediation (`SEC-04`) | **Landed (2026-07-31).** Extends D95 to the **sort** channel: a masked field defaults **non-sortable**, with an explicit `Sortable(...)` opt-in overriding it (a new `SortableExplicitlySet` signal, mirrored in the source generator so generated metadata stays byte-identical to the reflection oracle). Rationale: `ORDER BY` on a masked column plus paging leaks the relative ordering of the hidden values — for a numeric/date column close to a binary search — the same probing vector D95 closes for filter and search. Behaviour change for a view that sorted on a masked field; the generated execution plan no longer emits a member accessor for such a field. See §2.23. |
+| D144 | audit remediation (`BUG-02`) | **Landed (2026-07-31).** Paging carries an **absolute row offset**: `ViewQueryRequest.Offset` (optional, `null` = the unchanged page model) is authoritative when set, and both grid adapters now pass `start`/`startRow` verbatim instead of dividing by the client's page size. Rationale: the division lost rows twice — integer division snapped an unaligned offset, and the executor's page-size clamp then moved the window, returning wrong rows with no error. Clamping is now a pure size concern: the window start never moves. Supersedes the D135 `Page = StartRow / PageSize` mapping. DataTables additionally rejects `start < 0` and `search[regex]=true` (`AdapterBindException` → 400) and honours per-column `searchable`/`orderable` (audit `DEAD-05`). See §2.23. |
+| D145 | audit remediation (`BUG-03`) | **Landed (2026-07-31).** **Authorize before bind**: `ViewRequestExecutor.AuthorizeFacetAsync` is the pre-gate the endpoint mapper calls before reading the body, binding the model, reading the key, or applying the 428 precondition gate; the adapter handler calls it before the body read + adapter bind. The decision is memoized per request in `HttpContext.Items`, so an authorizer still sees exactly one `IsAllowedAsync` call per (view, facet) per request. Rationale: an unauthorized caller used to receive `428` or a `400` bind error instead of `403`, disclosing that the view exists, is writable, and declares a token — and could force JSON parsing work. See §2.23. |
+| D146 | audit remediation (`BUG-04`, `BUG-05`) | **Landed (2026-07-31).** Concurrency is real, and the echoed token is the post-write one. Three parts: (1) `VistaConcurrencyTokenStartupValidator` fails startup closed when a view's `WithConcurrencyToken(...)` member is **not** a concurrency token in the `DbContext` model (without it the database emitted no `UPDATE ... WHERE token = @original` predicate, so the Vista-level read-then-compare allowed a lost update); (2) the executor pins the tracked entry's original token so the check happens **in the database**; (3) the new Core-resident, request-scoped `IWriteTokenSink` carries the token read back after `SaveChanges`, which the mapper emits as the update `ETag` — a **delete emits no `ETag`** at all, since the row no longer exists. No `IViewExecutor` port change, so the generated dispatch invoker is untouched. See §2.23. |
+| **D147+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D146) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

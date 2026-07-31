@@ -354,6 +354,10 @@ public sealed class WriteEndpointExampleTests
         public DbSet<TokenSource> Tokens => Set<TokenSource>();
 
         public DbSet<BulkSource> Bulks => Set<BulkSource>();
+
+        // A declared Vista token must also be a model concurrency token (D146).
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            modelBuilder.Entity<TokenSource>().Property(e => e.Version).IsConcurrencyToken();
     }
 
     /// <summary>A tokenless single-source writable Style B view whitelisting only the scalar <c>Name</c>.</summary>

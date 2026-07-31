@@ -33,6 +33,16 @@ namespace a2n.Vista.Ports;
 public interface IViewScope
 {
     /// <summary>
+    /// The total number of server-trusted row filters accumulated so far, across every source type.
+    /// </summary>
+    /// <remarks>
+    /// A type-erased execution plan does not know <c>TSource</c> and therefore cannot call
+    /// <see cref="GetRowFilters{TSource}"/>. This count lets such a plan detect a populated scope it is
+    /// unable to honor and <b>fail closed</b> instead of silently returning unscoped rows (R6.3).
+    /// </remarks>
+    int RowFilterCount { get; }
+
+    /// <summary>
     /// Adds a server-trusted row predicate over the source entity type <typeparamref name="TSource"/>.
     /// The predicate is AND-ed into the query and pushed down to SQL.
     /// </summary>

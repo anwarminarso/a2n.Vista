@@ -37,8 +37,9 @@ namespace a2n.Vista.Tests;
 /// <c>int</c> token is rendered deterministically by the executor's <c>FormatToken</c> (invariant-culture
 /// text), so the wire token equals the value seeded into the row. The token is <em>not</em> in the
 /// writable whitelist and is not auto-bumped by the provider, so a successful update leaves the row's
-/// current token unchanged: the round-tripped <c>ETag</c> therefore equals the row's current token value
-/// after the write.
+/// current token unchanged: the <c>ETag</c> the update emits — read back from the row <em>after</em> the
+/// write (Decision Log D146) — therefore equals the row's current token value. A successful <b>delete</b>
+/// emits no <c>ETag</c> at all: the row is gone, so an entity-tag for it would be meaningless.
 /// <para>
 /// A single host + SQLite connection is built once and the single seeded row is reset per iteration
 /// (fresh version, name reset), which is far cheaper than rebuilding the pipeline 100+ times while still
@@ -112,16 +113,18 @@ public sealed class ConcurrencyAbortPropertyTests
 
                     if (isDelete)
                     {
-                        // The keyed row is gone, and the ETag equals the token the row carried.
+                        // The keyed row is gone, and NO ETag is emitted: an entity-tag for a row that no
+                        // longer exists is meaningless, and a client that stored it would only replay a
+                        // token for a deleted row (audit BUG-05, Decision Log D146).
                         if (harness.RowExists(RowKey))
                         {
                             throw new Exception($"Row {RowKey} still present after a successful delete.");
                         }
 
-                        if (!string.Equals(etag, storedToken, StringComparison.Ordinal))
+                        if (!string.IsNullOrEmpty(etag))
                         {
                             throw new Exception(
-                                $"Delete ETag '{etag}' did not equal the deleted row's token '{storedToken}'.");
+                                $"Delete emitted an ETag ('{etag}') for a row that no longer exists.");
                         }
                     }
                     else
@@ -335,6 +338,11 @@ public sealed class ConcurrencyAbortPropertyTests
         }
 
         public DbSet<ConcurrencySource> Sources => Set<ConcurrencySource>();
+
+        // The declared Vista token must also be a model concurrency token (D146), so the database performs
+        // the atomic UPDATE ... WHERE check rather than relying on the application-level pre-check alone.
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            modelBuilder.Entity<ConcurrencySource>().Property(e => e.Version).IsConcurrencyToken();
     }
 
     /// <summary>

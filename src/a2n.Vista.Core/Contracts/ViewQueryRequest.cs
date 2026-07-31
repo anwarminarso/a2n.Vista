@@ -27,6 +27,27 @@ namespace a2n.Vista.Contracts;
 /// working context, so it counts toward the unfiltered total (Decision Log D111). <see langword="null"/>
 /// when absent.
 /// </param>
+/// <param name="Offset">
+/// Optional <b>absolute</b> zero-based row offset (Decision Log D144). When set it is authoritative and
+/// <paramref name="Page"/> is ignored; when <see langword="null"/> the executor skips
+/// <paramref name="Page"/> × resolved page size as before.
+/// </param>
+/// <remarks>
+/// <para>
+/// <b>Why an absolute offset (D144).</b> Grids are offset-based, not page-based: DataTables sends
+/// <c>start</c>/<c>length</c> and AG Grid sends <c>startRow</c>/<c>endRow</c>. Deriving a page index by
+/// dividing the offset by the <em>client's requested</em> page size loses information twice — integer
+/// division snaps an unaligned offset (<c>start=250,length=100</c> → skip 200), and the executor's later
+/// clamp of the page size to <see cref="a2n.Vista.Metadata.HardLimits.MaxPageSize"/> then moves the window
+/// (<c>start=200,length=200</c> with a cap of 100 → skip 100). Both returned wrong rows with no error.
+/// Carrying the offset verbatim keeps clamping a pure size concern: the window start never moves, and a
+/// clamped request simply returns fewer rows from the right position.
+/// </para>
+/// <para>
+/// The parameter is optional and defaults to <see langword="null"/>, so the page-based contract and every
+/// existing caller are unchanged.
+/// </para>
+/// </remarks>
 public sealed record ViewQueryRequest(
     FilterNode? Filter,
     IReadOnlyList<SortSpec> Sort,
@@ -34,4 +55,5 @@ public sealed record ViewQueryRequest(
     int PageSize,
     IReadOnlyList<string>? SelectFields = null,
     FilterNode? Search = null,
-    FilterNode? Scope = null);
+    FilterNode? Scope = null,
+    int? Offset = null);

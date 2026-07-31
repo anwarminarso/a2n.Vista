@@ -36,6 +36,24 @@ public sealed class VistaInvalidRequestException : Exception
     }
 
     /// <summary>
+    /// Initializes a new <see cref="VistaInvalidRequestException"/> that keeps the underlying cause as
+    /// <see cref="Exception.InnerException"/> while the public <paramref name="message"/> stays leak-free.
+    /// </summary>
+    /// <remarks>
+    /// The problem-details mapper renders only <paramref name="message"/>, never the inner exception, so a
+    /// serializer message that embeds internal CLR type names and member paths stays server-side for logging
+    /// while the client receives Vista-authored text plus the stable machine-readable code.
+    /// </remarks>
+    /// <param name="message">A human-readable, leak-free description of why the request is invalid.</param>
+    /// <param name="writeErrorCode">The write-path classification for this failure.</param>
+    /// <param name="innerException">The underlying cause, retained for server-side diagnostics only.</param>
+    public VistaInvalidRequestException(string message, WriteErrorCode writeErrorCode, Exception? innerException)
+        : base(message, innerException)
+    {
+        WriteErrorCode = writeErrorCode;
+    }
+
+    /// <summary>
     /// The write-path classification for this failure, or <see langword="null"/> for a read-path
     /// invalid request. Drives <c>extensions["code"]</c> on the shared problem-details envelope.
     /// </summary>

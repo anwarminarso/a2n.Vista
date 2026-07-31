@@ -8,6 +8,100 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
+Remediation of the 2026-07-31 full code audit (`docs/audit/2026-07-31-full-code-audit.md`),
+tranches 1 and 2: every finding whose fix is self-contained, plus the six that needed a
+design decision first (now Decision Log D141–D146). Each carries a regression test. The
+audit report holds the per-finding status table.
+
+### Changed (behaviour)
+- **A masked field is no longer sortable by default** (`SEC-04`, D143). Ordering by a masked
+  column and paging through the result leaks the relative order of the hidden values — the
+  probing vector D95 already closes for filter and search. Add `Sortable()` on the field to
+  opt back in. The generated execution plan no longer emits a member accessor for a masked,
+  non-sortable field.
+- **Paging carries an absolute row offset** (`BUG-02`, D144). `ViewQueryRequest` gained an
+  optional `Offset`; when set it wins over `Page`. The DataTables and AG Grid adapters now
+  pass `start` / `startRow` verbatim instead of dividing by the client's page size. Before,
+  an unaligned offset snapped to a page boundary and the engine's page-size clamp shifted
+  the window — a grid asking for rows 200–399 with a 100-row cap silently received rows
+  100–199. Clamping is now a pure size concern: the window start never moves.
+- **Write and adapter endpoints authorize before they bind** (`BUG-03`, D145). An
+  unauthorized caller now gets `403` where it previously got `428 write-precondition-required`
+  or a `400` bind error — responses that disclosed the view exists, is writable, and declares
+  a concurrency token. The authorizer is still consulted once per (view, facet) per request.
+- **A declared concurrency token must be backed by the EF model** (`BUG-04`, D146). A view
+  whose `WithConcurrencyToken(...)` member is not configured `IsRowVersion()` /
+  `IsConcurrencyToken()` now **fails startup** with a message naming the view and property.
+  Without the model configuration EF emitted no `UPDATE ... WHERE token = @original`
+  predicate, so Vista's read-then-compare was non-atomic and two concurrent writes could
+  both succeed (a lost update). The executor also pins the entry's original token value so
+  the check happens in the database.
+- **The success `ETag` is the post-write token; a delete emits none** (`BUG-05`, D146). The
+  update response previously echoed the request's own `If-Match`, which for a store-generated
+  `rowversion` was stale on arrival and guaranteed the client's next update a 409. The token
+  now travels through the new request-scoped `IWriteTokenSink` (Core), so no `IViewExecutor`
+  port change was needed. A delete no longer emits an `ETag` for a row that no longer exists.
+- **DataTables honours the flags it binds** (`DEAD-05`, D144). A column marked
+  `searchable:false` no longer receives a `Contains` leaf, `orderable:false` is no longer
+  sorted, and `search[regex]=true` is rejected as a bind error instead of being executed as
+  a literal `Contains`. A negative `start` is a bind error too, matching the AG Grid range
+  check.
+
+### Security
+- **Row-level security no longer drops silently on a central-template (Style A) view**
+  (`SEC-01`, Decision Log D141). A request whose authorizer pushed row filters into the
+  scope is now **refused** by the combined-delegate execution plan instead of being served
+  unscoped, closing a cross-tenant leak. `IViewScope` gained `RowFilterCount` so a
+  type-erased plan can detect a populated scope without knowing `TSource`.
+- **The OpenAPI document endpoint is authorized by default** (`SEC-02`, D142).
+  `MapVistaOpenApi()` attaches `RequireAuthorization()` unless the host opted into
+  anonymous access via `AllowAnonymousAccess()` (D94) or set the new
+  `VistaOpenApiOptions.RequireAuthorization = false`. An endpoint carrying no
+  authorization metadata is anonymous even behind `UseAuthentication`/`UseAuthorization`,
+  and the document publishes every view's route, operation set, writability, and schemas.
+- **Hidden fields are no longer published in the emitted document** (`SEC-03`). The row
+  schema is filtered against the view's field flags, so a `Hidden()` field is absent from
+  `components.schemas` exactly as it is from `GET {route}/metadata`; a maskable field stays
+  described but is annotated as substitutable.
+- **`.Key(nameof(Row.Id))` is guarded like `.Key("Id")`** (`SEC-05`). The write-DSL
+  analyzer resolves key names as compile-time constants through the semantic model, so
+  `nameof(...)`, `const` fields, and constant concatenation all raise `VISTA0032` when a
+  mapping targets a key. Previously only a string literal matched, and the safer spelling
+  let the generated mapper mass-assign the primary key.
+- **Path-traversal containment in the TypeScript client generator** (`SEC-06`). A view name
+  derived from the (external) OpenAPI document must match `[A-Za-z_][A-Za-z0-9_]*` and is
+  otherwise a typed `GenerationError`; independently, the write stage refuses any path that
+  resolves outside `--out`. This also removes an unhandled exception on a document with no
+  usable `operationId`.
+- **CSV export defuses formula injection** (`BUG-11`). A cell starting with `=`, `+`, `-`,
+  `@`, tab or CR is prefixed with an apostrophe so spreadsheets render it as text. The XLSX
+  writer additionally strips XML-illegal control characters (well-formed surrogate pairs are
+  preserved), which previously made Excel reject the whole workbook.
+- **Write bind errors are leak-free** (`BUG-06`). A malformed write body no longer echoes the
+  `System.Text.Json` message (which embeds internal CLR type names and the model's member
+  path); the client gets Vista-authored text plus the stable machine-readable code, and the
+  cause is retained as `InnerException` for server-side logging.
+
+### Fixed
+- A typed filter value on a `Guid`/`DateTimeOffset`/`DateOnly`/`TimeOnly` field now returns
+  the documented **400** instead of a 500 (`BUG-01`).
+- A writable view that declares its key with the view-level `Key(...)` override (the
+  documented path for join/union views) no longer fails at startup (`BUG-09`).
+- Two row types sharing a simple name in different namespaces now get **distinct** OpenAPI
+  component schemas instead of the second silently documenting the first one's shape
+  (`BUG-08`).
+- A negated empty DataTables QueryBuilder group (`{"not":true,"rules":[]}`) keeps its
+  negation instead of dropping the filter and returning every row (`BUG-12`).
+- On net10, the OpenAPI transformer maps `additionalProperties` again, so the same
+  application emits the same document on every target framework (`BUG-13`).
+- `HardLimits.AbsoluteMaxExportRows` is now enforced: `MaxExportRows` clamps on every
+  construction path, including `with` (`DEAD-04`).
+
+### Changed
+- Export responses stream the already-materialized buffer instead of copying it once more,
+  halving peak memory per concurrent export (`PERF-01`, partial — true streaming to the
+  response body remains).
+
 ## [0.0.1-beta.2] - 2026-07-15
 
 First public pre-release. The Foundation (`v0.x`) surface is working end to end on

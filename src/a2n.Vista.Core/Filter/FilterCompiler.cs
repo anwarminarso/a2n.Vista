@@ -543,7 +543,12 @@ public class FilterCompiler
 
             if (underlying == typeof(Guid))
             {
-                return value is string guidText ? Guid.Parse(guidText) : value;
+                // A non-string value must still be converted here: returning it unchanged would escape
+                // this guarded block and surface later as an unmapped ArgumentException → HTTP 500
+                // instead of the documented 400 (Expression.Constant type mismatch).
+                return value is string guidText
+                    ? Guid.Parse(guidText)
+                    : Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
             }
 
             if (underlying == typeof(DateTime))
@@ -557,21 +562,21 @@ public class FilterCompiler
             {
                 return value is string dto
                     ? DateTimeOffset.Parse(dto, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind)
-                    : value;
+                    : Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
             }
 
             if (underlying == typeof(DateOnly))
             {
                 return value is string d
                     ? DateOnly.Parse(d, CultureInfo.InvariantCulture)
-                    : value;
+                    : Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
             }
 
             if (underlying == typeof(TimeOnly))
             {
                 return value is string t
                     ? TimeOnly.Parse(t, CultureInfo.InvariantCulture)
-                    : value;
+                    : Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);
             }
 
             return Convert.ChangeType(value, underlying, CultureInfo.InvariantCulture);

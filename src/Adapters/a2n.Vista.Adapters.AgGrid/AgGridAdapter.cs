@@ -102,11 +102,13 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
 
         var fields = BuildFieldLookup(view);
 
-        // Block paging (D135): PageSize = EndRow - StartRow; Page = StartRow / PageSize (zero-based floor).
-        // A non-positive PageSize is passed through UNCHANGED — no clamp, default, or substitution — so the
+        // Block paging (D135, revised by D144): PageSize = EndRow - StartRow, and StartRow is carried
+        // verbatim as the absolute Offset instead of being divided into a page index — a block boundary is
+        // not required to be page-aligned, and the engine's page-size clamp must not shift the window. A
+        // non-positive PageSize is passed through UNCHANGED — no clamp, default, or substitution — so the
         // engine rejects it (R3.1, R3.2).
         var pageSize = request.EndRow - request.StartRow;
-        var page = pageSize > 0 ? request.StartRow / pageSize : 0;
+        var offset = request.StartRow;
 
         // Sort (R3.3–R3.5): map each sortModel entry whose colId is a view field to SortSpec, preserving the
         // array order; skip non-field colIds; any non-"desc" Sort → ascending.
@@ -122,11 +124,12 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
         return new ViewQueryRequest(
             Filter: filter,
             Sort: sort,
-            Page: page,
+            Page: 0,
             PageSize: pageSize,
             SelectFields: null,
             Search: search,
-            Scope: null);
+            Scope: null,
+            Offset: offset);
     }
 
     /// <inheritdoc />

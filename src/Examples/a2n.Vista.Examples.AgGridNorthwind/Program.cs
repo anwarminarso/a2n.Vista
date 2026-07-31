@@ -104,9 +104,10 @@ app.MapGet(
     (a2n.Vista.Ports.IViewRegistry registry) =>
         Results.Json(a2n.Vista.Examples.AgGridNorthwind.Showcase.ShowcaseCatalog.Project(registry)));
 
-// The opt-in OpenAPI Serve_Endpoint (default GET /openapi/v1.json). It sits inside the host's normal
-// middleware pipeline (it bypasses no authentication/authorization) and returns the once-built, cached
-// OpenAPI document as application/json.
+// The opt-in OpenAPI Serve_Endpoint (default GET /openapi/v1.json). It returns the once-built, cached
+// document as application/json. The endpoint is authorized by default; because this showcase opted into the
+// reviewed open posture with AllowAnonymousAccess() (D94), that requirement is skipped and the document is
+// public here exactly as the views are. An app with an authorizer serves it to authorized callers only.
 app.MapVistaOpenApi();
 
 // Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises

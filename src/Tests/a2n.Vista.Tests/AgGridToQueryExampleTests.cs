@@ -148,28 +148,32 @@ public sealed class AgGridToQueryExampleTests
         await Assert.That(query.Page).IsEqualTo(0);
     }
 
-    /// <summary>R3.1: an aligned block maps to a page index via zero-based integer division.</summary>
+    /// <summary>R3.1/D144: an aligned block carries its start as the absolute offset.</summary>
     [Test]
-    public async Task Paging_AlignedBlock_PageIndex()
+    public async Task Paging_AlignedBlock_CarriesAbsoluteOffset()
     {
         var request = new AgGridRowsRequest { StartRow = 20, EndRow = 40 };
 
         var query = Adapter.ToQuery(request, BuildView());
 
         await Assert.That(query.PageSize).IsEqualTo(20);
-        await Assert.That(query.Page).IsEqualTo(1);
+        await Assert.That(query.Offset).IsEqualTo(20);
     }
 
-    /// <summary>R3.1: a non-aligned block floors the page index (<c>10 / 30 == 0</c>).</summary>
+    /// <summary>
+    /// D144: an <b>unaligned</b> block keeps its exact start. Under the previous page-index derivation
+    /// <c>10 / 30</c> floored to page 0, so the engine skipped 0 rows and the block silently began 10 rows
+    /// early.
+    /// </summary>
     [Test]
-    public async Task Paging_NonAlignedBlock_FloorsPageIndex()
+    public async Task Paging_NonAlignedBlock_KeepsExactOffset()
     {
         var request = new AgGridRowsRequest { StartRow = 10, EndRow = 40 };
 
         var query = Adapter.ToQuery(request, BuildView());
 
         await Assert.That(query.PageSize).IsEqualTo(30);
-        await Assert.That(query.Page).IsEqualTo(0);
+        await Assert.That(query.Offset).IsEqualTo(10);
     }
 
     /// <summary>R3.2: a degenerate block (<c>EndRow == StartRow</c>) passes <c>PageSize = 0</c> through unchanged.</summary>

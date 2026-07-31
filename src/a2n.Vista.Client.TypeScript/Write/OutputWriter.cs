@@ -112,6 +112,17 @@ public sealed class OutputWriter
             return Fail(new GenerationError.OutputPathNotWritable(target));
         }
 
+        // Containment (defence in depth against a hostile document): every relative path must resolve inside
+        // the output root. Checked before staging so a traversing path can neither create a directory nor
+        // write a file outside --out, even if an earlier stage's name validation is bypassed.
+        foreach (GeneratedFile file in files)
+        {
+            if (!IsContained(target, file.RelativePath))
+            {
+                return Fail(new GenerationError.OutputPathEscapesRoot(file.RelativePath));
+            }
+        }
+
         string staging = ComputeStagingPath(target);
         try
         {
@@ -177,6 +188,47 @@ public sealed class OutputWriter
         string native = relativePath.Replace('/', Path.DirectorySeparatorChar);
         return Path.Combine(root, native);
     }
+
+    // True when `relativePath` resolves to a file strictly inside `root`. A rooted path, a `..` segment, or
+    // any path string the platform rejects is not contained.
+    private static bool IsContained(string root, string relativePath)
+    {
+        if (string.IsNullOrEmpty(relativePath))
+        {
+            return false;
+        }
+
+        string native = relativePath.Replace('/', Path.DirectorySeparatorChar);
+        if (Path.IsPathRooted(native))
+        {
+            return false;
+        }
+
+        try
+        {
+            string rootFull = Path.GetFullPath(root);
+            string candidate = Path.GetFullPath(Path.Combine(rootFull, native));
+
+            string prefix = rootFull.EndsWith(Path.DirectorySeparatorChar)
+                ? rootFull
+                : rootFull + Path.DirectorySeparatorChar;
+
+            return candidate.Length > prefix.Length
+                && candidate.StartsWith(prefix, PathComparison);
+        }
+        catch (Exception ex) when (ex is ArgumentException
+            or NotSupportedException
+            or PathTooLongException
+            or System.Security.SecurityException)
+        {
+            return false;
+        }
+    }
+
+    // Windows and macOS path comparison is case-insensitive; Linux is case-sensitive. Using the platform's
+    // convention keeps the containment check from being trivially bypassed by case on Windows.
+    private static StringComparison PathComparison =>
+        OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase;
 
     private void TryRemoveStaging(string staging)
     {

@@ -128,6 +128,50 @@ namespace App
 }
 ";
 
+    // ---- VISTA0032 (declared key via nameof): audit SEC-05 ----------------------------------------
+
+    // The SAME view, keyed with the string overload spelled as nameof(Row.Id) instead of a literal. The key
+    // recognizer used to match only a LiteralExpressionSyntax, so nameof(...) — an invocation — recorded no
+    // key at all, VISTA0032 never fired, and the generated mapper mass-assigned the primary key. The safer,
+    // refactor-friendly spelling must be guarded exactly like ".Key(\"Id\")".
+    private const string KeyTargetViaNameofView = SharedTypes + @"
+namespace App
+{
+    public partial class KeyTargetViaNameofView : a2n.Vista.Authoring.View<Row, WriteCrud>
+    {
+        public void Configure(a2n.Vista.Authoring.IViewBuilder<Row, WriteCrud> builder)
+        {
+            builder.Key(nameof(Row.Id));
+            builder
+                .CrudOn<Source>()
+                .MapWritable(c => c.Id, e => e.Id)
+                .MapWritable(c => c.Name, e => e.Name);
+        }
+    }
+}
+";
+
+    // The same shape keyed with a const string, the other compile-time constant spelling the semantic
+    // constant lookup now covers uniformly.
+    private const string KeyTargetViaConstView = SharedTypes + @"
+namespace App
+{
+    public partial class KeyTargetViaConstView : a2n.Vista.Authoring.View<Row, WriteCrud>
+    {
+        private const string IdField = ""Id"";
+
+        public void Configure(a2n.Vista.Authoring.IViewBuilder<Row, WriteCrud> builder)
+        {
+            builder.Key(IdField);
+            builder
+                .CrudOn<Source>()
+                .MapWritable(c => c.Id, e => e.Id)
+                .MapWritable(c => c.Name, e => e.Name);
+        }
+    }
+}
+";
+
     // ---- VISTA0032 (concurrency token): MapWritable target is the concurrency token ----------------
 
     // RowVersion is the concurrency token (WithConcurrencyToken(e => e.RowVersion)) and a mapping targets
@@ -208,6 +252,8 @@ namespace App
 
     [Test]
     [Arguments("KeyTargetView", "Id")]
+    [Arguments("KeyTargetViaNameofView", "Id")]
+    [Arguments("KeyTargetViaConstView", "Id")]
     [Arguments("TokenTargetView", "RowVersion")]
     public async Task Key_Or_Token_Target_Reports_Vista0032_Error_And_Emits_No_Mapper(
         string shape,
@@ -216,6 +262,8 @@ namespace App
         var source = shape switch
         {
             "KeyTargetView" => KeyTargetView,
+            "KeyTargetViaNameofView" => KeyTargetViaNameofView,
+            "KeyTargetViaConstView" => KeyTargetViaConstView,
             _ => TokenTargetView,
         };
 

@@ -395,6 +395,10 @@ public sealed class RejectedWriteStatePreservationPropertyTests
         }
 
         public DbSet<RejectSource> Sources => Set<RejectSource>();
+
+        // A declared Vista token must also be a model concurrency token (D146).
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            modelBuilder.Entity<RejectSource>().Property(e => e.Version).IsConcurrencyToken();
     }
 
     /// <summary>A tokenless writable view: exercises the missing/invalid-key 400 branches.</summary>

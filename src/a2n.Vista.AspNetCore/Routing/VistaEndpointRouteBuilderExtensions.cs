@@ -299,12 +299,18 @@ public static class VistaEndpointRouteBuilderExtensions
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleAdapterAsync(HttpContext http, ViewMetadata view, IViewAdapter adapter)
     {
+        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+
+        // Authorize before reading the body and binding (D145): otherwise an unauthorized caller could
+        // distinguish an existing view from a nonexistent one through a 400 adapter-bind-failed response,
+        // and could force a full body read plus adapter parsing.
+        await executor.AuthorizeFacetAsync(http, view.Name, ViewFacet.List).ConfigureAwait(false);
+
         var raw = await AdapterRequestFactory.CreateAsync(http, view.Name).ConfigureAwait(false);
 
         var request = adapter.BindRequest(raw);
         var query = adapter.ToQuery(request, view);
 
-        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
         var result = await executor.ListForAdapterAsync(http, view.Name, query).ConfigureAwait(false);
 
         var response = adapter.ToResponse(result, request, view);
@@ -347,8 +353,11 @@ public static class VistaEndpointRouteBuilderExtensions
         await writer.WriteAsync(buffer, resolvedView, rows, http.RequestAborted).ConfigureAwait(false);
         buffer.Position = 0;
 
-        return Results.File(
-            buffer.ToArray(),
+        // Stream the buffer instead of ToArray(): the payload is already fully materialized once, and
+        // copying it again doubled peak memory (two large-object-heap buffers per concurrent export) for no
+        // behavioural gain. Content type, download name, and body bytes are unchanged.
+        return Results.Stream(
+            buffer,
             contentType: writer.ContentType,
             fileDownloadName: $"{resolvedView.Name}.{writer.FileExtension}");
     }
@@ -386,9 +395,11 @@ public static class VistaEndpointRouteBuilderExtensions
             return await JsonSerializer.DeserializeAsync<T>(
                 http.Request.Body, VistaJson.Options, http.RequestAborted).ConfigureAwait(false);
         }
-        catch (JsonException ex)
+        catch (JsonException)
         {
-            throw new VistaInvalidRequestException($"The request body is not valid JSON: {ex.Message}");
+            // Fixed text: the parser message carries line/byte positions and, for conversion failures, the
+            // target CLR type and member path — none of which belongs in a client-facing 400.
+            throw new VistaInvalidRequestException("The request body is not valid JSON.");
         }
     }
 
@@ -425,6 +436,12 @@ public static class VistaEndpointRouteBuilderExtensions
 
         try
         {
+            // Authorize FIRST (D145). Everything below is observable to the caller — a bind error (400), the
+            // 428 precondition gate, even the cost of parsing the body — so an unauthorized caller must get
+            // 403 before any of it runs. The decision is memoized per request, so the facet call below does
+            // not consult the authorizer again.
+            await executor.AuthorizeFacetAsync(http, view.Name, facet).ConfigureAwait(false);
+
             var body = await VistaWriteBinding.ReadBodyAsync(http).ConfigureAwait(false);
 
             return facet switch
@@ -484,7 +501,7 @@ public static class VistaEndpointRouteBuilderExtensions
             .UpdateAsync(http, view.Name, key, model, ifMatch)
             .ConfigureAwait(false);
 
-        return updated ? WriteOk(http, hasToken, ifMatch) : Results.NotFound();
+        return updated ? UpdateOk(http, hasToken, ifMatch) : Results.NotFound();
     }
 
     /// <summary>
@@ -508,7 +525,7 @@ public static class VistaEndpointRouteBuilderExtensions
             .DeleteAsync(http, view.Name, key, ifMatch)
             .ConfigureAwait(false);
 
-        return deleted ? WriteOk(http, hasToken, ifMatch) : Results.NotFound();
+        return deleted ? DeleteOk() : Results.NotFound();
     }
 
     /// <summary>
@@ -531,25 +548,39 @@ public static class VistaEndpointRouteBuilderExtensions
     }
 
     /// <summary>
-    /// Produces the <c>200</c> success result for an update/delete, round-tripping the concurrency token
-    /// into the <c>ETag</c> response header when the view declares one (Requirement R6.4).
+    /// Produces the <c>200</c> success result for an <b>update</b>, emitting the <b>post-write</b>
+    /// concurrency token as the <c>ETag</c> response header when the view declares one (Requirement R6.4,
+    /// Decision Log D146).
     /// </summary>
     /// <remarks>
-    /// The Core <see cref="IViewExecutor"/> update/delete facet reports success as a <see cref="bool"/>,
-    /// so the token echoed here is the client-supplied <c>If-Match</c> value (guaranteed non-null for a
-    /// token view by <see cref="ResolvePrecondition"/>). A post-write token that differs from the
-    /// precondition would require the port to surface it; that is a later refinement and does not change
-    /// this endpoint's wiring.
+    /// The token comes from the request-scoped <see cref="IWriteTokenSink"/> the execution layer published it
+    /// into, not from the request's own <c>If-Match</c>. Echoing the request value made a store-generated
+    /// <c>rowversion</c> ETag stale the instant it was sent, so the client's next update was guaranteed to
+    /// 409. The <c>If-Match</c> value remains the fallback for a view whose token is client-assigned and
+    /// therefore unchanged by the write (and for an executor that publishes nothing).
     /// </remarks>
-    private static IResult WriteOk(HttpContext http, bool hasToken, string? token)
+    private static IResult UpdateOk(HttpContext http, bool hasToken, string? ifMatch)
     {
-        if (hasToken && token is not null)
+        if (!hasToken)
+        {
+            return Results.Ok();
+        }
+
+        var postWrite = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
+        var token = postWrite ?? ifMatch;
+        if (token is not null)
         {
             http.Response.Headers.ETag = token;
         }
 
         return Results.Ok();
     }
+
+    /// <summary>
+    /// Produces the <c>200</c> success result for a <b>delete</b>. No <c>ETag</c> is emitted: the row no
+    /// longer exists, so any entity-tag for it is meaningless (Decision Log D146).
+    /// </summary>
+    private static IResult DeleteOk() => Results.Ok();
 
     /// <summary>
     /// Returns <see langword="true"/> when the view declares an optimistic-concurrency token, consulting

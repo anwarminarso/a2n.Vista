@@ -59,7 +59,11 @@ public static class QueryBuilderParser
                 }
             }
 
-            if (children.Count == 0)
+            // An empty group must NOT collapse to "no filter": the compiler treats an empty AND/OR group as
+            // vacuously true, so a negated empty group ({"not":true,"rules":[]}) means "no rows". Returning
+            // null here inverted that into "every row", handing back the entire unfiltered set. Only an
+            // un-negated empty group is a genuine no-op.
+            if (children.Count == 0 && !node.Not)
             {
                 return null;
             }

@@ -310,6 +310,15 @@ internal class ViewBuilder<TQuery> : IViewBuilder<TQuery>
                 {
                     field = field with { IsSearchable = false };
                 }
+
+                // D143 (extends D95 to the sort channel): ORDER BY on a masked field plus paging leaks the
+                // relative ordering of the hidden values — the same probing vector D95 closes for filter and
+                // search, and for a numeric/date column close to a binary search over them. An explicit
+                // Sortable(...) opt-in is the author's reviewed choice and still wins.
+                if (state is null || !state.SortableExplicitlySet)
+                {
+                    field = field with { IsSortable = false };
+                }
             }
 
             fields.Add(field);

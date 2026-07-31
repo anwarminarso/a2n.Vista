@@ -77,6 +77,36 @@ public abstract record GenerationError
         public override string Message =>
             $"Failed to write output file '{Path}': {Detail}";
     }
+
+    /// <summary>
+    /// A view name derived from the document is not a safe identifier, so no file name or TypeScript symbol
+    /// can be derived from it.
+    /// </summary>
+    /// <remarks>
+    /// The document is external input (the generator accepts one over HTTPS), and the view name flows into
+    /// the emitted <c>views/{name}.ts</c> path. A name carrying a path separator or <c>..</c> would escape the
+    /// output directory, so an unsafe name aborts the run as a typed error before anything is emitted.
+    /// </remarks>
+    /// <param name="ViewName">The rejected view name, verbatim.</param>
+    /// <param name="Detail">Why the name is unsafe.</param>
+    public sealed record UnsafeViewName(string ViewName, string Detail) : GenerationError
+    {
+        /// <inheritdoc />
+        public override string Message =>
+            $"Derived view name '{ViewName}' is not usable: {Detail}";
+    }
+
+    /// <summary>
+    /// A generated output path resolved outside the configured output directory, so the write stage refused it
+    /// (path-traversal containment).
+    /// </summary>
+    /// <param name="Path">The offending output-relative path.</param>
+    public sealed record OutputPathEscapesRoot(string Path) : GenerationError
+    {
+        /// <inheritdoc />
+        public override string Message =>
+            $"Generated path '{Path}' resolves outside the output directory and was refused.";
+    }
 }
 
 /// <summary>

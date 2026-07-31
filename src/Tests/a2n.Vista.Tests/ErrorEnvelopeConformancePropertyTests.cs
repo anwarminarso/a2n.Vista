@@ -369,6 +369,10 @@ public sealed class ErrorEnvelopeConformancePropertyTests
         public DbSet<PlainSource> Plains => Set<PlainSource>();
 
         public DbSet<TokenSource> Tokens => Set<TokenSource>();
+
+        // A declared Vista token must also be a model concurrency token (D146).
+        protected override void OnModelCreating(ModelBuilder modelBuilder) =>
+            modelBuilder.Entity<TokenSource>().Property(e => e.RowVersion).IsConcurrencyToken();
     }
 
     /// <summary>A single-source writable Style B view with an explicit key and one whitelisted scalar; no token.</summary>

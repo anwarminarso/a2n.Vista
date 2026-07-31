@@ -234,7 +234,7 @@ public class EfViewExecutor : IViewExecutor
     {
         // Clamp/reject paging up front so an invalid "return all" request fails before any DB round-trip (R10.3).
         var pageSize = ResolvePageSize(request.PageSize, view.Limits);
-        var pageIndex = request.Page < 0 ? 0 : request.Page;
+        var (skip, pageIndex) = ResolveWindow(request, pageSize);
 
         // Task 9.2 seam: scope (server-trusted, pre-projection over TSource) is already AND-ed into this query.
         var scoped = ResolveScopedQueryable<TRow>(view, scope);
@@ -255,9 +255,6 @@ public class EfViewExecutor : IViewExecutor
 
         var ordered = ApplySort(filtered, request.Sort, view);
 
-        // Compute the skip as long to avoid the int overflow DynData suffered on large page indexes (§10.1).
-        var skipLong = (long)pageIndex * pageSize;
-        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
         var pageQuery = ordered.Skip(skip).Take(pageSize);
 
         var items = await MaterializeAsync(pageQuery, cancellationToken).ConfigureAwait(false);
@@ -389,7 +386,7 @@ public class EfViewExecutor : IViewExecutor
     {
         // Clamp/reject paging up front so an invalid "return all" request fails before any DB round-trip (R10.3).
         var pageSize = ResolvePageSize(request.PageSize, view.Limits);
-        var pageIndex = request.Page < 0 ? 0 : request.Page;
+        var (skip, pageIndex) = ResolveWindow(request, pageSize);
 
         var scoped = ResolveCompiledScopedQueryable<TRow>(plan, view, scope);
 
@@ -417,8 +414,6 @@ public class EfViewExecutor : IViewExecutor
 
         var ordered = ApplySortStepsCompiled(filtered, sortSteps, plan);
 
-        var skipLong = (long)pageIndex * pageSize;
-        var skip = skipLong > int.MaxValue ? int.MaxValue : (int)skipLong;
         var pageQuery = ordered.Skip(skip).Take(pageSize);
 
         var items = await MaterializeAsync(pageQuery, cancellationToken).ConfigureAwait(false);
@@ -972,6 +967,14 @@ public class EfViewExecutor : IViewExecutor
         var facet = RequireWriteFacet(services, view);
         EnforceConcurrencyToken<TEntity>(facet, entity, concurrencyToken);
 
+        // The application-level check above is a read-then-compare and therefore NOT atomic on its own.
+        // Pinning the entry's original token value makes the database do the real check: EF emits
+        // UPDATE ... WHERE <token> = @original, so a row changed by a concurrent writer between our load and
+        // our save matches zero rows and surfaces as DbUpdateConcurrencyException → 409 (D146). The startup
+        // validator guarantees the member really is a model concurrency token, which is what makes EF include
+        // it in the predicate.
+        PinOriginalConcurrencyToken<TEntity>(view, facet, entity);
+
         // Apply the whitelisted mapper — the only channel client values reach the entity. Key/token targets
         // are skipped by the mapper, so the row identity stays the loaded entity's key, never the body
         // (R2.5, R5.2). Resolve the mapper once (generated preferred, reflection fallback — R13.1, R13.2).
@@ -982,6 +985,11 @@ public class EfViewExecutor : IViewExecutor
         // persistence failure (constraint or concurrency violation) is translated to a typed, leak-free
         // Vista write exception; the implicit transaction leaves the row unchanged (R6.5, R9.4, R11.3).
         await SaveWriteChangesAsync(RequireDbContext(view, nameof(UpdateAsync)), cancellationToken).ConfigureAwait(false);
+
+        // Publish the token the row carries AFTER the write (D146). A store-generated rowversion is refreshed
+        // by EF during SaveChanges, so this is the value the client must send on its next update; echoing the
+        // request's own If-Match instead guaranteed that next update a 409.
+        PublishPostWriteToken<TEntity>(services, facet, entity);
         return true;
     }
 
@@ -1404,6 +1412,69 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <summary>
+    /// Pins the tracked entry's <b>original</b> concurrency-token value so EF includes it in the generated
+    /// <c>UPDATE ... WHERE</c> predicate, turning the application-level pre-check into a database-level
+    /// atomic check (Decision Log D146). A no-op for a tokenless view, when no context is available, or when
+    /// the entity is not tracked by this context.
+    /// </summary>
+    /// <typeparam name="TEntity">The EF entity type the view writes to.</typeparam>
+    /// <param name="view">The view being written, for diagnostics.</param>
+    /// <param name="facet">The captured write facet whose token selector names the member.</param>
+    /// <param name="entity">The tracked entity about to be saved.</param>
+    /// <remarks>
+    /// The original value is re-asserted rather than assumed: an entity already tracked earlier in the same
+    /// request can carry originals that no longer match what the precondition was validated against. Assigning
+    /// the current value keeps EF's predicate aligned with the token this request actually verified.
+    /// </remarks>
+    [RequiresUnreferencedCode("Resolving the token member from the captured selector inspects the expression at runtime; use the source generator path for AOT.")]
+    private void PinOriginalConcurrencyToken<TEntity>(ViewMetadata view, CrudFacetDefinition facet, TEntity entity)
+        where TEntity : class
+    {
+        if (facet.ConcurrencyToken is not { } selector || _dbContext is null)
+        {
+            return;
+        }
+
+        var memberName = Hosting.VistaConcurrencyTokenStartupValidator.TryGetMemberName(selector);
+        if (memberName is null)
+        {
+            return;
+        }
+
+        var entry = _dbContext.Entry(entity);
+        var property = entry.Metadata.FindProperty(memberName);
+        if (property is null || !property.IsConcurrencyToken)
+        {
+            // Not a model concurrency token: the startup validator (D146) already fails such a view closed,
+            // so reaching here means a host bypassed startup validation (for example a test-constructed
+            // executor). Pinning would have no effect on the emitted SQL, so there is nothing to do.
+            return;
+        }
+
+        entry.Property(memberName).OriginalValue = entry.Property(memberName).CurrentValue;
+    }
+
+    /// <summary>
+    /// Publishes the post-write concurrency token into the request-scoped <see cref="IWriteTokenSink"/> so the
+    /// HTTP layer can echo it as the success <c>ETag</c> (Decision Log D146). A no-op for a tokenless view or
+    /// when no sink is registered.
+    /// </summary>
+    [RequiresUnreferencedCode("Reading the concurrency token compiles the captured selector at runtime; use the source generator path for AOT.")]
+    private static void PublishPostWriteToken<TEntity>(
+        IServiceProvider services,
+        CrudFacetDefinition facet,
+        TEntity entity)
+        where TEntity : class
+    {
+        if (facet.ConcurrencyToken is null)
+        {
+            return;
+        }
+
+        services.GetService<IWriteTokenSink>()?.SetPostWriteToken(ReadConcurrencyToken(facet, entity));
+    }
+
+    /// <summary>
     /// Reads and formats the current concurrency-token value of <paramref name="entity"/> as a wire
     /// string, or <see langword="null"/> when the view declares no token. Used both by the pre-check
     /// (<see cref="EnforceConcurrencyToken{TEntity}"/>) and by the write bodies to round-trip the token
@@ -1588,6 +1659,46 @@ public class EfViewExecutor : IViewExecutor
         }
 
         return Math.Min(requested, limits.MaxPageSize);
+    }
+
+    /// <summary>
+    /// Resolves the row window to fetch: the absolute number of rows to skip and the page index reported
+    /// back on <see cref="PagedResult{TRow}"/> (Decision Log D144).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// When <see cref="ViewQueryRequest.Offset"/> is set it is authoritative: the window starts exactly
+    /// there, independent of <paramref name="pageSize"/>. This is what keeps the page-size clamp a pure
+    /// size concern — an offset-based grid (DataTables <c>start</c>, AG Grid <c>startRow</c>) asking for
+    /// more rows than <see cref="HardLimits.MaxPageSize"/> now receives <em>fewer rows from the right
+    /// position</em> instead of a different, silently shifted window.
+    /// </para>
+    /// <para>
+    /// With no offset the legacy page model applies: skip = page × page size. The skip is computed in
+    /// <see cref="long"/> arithmetic and saturated, avoiding the <see cref="int"/> overflow DynData
+    /// suffered on large page indexes (§10.1). A negative page or offset is normalized to the first row.
+    /// </para>
+    /// </remarks>
+    /// <param name="request">The neutral query request.</param>
+    /// <param name="pageSize">The already-resolved (clamped) page size.</param>
+    /// <returns>The number of rows to skip and the page index to echo.</returns>
+    protected static (int Skip, int PageIndex) ResolveWindow(ViewQueryRequest request, int pageSize)
+    {
+        ArgumentNullException.ThrowIfNull(request);
+
+        if (request.Offset is { } offset)
+        {
+            var skip = offset < 0 ? 0 : offset;
+
+            // The echoed page index is the window's position in page units; it is informational only (the
+            // offset already located the window) and floors for an unaligned offset.
+            var pageIndex = pageSize <= 0 ? 0 : skip / pageSize;
+            return (skip, pageIndex);
+        }
+
+        var index = request.Page < 0 ? 0 : request.Page;
+        var skipLong = (long)index * pageSize;
+        return (skipLong > int.MaxValue ? int.MaxValue : (int)skipLong, index);
     }
 
     /// <summary>

@@ -38,6 +38,7 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     private bool _isScopable;
     private bool _filterableSet;
     private bool _searchableSet;
+    private bool _sortableSet;
     private FilterOperator _allowedOperators = DefaultOperatorsFor(typeof(TProp));
 
     /// <inheritdoc />
@@ -48,6 +49,9 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
 
     /// <inheritdoc />
     public bool SearchableExplicitlySet => _searchableSet;
+
+    /// <inheritdoc />
+    public bool SortableExplicitlySet => _sortableSet;
 
     /// <inheritdoc />
     public string? FormatString => _format;
@@ -94,6 +98,7 @@ public sealed class FieldBuilder<TProp> : IFieldBuilder<TProp>, IFieldBuilderSta
     public IFieldBuilder<TProp> Sortable(bool allowed = true)
     {
         _isSortable = allowed;
+        _sortableSet = true;
         return this;
     }
 

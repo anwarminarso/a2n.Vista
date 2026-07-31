@@ -70,6 +70,8 @@ namespace a2n.Vista.Authoring
             System.Action<IFieldBuilder<TProp>> configure);
 
         IViewBuilder<TQuery> Key(params System.Linq.Expressions.Expression<System.Func<TQuery, object?>>[] fields);
+
+        IViewBuilder<TQuery> Key(params string[] fieldNames);
     }
 
     public interface ICrudBuilder<TQuery, TCrud, TEntity>

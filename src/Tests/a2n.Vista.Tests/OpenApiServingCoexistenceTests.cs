@@ -106,6 +106,11 @@ public sealed class OpenApiServingCoexistenceTests
                 o.DocumentVersion = "4.5.6";
                 o.EndpointPath = "/api/openapi.json";
                 o.Security = new a2n.Vista.OpenApi.VistaSecurityScheme("vistaAuth", "http", "bearer", "JWT");
+
+                // The subject here is the emitted document, not the endpoint's posture: this host configures
+                // no authorization middleware, so the secure-by-default RequireAuthorization() is opted out
+                // of explicitly. The default itself is covered by the two Document_Endpoint_* cases below.
+                o.RequireAuthorization = false;
             },
             anonymous: false);
 
@@ -168,6 +173,49 @@ public sealed class OpenApiServingCoexistenceTests
         using var response = await app.Client.SendAsync(request);
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
         await Assert.That(response.Content.Headers.ContentType!.MediaType).IsEqualTo("application/json");
+    }
+
+    // ---- Secure by default: the mapped document endpoint requires authorization unless opted out -----
+
+    [Test]
+    public async Task Document_Endpoint_Requires_Authorization_By_Default()
+    {
+        // The host wires authentication/authorization but attaches NO convention of its own: the default
+        // must still refuse an unauthenticated caller. Before the default existed, an endpoint with no
+        // authorization metadata served the document (route set, writability, and DTO schemas) anonymously.
+        await using var app = await TestApp.StartAsync(anonymous: false, withAuthPipeline: true);
+
+        using var anonymousRequest = await app.Client.GetAsync("/openapi/v1.json");
+        await Assert.That(anonymousRequest.StatusCode).IsEqualTo(HttpStatusCode.Unauthorized);
+
+        using var authenticated = new HttpRequestMessage(HttpMethod.Get, "/openapi/v1.json");
+        authenticated.Headers.Add(TestAuthHandler.UserHeader, "alice");
+        using var allowed = await app.Client.SendAsync(authenticated);
+        await Assert.That(allowed.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task Document_Endpoint_Is_Anonymous_When_Explicitly_Opted_Out()
+    {
+        await using var app = await TestApp.StartAsync(
+            configureOpenApi: o => o.RequireAuthorization = false,
+            anonymous: false,
+            withAuthPipeline: true);
+
+        // The reviewable opt-out publishes the document without a credential while the views stay authorized.
+        using var response = await app.Client.GetAsync("/openapi/v1.json");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+    }
+
+    [Test]
+    public async Task Document_Endpoint_Stays_Open_Under_The_D94_Anonymous_Opt_In()
+    {
+        // AllowAnonymousAccess() is the reviewed open posture: the views are public, there may be no
+        // authentication scheme at all, so the document endpoint must not demand one.
+        await using var app = await TestApp.StartAsync(anonymous: true);
+
+        using var response = await app.Client.GetAsync("/openapi/v1.json");
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
     }
 
     // ---- R10.1 / R10.3: coexistence — existing endpoints unchanged with the emitter registered ----
@@ -288,8 +336,13 @@ public sealed class OpenApiServingCoexistenceTests
             Action<a2n.Vista.OpenApi.VistaOpenApiOptions>? configureOpenApi = null,
             bool registerOpenApi = true,
             bool anonymous = true,
-            bool protectOpenApi = false)
+            bool protectOpenApi = false,
+            bool withAuthPipeline = false)
         {
+            // `protectOpenApi` attaches .RequireAuthorization() explicitly (the pre-existing R11.3 cases);
+            // `withAuthPipeline` only wires authentication/authorization so the secure-by-default posture can
+            // be observed without any host-attached convention.
+            var authPipeline = protectOpenApi || withAuthPipeline;
             var connection = new SqliteConnection("DataSource=:memory:");
             connection.Open();
 
@@ -323,7 +376,7 @@ public sealed class OpenApiServingCoexistenceTests
                                 services.AddVistaEndpoints();
                             }
 
-                            if (protectOpenApi)
+                            if (authPipeline)
                             {
                                 services
                                     .AddAuthentication(TestAuthHandler.SchemeName)
@@ -342,7 +395,7 @@ public sealed class OpenApiServingCoexistenceTests
                             app.UseVistaExceptionHandling();
                             app.UseRouting();
 
-                            if (protectOpenApi)
+                            if (authPipeline)
                             {
                                 app.UseAuthentication();
                                 app.UseAuthorization();

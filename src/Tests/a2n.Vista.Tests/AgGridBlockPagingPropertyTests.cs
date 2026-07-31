@@ -15,13 +15,14 @@ namespace a2n.Vista.Tests;
 /// <para>
 /// AG Grid's server-side row model requests a half-open block <c>[startRow, endRow)</c>. The adapter's
 /// <see cref="AgGridAdapter.ToQuery"/> must translate that block into the neutral
-/// <see cref="ViewQueryRequest"/> paging pair deterministically (D135):
+/// <see cref="ViewQueryRequest"/> window deterministically (D135, revised by D144):
 /// </para>
 /// <list type="bullet">
 ///   <item><description><c>PageSize = endRow - startRow</c> — always, verbatim (R3.1, R3.2);</description></item>
-///   <item><description>when that size is <b>positive</b>, <c>Page = startRow / PageSize</c> using
-///   zero-based integer (floor) division (R3.1);</description></item>
-///   <item><description>when that size is <b>non-positive</b> (<c>endRow &lt;= startRow</c>), the adapter
+///   <item><description><c>Offset = startRow</c> — the absolute row offset, carried verbatim rather than
+///   divided into a page index, so neither an unaligned block nor the engine's page-size clamp can move the
+///   window (D144);</description></item>
+///   <item><description>when the size is <b>non-positive</b> (<c>endRow &lt;= startRow</c>), the adapter
 ///   passes the non-positive <c>PageSize</c> through <b>unchanged</b> — no clamping, defaulting, or
 ///   substitution — so the engine rejects it (R3.2).</description></item>
 /// </list>
@@ -80,18 +81,16 @@ public sealed class AgGridBlockPagingPropertyTests
                 $"expected PageSize={expectedPageSize}, got {query.PageSize}.");
         }
 
-        if (expectedPageSize > 0)
+        // The block start is carried verbatim as the absolute offset in EVERY branch (D144); no division,
+        // so an unaligned block keeps its exact position and the engine's page-size clamp cannot shift it.
+        if (query.Offset != range.Start)
         {
-            // Positive block: Page = startRow / PageSize (zero-based floor division) (R3.1).
-            var expectedPage = range.Start / expectedPageSize;
-            if (query.Page != expectedPage)
-            {
-                throw new Exception(
-                    $"Page not floor-divided: startRow={range.Start}, endRow={range.End}, " +
-                    $"PageSize={expectedPageSize}, expected Page={expectedPage}, got {query.Page}.");
-            }
+            throw new Exception(
+                $"Offset not carried verbatim: startRow={range.Start}, endRow={range.End}, " +
+                $"expected Offset={range.Start}, got {query.Offset?.ToString() ?? "null"}.");
         }
-        else
+
+        if (expectedPageSize <= 0)
         {
             // Non-positive block: the non-positive PageSize is passed through so the engine rejects it. The
             // adapter must not clamp or default the size (already asserted above); Page carries no meaning.

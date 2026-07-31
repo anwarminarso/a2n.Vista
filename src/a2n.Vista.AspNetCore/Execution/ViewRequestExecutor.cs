@@ -78,6 +78,10 @@ public sealed class ViewRequestExecutor
         typeof(IViewExecutor).GetMethod(nameof(IViewExecutor.UpdateAsync))
         ?? throw new InvalidOperationException($"{nameof(IViewExecutor)}.{nameof(IViewExecutor.UpdateAsync)} was not found.");
 
+    // Prefix for the per-request authorization memo in HttpContext.Items (D145). Namespaced so it cannot
+    // collide with host-owned item keys.
+    private const string AuthMemoKeyPrefix = "a2n.Vista.authorized:";
+
     private readonly IViewRegistry _registry;
 
     /// <summary>
@@ -450,6 +454,43 @@ public sealed class ViewRequestExecutor
             $"View '{view.Name}' has no CrudType; the write facet is only valid for a writable view.");
 
     /// <summary>
+    /// The authorization gate on its own, without building the scope or resolving the executor: resolves
+    /// the view (404 when absent) and consults <see cref="IViewAuthorizer"/> for <paramref name="facet"/>
+    /// (403 on deny or on a faulty authorizer).
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Exposed so the endpoint mapper can authorize <b>before</b> it does observable work (Decision Log
+    /// D145). Without it, a write request was bound, its key read, and the <c>428</c> precondition gate
+    /// applied before authorization ran, so an unauthorized caller received <c>428</c> or a <c>400</c> bind
+    /// error instead of <c>403</c> — disclosing that the view exists, that it is writable, and that it
+    /// declares a concurrency token, and letting an unauthenticated client force JSON parsing work.
+    /// </para>
+    /// <para>
+    /// The decision is memoized per request in <see cref="HttpContext.Items"/>, so the later
+    /// facet call does not consult the authorizer a second time: an authorizer still sees exactly one
+    /// <c>IsAllowedAsync</c> call per (view, facet) per request.
+    /// </para>
+    /// </remarks>
+    /// <param name="http">The current request.</param>
+    /// <param name="viewName">The view being addressed.</param>
+    /// <param name="facet">The facet being authorized.</param>
+    /// <returns>The resolved view metadata.</returns>
+    /// <exception cref="VistaViewNotFoundException">No view is registered under <paramref name="viewName"/>.</exception>
+    /// <exception cref="VistaForbiddenException">The authorizer denied the facet (or failed to decide).</exception>
+    public async ValueTask<ViewMetadata> AuthorizeFacetAsync(
+        HttpContext http,
+        string viewName,
+        ViewFacet facet)
+    {
+        ArgumentNullException.ThrowIfNull(http);
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+
+        var (view, _) = await GateAsync(http, viewName, facet).ConfigureAwait(false);
+        return view;
+    }
+
+    /// <summary>
     /// Runs the shared one-door pipeline: resolve metadata, gate via the authorizer, and build the
     /// server-trusted scope. Returns the pieces the facet methods need to invoke the executor.
     /// </summary>
@@ -460,46 +501,73 @@ public sealed class ViewRequestExecutor
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
 
+        var (view, context) = await GateAsync(http, viewName, facet).ConfigureAwait(false);
+
+        var services = http.RequestServices;
+
+        // AspNetCore owns the per-request scope (see ViewScope remarks); it is then handed to the executor.
+        IViewScope scope = new ViewScope();
+        services.GetService<IViewAuthorizer>()?.ShapeQuery(context, scope);
+
+        var executor = services.GetRequiredService<IViewExecutor>();
+        return (view, scope, executor);
+    }
+
+    /// <summary>
+    /// Resolves the view and applies the authorizer gate for <paramref name="facet"/>, memoizing an
+    /// allow decision for the duration of the request so a pre-gate followed by the facet call consults
+    /// the authorizer once. Returns the view plus the <see cref="ViewAuthContext"/> that
+    /// <c>ShapeQuery</c> must share with the decision (R7.4).
+    /// </summary>
+    private async ValueTask<(ViewMetadata View, ViewAuthContext Context)> GateAsync(
+        HttpContext http,
+        string viewName,
+        ViewFacet facet)
+    {
         var view = _registry.Get(viewName) ?? throw new VistaViewNotFoundException(viewName);
 
         var services = http.RequestServices;
         var authorizer = services.GetService<IViewAuthorizer>();
         var context = new ViewAuthContext(http.User, viewName, facet, http, services);
 
-        // The authorizer call and ShapeQuery share one context instance (R7.4). When no authorizer is
-        // registered, access defaults to allow and the scope stays empty (R7.2). Awaiting the ValueTask
-        // keeps the synchronous-decision common case allocation-free.
-        if (authorizer is not null)
+        // When no authorizer is registered, access defaults to allow and the scope stays empty (R7.2).
+        if (authorizer is null)
         {
-            bool allowed;
-            try
-            {
-                allowed = await authorizer.IsAllowedAsync(context).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                // A cancelled request is not an authorization failure; let it propagate unchanged.
-                throw;
-            }
-            catch (Exception)
-            {
-                // R7.3: an authorizer that fails to reach a decision (throws or errors) is treated as a
-                // deny and mapped to 403 — fail-closed, so a faulty authorizer can never expose a facet.
-                throw new VistaForbiddenException(viewName, facet);
-            }
-
-            if (!allowed)
-            {
-                throw new VistaForbiddenException(viewName, facet);
-            }
+            return (view, context);
         }
 
-        // AspNetCore owns the per-request scope (see ViewScope remarks); it is then handed to the executor.
-        IViewScope scope = new ViewScope();
-        authorizer?.ShapeQuery(context, scope);
+        var memoKey = AuthMemoKeyPrefix + viewName + ":" + facet;
+        if (http.Items.ContainsKey(memoKey))
+        {
+            // Already allowed earlier in this request (a deny threw, so a memo entry means "allowed").
+            return (view, context);
+        }
 
-        var executor = services.GetRequiredService<IViewExecutor>();
-        return (view, scope, executor);
+        bool allowed;
+        try
+        {
+            // Awaiting the ValueTask keeps the synchronous-decision common case allocation-free.
+            allowed = await authorizer.IsAllowedAsync(context).ConfigureAwait(false);
+        }
+        catch (OperationCanceledException)
+        {
+            // A cancelled request is not an authorization failure; let it propagate unchanged.
+            throw;
+        }
+        catch (Exception)
+        {
+            // R7.3: an authorizer that fails to reach a decision (throws or errors) is treated as a
+            // deny and mapped to 403 — fail-closed, so a faulty authorizer can never expose a facet.
+            throw new VistaForbiddenException(viewName, facet);
+        }
+
+        if (!allowed)
+        {
+            throw new VistaForbiddenException(viewName, facet);
+        }
+
+        http.Items[memoKey] = true;
+        return (view, context);
     }
 
     /// <summary>

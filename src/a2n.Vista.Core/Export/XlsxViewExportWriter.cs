@@ -141,9 +141,85 @@ public sealed class XlsxViewExportWriter : IViewExportWriter
     private static void AppendInlineString(StringBuilder sb, string cellRef, string text)
     {
         sb.Append("<c r=\"").Append(cellRef).Append("\" t=\"inlineStr\"><is><t xml:space=\"preserve\">")
-            .Append(SecurityElement.Escape(text))
+            .Append(SecurityElement.Escape(StripXmlIllegalCharacters(text)))
             .Append("</t></is></c>");
     }
+
+    /// <summary>
+    /// Removes characters that are not legal in XML 1.0 content. <see cref="SecurityElement.Escape"/> handles
+    /// <c>&lt; &gt; &amp; ' "</c> but passes control characters through, and a single one of them makes the
+    /// worksheet part malformed XML — at which point Excel rejects the entire workbook rather than one cell.
+    /// </summary>
+    /// <remarks>
+    /// Illegal in XML 1.0: U+0000–U+0008, U+000B, U+000C, U+000E–U+001F, U+FFFE and U+FFFF. Tab (U+0009),
+    /// LF (U+000A) and CR (U+000D) are legal and preserved. A well-formed surrogate <b>pair</b> is preserved
+    /// (astral characters such as emoji stay intact); a lone surrogate is dropped, since it cannot be encoded.
+    /// </remarks>
+    private static string StripXmlIllegalCharacters(string text)
+    {
+        if (!NeedsStripping(text))
+        {
+            return text;
+        }
+
+        var builder = new StringBuilder(text.Length);
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (char.IsHighSurrogate(c))
+            {
+                if (i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    builder.Append(c).Append(text[i + 1]);
+                    i++;
+                }
+
+                continue; // a lone high surrogate is dropped
+            }
+
+            if (char.IsLowSurrogate(c))
+            {
+                continue; // a lone low surrogate is dropped
+            }
+
+            if (IsLegalXmlChar(c))
+            {
+                builder.Append(c);
+            }
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool NeedsStripping(string text)
+    {
+        for (var i = 0; i < text.Length; i++)
+        {
+            var c = text[i];
+
+            if (char.IsHighSurrogate(c))
+            {
+                if (i + 1 < text.Length && char.IsLowSurrogate(text[i + 1]))
+                {
+                    i++;
+                    continue;
+                }
+
+                return true; // lone surrogate
+            }
+
+            if (char.IsLowSurrogate(c) || !IsLegalXmlChar(c))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool IsLegalXmlChar(char c) =>
+        c is '\t' or '\n' or '\r' || (c >= ' ' && c <= '\uFFFD');
 
     private static bool IsNumeric(object value) =>
         value is byte or sbyte or short or ushort or int or uint or long or ulong or float or double or decimal;

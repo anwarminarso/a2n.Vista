@@ -112,6 +112,17 @@ public static class VistaServiceCollectionExtensions
         services.TryAddEnumerable(
             ServiceDescriptor.Singleton<IHostedService, VistaModelKeyDerivationService>());
 
+        // Startup concurrency guard (Decision Log D146): a view that declares WithConcurrencyToken(...) must
+        // select a property the EF model treats as a concurrency token, otherwise the database emits no
+        // atomic UPDATE ... WHERE predicate and the Vista-level pre-check alone allows a lost update.
+        services.TryAddEnumerable(
+            ServiceDescriptor.Singleton<IHostedService, VistaConcurrencyTokenStartupValidator>());
+
+        // Per-request sink for the post-write concurrency token (Decision Log D146): the executor publishes
+        // the token it read back after a successful update; the AspNetCore mapper echoes it as the ETag
+        // instead of round-tripping the client's stale If-Match value.
+        services.TryAddScoped<IWriteTokenSink, WriteTokenSink>();
+
         configure?.Invoke(new VistaBuilder(registry, planRegistry, contextAccessor, writeFacetRegistry));
 
         return services;

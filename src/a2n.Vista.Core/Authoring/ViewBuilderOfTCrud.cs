@@ -71,11 +71,16 @@ internal sealed class ViewBuilder<TQuery, TCrud> : ViewBuilder<TQuery>, IViewBui
         // Retained: a writable view requires a resolvable primary key so a write can locate the target
         // row. This is a write-executability requirement (R4.4), not a mass-assignment guard, and it
         // depends on runtime key resolution (including D105 auto-derivation), so it stays at startup.
-        if (!hasPrimaryKey)
+        //
+        // Gate on the RESOLVED key fields, not on hasPrimaryKey alone: keyFields already subsumes the
+        // .PrimaryKey() case (ResolveKeyFields derives from it) and additionally honors the view-level
+        // Key(...) override, which is the documented key declaration for join/union views (D104/D105).
+        // Gating on hasPrimaryKey alone rejected a writable view keyed with Key(x => x.Id) at startup.
+        if (keyFields.Count == 0 && !hasPrimaryKey)
         {
             throw new InvalidOperationException(
                 $"View '{viewName}' has a write facet and therefore requires a primary key; mark one " +
-                "projected field with .PrimaryKey() (R4.4).");
+                "projected field with .PrimaryKey(), or declare the view key with Key(...) (R4.4).");
         }
     }
 }

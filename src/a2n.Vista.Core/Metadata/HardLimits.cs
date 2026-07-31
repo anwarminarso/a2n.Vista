@@ -14,8 +14,27 @@ namespace a2n.Vista.Metadata;
 /// </param>
 public sealed record HardLimits(int MaxPageSize, int MaxExportRows)
 {
+    private readonly int _maxExportRows =
+        MaxExportRows > AbsoluteMaxExportRows ? AbsoluteMaxExportRows : MaxExportRows;
+
     /// <summary>Default maximum page size applied when a view does not override it.</summary>
     public const int DefaultMaxPageSize = 100;
+
+    /// <summary>
+    /// Maximum number of rows an export may produce, clamped to <see cref="AbsoluteMaxExportRows"/> so no
+    /// per-view configuration (and no <c>with</c> expression) can exceed the absolute cap (§11.2).
+    /// </summary>
+    /// <remarks>
+    /// The cap is enforced here rather than in each authoring overload so every construction path — the two
+    /// builders, <c>with</c> mutation, and direct construction — is bounded by the same single check. Without
+    /// it a view could set <c>MaxExportRows(int.MaxValue)</c>, which the buffering export path turns into a
+    /// memory-exhaustion lever.
+    /// </remarks>
+    public int MaxExportRows
+    {
+        get => _maxExportRows;
+        init => _maxExportRows = value > AbsoluteMaxExportRows ? AbsoluteMaxExportRows : value;
+    }
 
     /// <summary>Default maximum export row count applied when a view does not override it (§11.2).</summary>
     public const int DefaultMaxExportRows = 100_000;

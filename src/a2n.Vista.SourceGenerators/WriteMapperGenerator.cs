@@ -531,7 +531,7 @@ namespace a2n.Vista.SourceGenerators
                                 // .Key(x => x.A, ...) — simple member selectors on TQuery, or
                                 // .Key("A", ...) — string literal field names. Non-static forms are skipped.
                                 var member = TryGetSimpleMemberName(argument.Expression)
-                                             ?? TryGetStringLiteral(argument.Expression);
+                                             ?? TryGetConstantString(argument.Expression, model, ct);
                                 if (member is not null)
                                 {
                                     keyItems.Add((argument.Span.Start, member));
@@ -679,15 +679,32 @@ namespace a2n.Vista.SourceGenerators
         }
 
         /// <summary>
-        /// Returns the string value of a literal (or <c>nameof(...)</c>) argument used by the
-        /// <c>.Key(params string[])</c> overload, or <c>null</c> when the argument is not a compile-time
-        /// string constant.
+        /// Returns the compile-time string value of an argument used by the <c>.Key(params string[])</c>
+        /// overload, or <c>null</c> when the argument is not a compile-time string constant.
         /// </summary>
-        private static string TryGetStringLiteral(ExpressionSyntax expression)
-            => Unwrap(expression) is LiteralExpressionSyntax literal
-               && literal.IsKind(SyntaxKind.StringLiteralExpression)
-                ? literal.Token.ValueText
-                : null;
+        /// <remarks>
+        /// The value is resolved through the semantic model rather than by matching a
+        /// <see cref="LiteralExpressionSyntax"/>, so every constant spelling is recognized uniformly:
+        /// a string literal, <c>nameof(Row.Id)</c> (an invocation, not a literal), a <c>const</c> field,
+        /// and constant concatenation. Matching syntax only would silently miss <c>nameof(...)</c>, leave
+        /// the key unrecorded, and let the generated mapper mass-assign the primary key because
+        /// VISTA0032 (write target is a key or concurrency token) never fires.
+        /// </remarks>
+        private static string TryGetConstantString(
+            ExpressionSyntax expression,
+            SemanticModel model,
+            CancellationToken ct)
+        {
+            if (expression is null)
+            {
+                return null;
+            }
+
+            ct.ThrowIfCancellationRequested();
+
+            var constant = model.GetConstantValue(Unwrap(expression), ct);
+            return constant.HasValue && constant.Value is string text && text.Length != 0 ? text : null;
+        }
 
         /// <summary>
         /// True when the <c>Field(selector, configure)</c> configure argument marks the field as the

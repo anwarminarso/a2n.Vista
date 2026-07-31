@@ -79,9 +79,14 @@ public sealed class CsvViewExportWriter : IViewExportWriter
             _ => value.ToString() ?? string.Empty,
         };
 
-    /// <summary>RFC 4180: quote a field containing a comma, quote, CR or LF; double internal quotes.</summary>
+    /// <summary>
+    /// RFC 4180: quote a field containing a comma, quote, CR or LF; double internal quotes. A value that a
+    /// spreadsheet would evaluate as a formula is neutralized first (see <see cref="Neutralize"/>).
+    /// </summary>
     private static string Escape(string value)
     {
+        value = Neutralize(value);
+
         var mustQuote = value.IndexOfAny(QuoteTriggers) >= 0;
         if (!mustQuote)
         {
@@ -89,6 +94,28 @@ public sealed class CsvViewExportWriter : IViewExportWriter
         }
 
         return "\"" + value.Replace("\"", "\"\"") + "\"";
+    }
+
+    /// <summary>
+    /// Defuses CSV formula injection: a value whose first character is one a spreadsheet treats as the start
+    /// of a formula is prefixed with a single quote, so Excel/Sheets/LibreOffice render it as literal text
+    /// instead of evaluating it.
+    /// </summary>
+    /// <remarks>
+    /// Views export arbitrary user-entered column data, so an unescaped leading <c>=</c>, <c>+</c>, <c>-</c>,
+    /// <c>@</c>, tab or CR is a stored-payload vector (an exported cell that executes on open). The leading
+    /// apostrophe is the standard mitigation and is invisible in the spreadsheet UI; it does not affect RFC
+    /// 4180 conformance, since the prefixed value is quoted by the normal rules when it needs to be.
+    /// </remarks>
+    private static string Neutralize(string value)
+    {
+        if (value.Length == 0)
+        {
+            return value;
+        }
+
+        var first = value[0];
+        return first is '=' or '+' or '-' or '@' or '\t' or '\r' ? "'" + value : value;
     }
 
     private static readonly char[] QuoteTriggers = [',', '"', '\r', '\n'];
