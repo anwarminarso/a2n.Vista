@@ -9,7 +9,32 @@
     <RepositoryUrl>https://github.com/anwarminarso/a2n.Vista</RepositoryUrl>
     <PackageProjectUrl>https://github.com/anwarminarso/a2n.Vista</PackageProjectUrl>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <Version>0.0.1-beta.2</Version>
+    <Version>0.0.1</Version>
+    <!--
+      License metadata. The project is LGPL-3.0-or-later (see LICENSE, COPYING, NOTICES.md, and
+      the README). Until this was set, `dotnet pack` emitted packages with NO <license> element at
+      all and did so SILENTLY — no warning — so nuget.org would have shown no license and a
+      consumer's compliance scanner would have found nothing to read. That matters more than usual
+      for a copyleft license: a consumer cannot honour terms that the package never declares.
+      An SPDX expression is used rather than PackageLicenseFile so the license is machine-readable.
+    -->
+    <PackageLicenseExpression>LGPL-3.0-or-later</PackageLicenseExpression>
+    <!--
+      Symbols + SourceLink so consumers can step into the library. The .NET 8+ SDK includes
+      SourceLink for GitHub repositories, so no extra package reference is needed; these three
+      properties are what turn it on and ship a .snupkg alongside each .nupkg (`dotnet nuget push`
+      uploads the matching symbol package automatically).
+    -->
+    <PublishRepositoryUrl>true</PublishRepositoryUrl>
+    <EmbedUntrackedSources>true</EmbedUntrackedSources>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+    <!--
+      Deterministic, normalized paths in CI builds only: GitHub Actions sets CI=true, so a local
+      build keeps its absolute paths (which is what a local debugger wants) while a published
+      package is reproducible.
+    -->
+    <ContinuousIntegrationBuild Condition="'$(CI)' == 'true'">true</ContinuousIntegrationBuild>
     <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
     <!-- Brand icon shown on nuget.org. The a2n wordmark, downscaled to 1024x480
          (~328 KB) to stay under NuGet's 1 MB package-icon limit. -->

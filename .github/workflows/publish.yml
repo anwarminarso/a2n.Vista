@@ -46,8 +46,46 @@ env:
     src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
 
 jobs:
+  # Release gate. `ci.yml` runs the suites on push/pull_request to main, but a `release:
+  # published` event publishes whatever the tag points at — so without this job nothing in the
+  # release path verifies that the tagged commit's tests pass, and a NuGet version is immutable
+  # once pushed. The whole correctness discipline of this project rests on these suites (the
+  # generated-vs-reflection parity guards in particular), so the release path must not skip them.
+  # Mirrors ci.yml's matrix; a release is rare enough that running all three TFMs is cheap.
+  test:
+    name: Test (${{ matrix.tfm }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        tfm: [ net8.0, net9.0, net10.0 ]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # TUnit runs on Microsoft.Testing.Platform: each test project compiles to an executable and
+      # is launched via `dotnet run --framework <tfm>` (not `dotnet test`), matching the repo
+      # convention. A non-zero exit code fails the step and blocks the publish job.
+      - name: a2n.Vista.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.Tests -c Release --framework ${{ matrix.tfm }}
+
+      - name: a2n.Vista.SourceGenerators.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.SourceGenerators.Tests -c Release --framework ${{ matrix.tfm }}
+
+      - name: a2n.Vista.Client.TypeScript.Tests
+        run: dotnet run --project src/Tests/a2n.Vista.Client.TypeScript.Tests -c Release --framework ${{ matrix.tfm }}
+
   publish:
     name: Pack & push to nuget.org
+    needs: test
     runs-on: ubuntu-latest
     # The NUGET_USER secret lives in the "nuget" GitHub Environment, so the job must
     # be scoped to it to read the secret (and to benefit from any environment
@@ -100,6 +138,29 @@ jobs:
               -p:Version=${{ steps.ver.outputs.version }}
           done
           ls -l artifacts
+
+      # Fail loudly rather than pushing a package with no license declaration. The project is
+      # LGPL-3.0-or-later and `dotnet pack` omits license metadata SILENTLY when it is unset, so a
+      # regression here would otherwise reach nuget.org unnoticed — and a consumer cannot honour
+      # terms a package never declares.
+      - name: Verify package metadata (license + symbols)
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          for pkg in artifacts/*.nupkg; do
+            name="$(basename "$pkg")"
+            if ! unzip -p "$pkg" '*.nuspec' | grep -q '<license type="expression">LGPL-3.0-or-later</license>'; then
+              echo "::error::$name declares no LGPL-3.0-or-later license expression."
+              missing=1
+            fi
+            if [ ! -f "${pkg%.nupkg}.snupkg" ]; then
+              echo "::error::$name has no matching .snupkg symbol package."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "All packages carry a license expression and a symbol package."
+          exit "$missing"
 
       - name: NuGet login (OIDC -> short-lived API key)
         uses: NuGet/login@v1

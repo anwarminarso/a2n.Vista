@@ -6,6 +6,15 @@
     <PackageId>a2n.Vista.Adapters.MudBlazor</PackageId>
     <Description>Vista adapter for MudBlazor MudDataGrid server-side.</Description>
     <PackageTags>vista;a2n;adapter;mudblazor;blazor</PackageTags>
+    <!--
+      NOT SHIPPED in 0.0.1. The project is a reserved scaffold: its only source file is an empty
+      internal AssemblyMarker, so packing it would publish a package that a consumer installs and
+      finds nothing in. .github/workflows/publish.yml already excludes it from PACK_PROJECTS;
+      declaring it here too means a solution-wide dotnet pack cannot publish it by accident, and
+      the scope decision lives with the project rather than only in a CI allowlist.
+      Remove this line together with the first real implementation.
+    -->
+    <IsPackable>false</IsPackable>
   </PropertyGroup>
 
   <ItemGroup>

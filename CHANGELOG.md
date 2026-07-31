@@ -8,44 +8,125 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-Remediation of the 2026-07-31 full code audit (`docs/audit/2026-07-31-full-code-audit.md`),
-tranches 1 and 2: every finding whose fix is self-contained, plus the six that needed a
-design decision first (now Decision Log D141–D146). Each carries a regression test. The
-audit report holds the per-finding status table.
+Nothing yet.
 
-### Changed (behaviour)
-- **A masked field is no longer sortable by default** (`SEC-04`, D143). Ordering by a masked
-  column and paging through the result leaks the relative order of the hidden values — the
-  probing vector D95 already closes for filter and search. Add `Sortable()` on the field to
-  opt back in. The generated execution plan no longer emits a member accessor for a masked,
-  non-sortable field.
-- **Paging carries an absolute row offset** (`BUG-02`, D144). `ViewQueryRequest` gained an
-  optional `Offset`; when set it wins over `Page`. The DataTables and AG Grid adapters now
-  pass `start` / `startRow` verbatim instead of dividing by the client's page size. Before,
-  an unaligned offset snapped to a page boundary and the engine's page-size clamp shifted
-  the window — a grid asking for rows 200–399 with a 100-row cap silently received rows
-  100–199. Clamping is now a pure size concern: the window start never moves.
-- **Write and adapter endpoints authorize before they bind** (`BUG-03`, D145). An
-  unauthorized caller now gets `403` where it previously got `428 write-precondition-required`
-  or a `400` bind error — responses that disclosed the view exists, is writable, and declares
-  a concurrency token. The authorizer is still consulted once per (view, facet) per request.
-- **A declared concurrency token must be backed by the EF model** (`BUG-04`, D146). A view
-  whose `WithConcurrencyToken(...)` member is not configured `IsRowVersion()` /
-  `IsConcurrencyToken()` now **fails startup** with a message naming the view and property.
-  Without the model configuration EF emitted no `UPDATE ... WHERE token = @original`
-  predicate, so Vista's read-then-compare was non-atomic and two concurrent writes could
-  both succeed (a lost update). The executor also pins the entry's original token value so
-  the check happens in the database.
-- **The success `ETag` is the post-write token; a delete emits none** (`BUG-05`, D146). The
+## [0.0.1] - 2026-07-31
+
+Remediation of the 2026-07-31 full code audit (`docs/audit/2026-07-31-full-code-audit.md`)
+across six tranches, plus the packaging work needed to publish honestly. **Every security
+finding (`SEC-01`–`SEC-06`) and every correctness finding (`BUG-01`–`BUG-13`) is fixed**, each
+with a regression test; the report holds the per-finding status table and the still-open items.
+
+**Supported grid adapters in this release: DataTables.NET and AG Grid.** The MudBlazor, OData,
+GraphQL, PrimeNG, Syncfusion, TanStack Table and Telerik adapter projects — and
+`a2n.Vista.Newtonsoft` — are reserved scaffolds with no implementation and are **not published**.
+They are excluded both by the release workflow and by `IsPackable=false` in their own project
+files, so installing a Vista adapter package can never give you an empty assembly.
+
+Read the **breaking behaviour** section below before upgrading from `0.0.1-beta.2`: three
+defaults changed to close real defects, and one of them fails startup by design.
+
+### Breaking (behaviour, not API)
+- **A masked field is no longer sortable by default** (`SEC-04`, Decision Log D143). Ordering by
+  a masked column and paging through the result leaks the relative order of the hidden values —
+  for a numeric or date column that is close to a binary search over them. This is the probing
+  vector D95 already closes for filter and search. **Action:** add `Sortable()` on the field to
+  opt back in; that is now a reviewed choice rather than a silent default. The generated
+  execution plan no longer emits a member accessor for a masked, non-sortable field.
+- **A view whose declared concurrency token is not backed by the EF model now fails startup**
+  (`BUG-04`, D146). Without `IsRowVersion()` / `IsConcurrencyToken()` in the model, EF emitted no
+  `UPDATE ... WHERE token = @original` predicate, so Vista's read-then-compare was non-atomic and
+  two concurrent writes could both succeed — a lost update, silently. The startup validator names
+  the offending view and property. **Action:** configure the property as a concurrency token in
+  `OnModelCreating`. This surfaced five test fixtures with exactly that misconfiguration; both
+  shipped samples were already correct.
+- **Reads no longer return change-tracked entities** (`BUG-07`, D147). Every execution plan applies
+  `AsNoTracking()` to its source query. A DTO projection was never tracked, so most views are
+  unaffected; an *entity-bearing* projection (an identity projection, or a Style A view registered
+  as `(db, sp) => db.Set<Entity>()`) previously handed back rows attached to the request-scoped
+  `DbContext` the write path shares. Because the masking runtime writes the masked value into the
+  materialized row, a later `SaveChanges` on that context could **persist the mask over real
+  data**. **Action:** if you relied on a read endpoint returning tracked entities for a subsequent
+  save, re-fetch through the write path instead.
+- **The success `ETag` is the post-write token, and a delete emits none** (`BUG-05`, D146). The
   update response previously echoed the request's own `If-Match`, which for a store-generated
-  `rowversion` was stale on arrival and guaranteed the client's next update a 409. The token
-  now travels through the new request-scoped `IWriteTokenSink` (Core), so no `IViewExecutor`
-  port change was needed. A delete no longer emits an `ETag` for a row that no longer exists.
-- **DataTables honours the flags it binds** (`DEAD-05`, D144). A column marked
-  `searchable:false` no longer receives a `Contains` leaf, `orderable:false` is no longer
-  sorted, and `search[regex]=true` is rejected as a bind error instead of being executed as
-  a literal `Contains`. A negative `start` is a bind error too, matching the AG Grid range
-  check.
+  `rowversion` was stale on arrival and guaranteed the client's next update a 409. A delete no
+  longer emits an `ETag` for a row that no longer exists.
+- **Write and adapter endpoints authorize before they bind** (`BUG-03`, D145). An unauthorized
+  caller now receives `403` where it previously received `428 write-precondition-required` or a
+  `400` bind error — responses that disclosed the view exists, is writable, and declares a
+  concurrency token, and that let an unauthenticated client force JSON parsing work.
+- **Paging carries an absolute row offset** (`BUG-02`, D144). `ViewQueryRequest` gained an optional
+  `Offset`; when set it wins over `Page`. Both grid adapters now pass `start` / `startRow` verbatim
+  instead of dividing by the client's page size. Before, an unaligned offset snapped to a page
+  boundary and the engine's page-size clamp shifted the window — a grid asking for rows 200–399
+  with a 100-row cap silently received rows 100–199. Clamping is now purely a size concern: the
+  window start never moves.
+- **DataTables honours the flags it binds** (`DEAD-05`, D144). A column marked `searchable:false`
+  no longer receives a `Contains` leaf, `orderable:false` is no longer sorted, and
+  `search[regex]=true` is rejected as a bind error instead of being executed as a literal
+  `Contains`. A negative `start` is a bind error too, matching the AG Grid range check.
+
+### Added
+- **Display-format metadata** (`DEAD-02`, D149). `IFieldBuilder.Format("N2")` has been on the
+  authored surface since the beginning — and is the successor of DynData's `DataFormatString` —
+  but the captured value was read by nothing, so the call was **silent data loss**. It now reaches
+  `FieldMetadata.Format`, the `GET {route}/metadata` response, and the emitted OpenAPI schema.
+  The contract is deliberately narrow: **the server publishes the hint, the client applies it.**
+  Vista never interprets it, so filtering, sorting, and export keep operating on raw values — a
+  presentation hint cannot change what a query matches or what an export contains. The response
+  member is omitted when unset, so a view that sets no format has a byte-identical `/metadata`
+  payload.
+- **Packaging: license, symbols, and source stepping.** Every published package now declares
+  `LGPL-3.0-or-later` as an SPDX expression, ships a `.snupkg` symbol package, and enables
+  SourceLink (`PublishRepositoryUrl` + `EmbedUntrackedSources`), with `ContinuousIntegrationBuild`
+  on in CI for reproducible paths. Before this, packages carried **no license metadata at all** and
+  `dotnet pack` omitted it *silently* — a real problem for a copyleft project, since a consumer
+  cannot honour terms the package never declares. The release workflow now fails if any package
+  loses its license expression or its symbol package.
+
+### Changed
+- **`RegisterAssembly` registers on the same terms as `Register<TView>()`** (`DEAD-06`). It used to
+  register **metadata only**, so a scanned view became route-bearing and discoverable while staying
+  permanently non-executable — no generated execution plan adopted, no mask specs, no write facet —
+  and the executor threw "no generated execution plan" at request time. Both entry points now share
+  one registration body. It also had no test coverage at all; it now has a test driven by a
+  dedicated deterministic scan-target assembly.
+- **`ViewMetadata` equality is content-based with a stable hash** (`BUG-10`, D148). The synthesized
+  record equality compared every instance field, including a per-instance lock object, so two
+  identical snapshots were **never** equal and the hash code was an identity hash unstable across
+  runs; `Fields` was also compared by list reference. Equality is now hand-written over the
+  declarative content with element-wise `Fields`, and the startup-completed `KeyFields` is excluded
+  from both so neither can change during an instance's lifetime.
+- **The reflection mask no longer refuses get-only rows** (`BUG-07`, D147). The fallback advertised
+  as the Style A path could not mask an **anonymous** row at all — the one row shape Style A is
+  built around — because it required a setter. It now rebuilds the row through a constructor
+  covering every readable property, leaving the original untouched.
+- Export responses stream the already-materialized buffer instead of copying it once more
+  (`PERF-01`, partial — true streaming to the response body remains).
+
+### Performance
+- **The XLSX worksheet streams instead of being buffered whole** (`PERF-03`). It used to be
+  accumulated into one `StringBuilder`, returned as a single string, then converted with
+  `Encoding.UTF8.GetBytes` — two large-object-heap buffers holding the entire document, the
+  intermediate one UTF-16 at roughly twice the byte size. At the default 100,000-row export cap
+  that was the dominant allocation of the request. Peak memory is now one row plus the archive's
+  compression buffer, whatever the row count. Byte output is unchanged.
+- **The export reflection fallback no longer looks up a member per cell** (`PERF-02`). For a
+  100,000-row × 10-column Style A export that was a million uncached `GetProperty` calls per
+  request; the resolved member is now memoized per row type and field name.
+- **View authoring runs `Configure` once per view** (`PERF-04`). Metadata, mask specs, the write
+  facet, and row filters each used to build their own builder and re-run `Configure` — four or more
+  full authoring passes — and the `ViewMetadata` published to the registry was a different instance
+  from the one `Name` read. All four now come from one cached authoring result.
+- **The filter field lookup is built once per view** (`PERF-05`). A single List request compiles up
+  to three filter channels and a grid adapter binds a fourth, each rebuilding an identical
+  dictionary over data that cannot change after registration. One shared, frozen lookup now serves
+  all of them.
+- **Metadata caching stopped paying for itself on every request** (`PERF-07`). With
+  `EnableMetadataCaching()` on, the endpoint re-projected, re-serialized, and re-hashed (SHA-256)
+  the whole payload per request — including on the `304` path. The payload and its `ETag` are now
+  computed once per view, so a `304` costs one string comparison.
 
 ### Security
 - **Row-level security no longer drops silently on a central-template (Style A) view**
@@ -96,11 +177,36 @@ audit report holds the per-finding status table.
   application emits the same document on every target framework (`BUG-13`).
 - `HardLimits.AbsoluteMaxExportRows` is now enforced: `MaxExportRows` clamps on every
   construction path, including `with` (`DEAD-04`).
+- Entity-bearing reads no longer let a mask reach the database (`BUG-07`, D147) — see
+  **Breaking** above; the persistence path is the reason this is listed as a defect and not
+  merely a performance change.
+- The generators write string literals through one shared writer (`DEAD-09`, partial). Two
+  accessor-map emitters had drifted — one escaped its keys, the other concatenated them raw.
+  Generated output is byte-identical (a CLR member name cannot contain a quote), so this closed a
+  latent inconsistency rather than a live defect; the wider cross-generator deduplication is
+  tracked, not done.
+- `dotnet pack` on the solution succeeds again. `a2n.Vista.SourceGenerators` is bundled into
+  `a2n.Vista.Core` under `analyzers/dotnet/cs` and sets `IncludeBuildOutput=false`, so packing it
+  as a project of its own failed with `NU5017` and took the whole solution's pack down. It is now
+  declared `IsPackable=false`, which states the intent rather than half-declaring a package that
+  cannot be built.
 
-### Changed
-- Export responses stream the already-materialized buffer instead of copying it once more,
-  halving peak memory per concurrent export (`PERF-01`, partial — true streaming to the
-  response body remains).
+### Known gaps (deliberate, tracked)
+Recorded here because `0.x` means "anything may change" — not "everything is finished".
+`docs/PROJECT-STATUS.md` §7.1 holds the detail and the reasoning.
+- **The OpenAPI emitter's adapter-documentation extension point is not implemented** (requirement
+  12.2 of the `openapi-emitter` spec). Adapter endpoints are correctly absent from the document
+  (requirement 12.1, tested), but the promised contribution point does not exist yet.
+- **Three public members exist without behaviour**, pending a scope decision plus a spec
+  reconciliation: `IViewRegistry.Register<TView>()` always throws (superseded in substance by the
+  D101/D103 route model), `CrudOn<TEntity>(projectionForRead)` discards its parameter, and the
+  TypeScript client's `--base-url` is parsed and ignored.
+- **Export still materializes every row before writing** (`PERF-01`), bounded by
+  `MaxExportRows` (default 100,000; absolute cap 1,000,000). The writers no longer buffer the
+  document, but a streamed row source remains future work.
+- **Every AG Grid block fetch pays a discarded unfiltered `COUNT`** (`PERF-08`); removing it needs a
+  `ViewQueryRequest` contract decision.
+- **Observability (D100) and wire versioning (D99)** are designed, not built.
 
 ## [0.0.1-beta.2] - 2026-07-15
 
