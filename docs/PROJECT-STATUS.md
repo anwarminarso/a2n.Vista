@@ -1,7 +1,19 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-07-31 (**audit remediation, tranche 6** — `PERF-03` the XLSX worksheet now streams into its
+> Last updated: 2026-08-09 (**issue #2 — the first externally reported defect, fixed as D150**). The AG Grid
+> adapter's sort channel matched every `sortModel[].colId` against the view projection and silently skipped
+> what it could not resolve, while a `filterModel` key with the *same* spelling mistake was rejected with
+> `400 filter-unknown-field`. Matching is ordinal and `rowData` is serialized camelCase while field names are
+> PascalCase, so one mis-cased name produced a precise error on one channel and a healthy-looking `200` with
+> an untouched row order on the other — a sort that looked applied and was not. `BuildSort` no longer consults
+> the field set at all: every entry is carried through verbatim and the **engine** rejects it, restoring
+> `04` §6 invariant 2 (D67) on the one channel that was violating it. The "skip a non-field UI column"
+> carve-out is now scoped to transports that *declare* their columns (DataTables does; an AG Grid `sortModel`
+> does not), and the adapter README documents the naming contract the issue asked for. Behaviour change: a
+> sort on a client-side-only column is now a `400`, not a no-op — see `CHANGELOG.md`. 549 tests/TFM (net8),
+> 0 failed. See §2.28.
+> Prior: 2026-07-31 (**audit remediation, tranche 6** — `PERF-03` the XLSX worksheet now streams into its
 > archive entry one row at a time (peak memory was ~2× the document in two LOH buffers; byte output unchanged),
 > `DEAD-09` the real accessor-map escaping drift is closed behind one shared literal writer (goldens unchanged;
 > its live impact was nil, since a member name cannot contain a quote), and **`PERF-06` is declined as
@@ -1427,6 +1439,60 @@ Reverted after cross-check, now **open scope calls** rather than cleanups:
   (net10)** in `a2n.Vista.Tests` (1 new), **114** generator tests with **unchanged goldens**, **143** in
   `a2n.Vista.Client.TypeScript.Tests` — 0 failed, 0 skipped. Both sample self-tests PASS.
 
+### 2.28 Issue #2 — AG Grid sort channel stopped swallowing an unknown `colId` (landed 2026-08-09; D150)
+
+The first externally reported defect. In `AgGridAdapter.BuildSort`, each `sortModel[].colId` was matched
+against `ViewFieldLookup.For(view)` and any entry that did not resolve was `continue`-d. The `filterModel`
+channel of the *same request* never did this — `AgGridFilterModelParser` builds every column entry and lets
+the engine decide — so one spelling mistake produced two different outcomes:
+
+| Channel | Unknown/mis-cased name | Result |
+|---|---|---|
+| `filterModel` key | `id` instead of `Id` | `400` `filter-unknown-field`, naming the field |
+| `sortModel[].colId` | `statusRank` instead of `StatusRank` | `200`, sort **silently dropped** — rows in the provider's incidental order |
+
+Field matching is ordinal by deliberate design (`ViewFieldLookup`), and `rowData` is serialized **camelCase**
+while field names are **PascalCase**, so mis-casing is the natural mistake and it lands in the "unknown"
+bucket. The reporter's case is the expensive shape of this: a projected `StatusRank` column added so
+"pending first" would survive paging returned `200` and changed nothing — a fix that looked healthy and did
+nothing, caught only by asserting the resulting rank sequence against a real database.
+
+- **D150 — the adapter builds, the engine rejects; the "skip a non-field UI column" exception applies only
+  where the transport declares the column.** `BuildSort` no longer consults the field set at all (it no longer
+  takes `fields`): every entry becomes a `SortSpec` with its `colId` verbatim and in position, and
+  `EfViewExecutor.ResolveSortableField` refuses an unknown field (`filter-unknown-field`) or a non-sortable one
+  (`filter-field-not-allowed`) before any SQL runs — the detail reads `Sort field 'name' does not exist in the
+  view projection.`, so the two channels stay distinguishable while the machine-readable `type`/`code`/`field`
+  are identical. This restores Spec 04 §6 invariant 2 (D67) on a channel that was violating it.
+  **Why no carve-out for UI columns:** DataTables sends a column table (`columns[i][data]`/`[orderable]`), so
+  an action column is self-describing and skipping it drops nothing the client asked for — that adapter keeps
+  its skip, and note it never matched a `data` name against the projection either, so a *typo* there already
+  400-ed. An AG Grid `sortModel` declares nothing; it is a list of keys the client asks the **server** to order
+  by. Matching them inside the adapter *is* enforcing the whitelist, and it made a typo indistinguishable from
+  a UI column. A genuinely non-field column belongs out of `sortModel` (`sortable: false` in its `colDef`).
+  An empty `colId` is not special-cased either — one rule, no exceptions.
+- **Behaviour change, flagged in `CHANGELOG.md`:** a grid that sorts by a client-side-only column now gets
+  `400` where it used to get `200` + no ordering. The ordinal whitelist is unchanged (the reporter explicitly
+  did not ask for it to be loosened), `filterModel` is unchanged, DataTables is unchanged, and no route,
+  envelope, or error vocabulary changed — an unknown sort field already had a code, the adapter was just
+  preventing the engine from ever seeing it. Rejected alternatives: returning an `ignoredSort` list or logging
+  a warning (leaves a wrong answer on the wire), and an opt-in `RejectUnknownSortFields` option (new API whose
+  default would keep shipping the bug).
+- **Also fixed, the issue's fourth ask (documentation):** the adapter README now states the naming contract in
+  one table — `rowData` is camelCase, `sortModel[].colId`/`filterModel` keys are the PascalCase **field name**,
+  matching is ordinal, and neither channel ignores a name it does not recognize — with the `colId`/`field`
+  colDef pattern and the `sortable: false` note. Previously that was discoverable only by reading
+  `ViewFieldLookup`, while the `rowData` payload actively suggested camelCase.
+- **Verified —** build green; **549 tests/TFM (net8)** in `a2n.Vista.Tests` (+3, 0 failed / 0 skipped), of
+  which the 70 `AgGrid*` tests all pass. New/updated coverage: the R3.4 example tests now assert
+  carry-through for an unknown, a **mis-cased**, and an empty `colId`; Property 3
+  (`AgGridSortModelMappingPropertyTests`) became a total 1:1 order-preserving mapping whose oracle no longer
+  consults the field set, with mis-cased names added to its non-field pool; and two end-to-end
+  `AgGridEndpointIntegrationTests` cases pin the fix at the HTTP boundary — one asserting the sort channel's
+  `400` carries the same `type`/`code`/`field` as the filter channel for the same misspelling (the issue's
+  exact repro), one asserting a correctly spelled sort still orders the block (its absence would have
+  fallen back to the `KeyFields` tiebreaker — precisely the healthy-looking wrong answer that was reported).
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1625,7 +1691,8 @@ These record where the code intentionally differs from the early spec sketches. 
 | D147 | audit remediation (`BUG-07`) | **Landed (2026-07-31).** Every Vista read is **no-tracking**: all three execution plans apply `AsNoTracking()` to the source query — a direct generic call in `SplitViewExecutionPlan` and in the generated compiled plan (AOT-clean; the `*_VistaExecutionPlan` goldens changed), reflective in the already-`[RequiresUnreferencedCode]` `ProjectedViewExecutionPlan` whose Style A delegate erases the element type (once per request, never per row). Rationale: the masking runtime writes the masked value into the materialized row, so an entity-bearing projection returning **tracked** rows let a later `SaveChanges` on the shared request-scoped `DbContext` persist the mask over real data. Covers List/Detail/Export and the count queries. The same decision makes the **reflection mask non-destructive**: a get-only row — an anonymous Style A projection, previously not maskable at all — is rebuilt through a constructor covering every readable property (full coverage keeps the rebuild lossless; an ambiguous case-insensitive parameter match is treated as no match). See §2.25. |
 | D148 | audit remediation (`BUG-10`) | **Landed (2026-07-31).** `ViewMetadata.Equals`/`GetHashCode` are hand-written over the declarative content (name, route, types, **element-wise** `Fields`, authorization, limits, read-only flag). The synthesized record equality compared every instance field including a per-instance lock object, so two identical snapshots were never equal and the hash was an identity hash unstable across runs; it also compared `Fields` by list reference, since `IReadOnlyList<T>` has no structural equality. The D105 startup-completed `KeyFields` is **excluded from both**, so neither changes during an instance's lifetime — the property that makes a type safe in a hash-based collection. Harmless: view names are globally unique (D101/D103) and `Name` is compared, so equal snapshots describe the same view and resolve the same key. See §2.25. |
 | D149 | audit remediation (`DEAD-02`) | **Landed (2026-07-31).** Display-format metadata: **the server publishes, the client applies.** `IFieldBuilder.Format(...)` (on the authored surface per `01-view.md` §5.2, and the successor of DynData's `DataFormatString`) now reaches `FieldMetadata.Format`, the `GET {route}/metadata` projection, and the emitted OpenAPI schema (optional). Vista never interprets the hint, so filter, sort, and export keep operating on raw values — presentation cannot change what a query matches or what an export contains. Previously the value was captured and read by nothing, making `.Format("N2")` silent data loss. Additive: the response member is omitted when unset, so a view that sets no hint has a byte-identical `/metadata` payload. The TypeScript client is untouched (it types wire DTOs, not metadata). See §2.26. |
-| **D150+** | **next free** | Use for new decisions. The 2026-07-31 audit remediation (D141–D149) was the last landed change. |
+| D150 | issue [#2](https://github.com/anwarminarso/a2n.Vista/issues/2) / `ag-grid-adapter` spec R3.4 + R4.6, `04` §6 | **Landed (2026-08-09).** The AG Grid sort channel does **not** drop an unknown `colId`. `AgGridAdapter.BuildSort` no longer consults `ViewFieldLookup` (it no longer takes `fields`): every `sortModel` entry becomes a `SortSpec` with its `colId` verbatim and in position, and the engine rejects an unknown (`filter-unknown-field`) or non-sortable (`filter-field-not-allowed`) field before any SQL runs — the same 400 the `filterModel` channel already produced for the identical spelling mistake. Rationale: matching inside the adapter *is* enforcing the whitelist (violating D67 / `04` §6 invariant 2), and it made a caller's typo indistinguishable from a non-field UI column, so a mis-cased name — the natural mistake, since `rowData` is camelCase and field names are PascalCase — returned `200` with an untouched row order. **Scopes the §6 invariant 5 carve-out:** a UI column is skipped only where the *request declares* it (DataTables `columns[i][data]`/`[orderable]`); an AG Grid `sortModel` declares nothing, so nothing is skipped — a non-field column opts out client-side via `sortable: false`. Supersedes the original R3.4 "skip non-field `colId`" rule and removes the R4.6 carve-out. Behaviour change (`CHANGELOG.md`): a sort on a non-projected column is now a 400 instead of a silent no-op. No route, envelope, or error-vocabulary change; ordinal matching, `filterModel`, and the DataTables adapter are all unchanged. See §2.28. |
+| **D151+** | **next free** | Use for new decisions. D150 (issue #2, AG Grid sort channel) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

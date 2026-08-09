@@ -8,7 +8,30 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-Nothing yet.
+### Fixed
+- **The AG Grid adapter no longer silently drops an unknown `sortModel[].colId`**
+  ([#2](https://github.com/anwarminarso/a2n.Vista/issues/2), Decision Log D150). The sort channel
+  matched each `colId` against the view projection and skipped what it could not resolve, while a
+  `filterModel` key with the *same* spelling mistake was rejected with `400`
+  `filter-unknown-field`. Since matching is ordinal, a merely mis-cased name counts as unknown —
+  and `rowData` is serialized camelCase while field names are PascalCase, so mis-casing is the
+  natural mistake to make. One misspelling therefore produced a precise error on one channel and a
+  healthy-looking `200` with an untouched row order on the other: a sort that looked applied and
+  was not. Every `sortModel` entry is now carried through verbatim and in position, and the engine
+  refuses an unknown or non-sortable field with the same `400` the filter channel already
+  produced — the adapter builds, the engine enforces (Spec 04 §6 invariant 2, D67).
+
+### Breaking (behaviour, not API)
+- **A sort on a column the server does not project is now an error, not a no-op** (D150, the fix
+  above). Sorting by a client-side-only column previously returned `200` with the rows in the
+  provider's incidental order; it now returns `400` naming the field. **Action:** give any column
+  with no server field behind it `sortable: false` in its `colDef` (an actions or selection column
+  should carry that already), and make sure `colId` is the view's field name — the PascalCase C#
+  property — not the camelCase key you read in `rowData`. `GET {route}/metadata` publishes the
+  names. The `filterModel` channel is unchanged; the ordinal whitelist is unchanged. The
+  DataTables adapter is unchanged: its request declares its own columns
+  (`columns[i][data]`/`[orderable]`), so it can still tell a UI column from a typo and only the
+  self-declared UI column is skipped.
 
 ## [0.0.1] - 2026-07-31
 

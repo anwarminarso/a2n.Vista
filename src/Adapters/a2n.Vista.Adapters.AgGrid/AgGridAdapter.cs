@@ -110,9 +110,9 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
         var pageSize = request.EndRow - request.StartRow;
         var offset = request.StartRow;
 
-        // Sort (R3.3–R3.5): map each sortModel entry whose colId is a view field to SortSpec, preserving the
-        // array order; skip non-field colIds; any non-"desc" Sort → ascending.
-        var sort = BuildSort(request, fields);
+        // Sort (R3.3–R3.5): map EVERY sortModel entry to a SortSpec, preserving the array order; the colId
+        // travels verbatim and the engine validates it; any non-"desc" Sort → ascending.
+        var sort = BuildSort(request);
 
         // Filter channel (R4.4, R4.8): the parsed AND-of-columns tree, or null when nothing maps.
         var filter = AgGridFilterModelParser.Parse(request.FilterModel, fields);
@@ -149,25 +149,40 @@ public sealed class AgGridAdapter : ViewAdapter<AgGridRowsRequest, AgGridRowsRes
     }
 
     /// <summary>
-    /// Maps the <c>sortModel</c> entries whose <c>colId</c> is a view field to <see cref="SortSpec"/>,
-    /// preserving the array order (multi-sort priority). Entries whose <c>colId</c> is not a view field are
-    /// skipped; any <c>sort</c> value other than <c>"desc"</c> yields ascending order (R3.3–R3.5).
+    /// Maps <b>every</b> <c>sortModel</c> entry to a <see cref="SortSpec"/>, carrying the <c>colId</c>
+    /// through verbatim and preserving the array order (multi-sort priority). Any <c>sort</c> value other
+    /// than <c>"desc"</c> yields ascending order (R3.3–R3.5).
     /// </summary>
-    private static List<SortSpec> BuildSort(
-        AgGridRowsRequest request,
-        IReadOnlyDictionary<string, FieldMetadata> fields)
+    /// <remarks>
+    /// <para>
+    /// <b>No entry is ever dropped (D150).</b> The adapter <em>builds</em>; the engine <em>rejects</em>
+    /// (Spec 04 §6 invariant 2, D67). An unknown or mis-cased <c>colId</c> therefore reaches the engine and
+    /// is refused with the same <c>400</c> <c>filter-unknown-field</c> the <c>filterModel</c> channel already
+    /// produces for the identical mistake — <c>colId</c> is matched against the view's field names
+    /// <b>ordinally</b> (<see cref="ViewFieldLookup"/>), so a merely differently cased spelling is unknown.
+    /// </para>
+    /// <para>
+    /// <b>Why the "skip non-field UI column" exception does not apply here.</b> That sanctioned exception
+    /// (Spec 04 §6 invariant 5) exists for a transport that <em>declares</em> its columns: DataTables sends
+    /// <c>columns[i][data]</c>/<c>[orderable]</c>, so an action column is self-describing and skipping it
+    /// drops nothing the client asked for. An AG Grid <c>sortModel</c> declares nothing — it is a list of
+    /// keys the client is asking the <em>server</em> to order by. Matching them against the projection here
+    /// would be the adapter enforcing the whitelist, and it made a typo indistinguishable from a UI column:
+    /// the request returned <c>200</c> with an untouched row order (issue #2). A genuinely non-field column
+    /// belongs out of <c>sortModel</c> in the first place — mark it <c>sortable: false</c> in its
+    /// <c>colDef</c>.
+    /// </para>
+    /// </remarks>
+    private static List<SortSpec> BuildSort(AgGridRowsRequest request)
     {
         var sort = new List<SortSpec>(request.SortModel.Count);
         foreach (var entry in request.SortModel)
         {
-            if (string.IsNullOrEmpty(entry.ColId) || !fields.ContainsKey(entry.ColId))
-            {
-                // Non-field UI column: never fabricate a sort on an unknown column.
-                continue;
-            }
-
             var descending = string.Equals(entry.Sort, "desc", StringComparison.OrdinalIgnoreCase);
-            sort.Add(new SortSpec(entry.ColId, descending));
+
+            // A JSON `"colId": null` defeats the non-nullable declaration, so normalize it here rather than
+            // handing a null field name to the engine. It is still not dropped: "" is an unknown field → 400.
+            sort.Add(new SortSpec(entry.ColId ?? string.Empty, descending));
         }
 
         return sort;

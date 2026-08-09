@@ -18,19 +18,24 @@ namespace a2n.Vista.Tests;
 /// <see cref="ViewQueryRequest.Sort"/>. The contract (R3.3–R3.5) is:
 /// </para>
 /// <list type="bullet">
-///   <item><description>the produced list contains <b>exactly</b> the entries whose <c>colId</c> is a
-///   view field, in their <b>original relative order</b> (multi-sort priority preserved, R3.3);</description></item>
-///   <item><description>each kept entry maps to <c>SortSpec(colId, Descending)</c> where
+///   <item><description>the produced list contains <b>exactly one entry per</b> <c>sortModel</c> entry, in
+///   their <b>original relative order</b> (multi-sort priority preserved, R3.3);</description></item>
+///   <item><description>each entry maps to <c>SortSpec(colId, Descending)</c> where
 ///   <c>Descending</c> is <see langword="true"/> for a <c>"desc"</c> direction and <see langword="false"/>
 ///   for any other value (R3.3);</description></item>
-///   <item><description>entries whose <c>colId</c> is not a view field (or is empty) are <b>skipped</b>,
-///   never fabricating a sort on an unknown column, while the remaining entries keep their order (R3.4);</description></item>
+///   <item><description>an entry whose <c>colId</c> is not a view field (or is empty) is <b>carried through
+///   verbatim, never dropped</b>, so the engine rejects it with 400 — the adapter builds, the engine
+///   enforces (R3.4, D150);</description></item>
 ///   <item><description>an absent/empty <c>sortModel</c> yields an <b>empty</b> <see cref="SortSpec"/>
 ///   list with <b>no</b> default ordering (R3.5).</description></item>
 /// </list>
 /// <para>
-/// Field membership is resolved case-sensitively (ordinal), matching the adapter's field lookup. The
-/// direction predicate is case-insensitive on <c>"desc"</c>: the implementation is the source of truth
+/// The mapping is therefore field-set-independent: it is a total, order-preserving function of the
+/// <c>sortModel</c> array alone, which is what makes a typo impossible to confuse with a UI column
+/// (issue #2). Whether a <c>colId</c> names a field is the engine's ordinal question, asked later.
+/// </para>
+/// <para>
+/// The direction predicate is case-insensitive on <c>"desc"</c>: the implementation is the source of truth
 /// (a project non-negotiable), and AG Grid only ever emits lowercase <c>"asc"</c>/<c>"desc"</c> on the
 /// wire, so the case-insensitive rule and the literal <c>sort == "desc"</c> rule agree on every real
 /// input; the generator additionally probes mixed-case and arbitrary tokens.
@@ -46,8 +51,12 @@ public sealed class AgGridSortModelMappingPropertyTests
     /// <summary>The view fields (case-sensitive names) a <c>colId</c> must match to be kept.</summary>
     private static readonly string[] FieldNames = { "Id", "Name", "Price", "Category", "CreatedOn" };
 
-    /// <summary>UI/non-field column ids (and the empty string) that must be skipped.</summary>
-    private static readonly string[] NonFieldColIds = { "Actions", "_select", "rowIndex", "unknownCol", "" };
+    /// <summary>
+    /// Column ids that are NOT view fields — UI columns, typos, mis-cased field names, and the empty string.
+    /// Each must still reach the engine unchanged (D150): the adapter has no basis to tell a UI column from a
+    /// misspelling, and guessing is what hid a broken sort behind a 200 (issue #2).
+    /// </summary>
+    private static readonly string[] NonFieldColIds = { "Actions", "_select", "rowIndex", "unknownCol", "name", "price", "" };
 
     /// <summary>Direction tokens: canonical, mixed-case, and arbitrary non-<c>desc</c> values.</summary>
     private static readonly string[] Directions = { "asc", "desc", "ASC", "DESC", "Desc", "", "descending", "xyz" };
@@ -101,19 +110,15 @@ public sealed class AgGridSortModelMappingPropertyTests
     // -- Oracle -----------------------------------------------------------------------------------------
 
     /// <summary>
-    /// The reference mapping: keep entries whose (non-empty) <c>colId</c> is a view field, in order, each
-    /// as <c>SortSpec(colId, Descending)</c> with <c>Descending</c> = case-insensitive match on <c>"desc"</c>.
+    /// The reference mapping: every entry, in order, as <c>SortSpec(colId, Descending)</c> with
+    /// <c>Descending</c> = case-insensitive match on <c>"desc"</c>. The view field set is deliberately not
+    /// consulted — an unknown <c>colId</c> is the engine's business, not the adapter's (D150).
     /// </summary>
     private static List<SortSpec> ExpectedSort(IReadOnlyList<AgGridSortModel> sortModel)
     {
         var expected = new List<SortSpec>(sortModel.Count);
         foreach (var entry in sortModel)
         {
-            if (string.IsNullOrEmpty(entry.ColId) || Array.IndexOf(FieldNames, entry.ColId) < 0)
-            {
-                continue;
-            }
-
             var descending = string.Equals(entry.Sort, "desc", StringComparison.OrdinalIgnoreCase);
             expected.Add(new SortSpec(entry.ColId, descending));
         }
@@ -134,7 +139,7 @@ public sealed class AgGridSortModelMappingPropertyTests
         if (actual.Count != expected.Count)
         {
             throw new Exception(
-                "Sort count mismatch (skipping/order not honored).\n" +
+                "Sort count mismatch (an entry was dropped or fabricated; every sortModel entry must map 1:1).\n" +
                 $"  sortModel: {DescribeModel(sortModel)}\n" +
                 $"  expected:  {Describe(expected)}\n" +
                 $"  actual:    {Describe(actual)}");
