@@ -9,7 +9,12 @@
     <RepositoryUrl>https://github.com/anwarminarso/a2n.Vista</RepositoryUrl>
     <PackageProjectUrl>https://github.com/anwarminarso/a2n.Vista</PackageProjectUrl>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
-    <Version>0.0.1</Version>
+    <!--
+      Local/default version only. A real release cuts the version from the Git tag: `publish.yml`
+      passes -p:Version=<tag without the leading v>, which overrides this. Keep it in step with the
+      most recent released tag so a locally packed artifact is not mistaken for a newer one.
+    -->
+    <Version>0.0.2</Version>
     <!--
       License metadata. The project is LGPL-3.0-or-later (see LICENSE, COPYING, NOTICES.md, and
       the README). Until this was set, `dotnet pack` emitted packages with NO <license> element at

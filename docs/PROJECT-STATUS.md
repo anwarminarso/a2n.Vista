@@ -12,7 +12,7 @@
 > carve-out is now scoped to transports that *declare* their columns (DataTables does; an AG Grid `sortModel`
 > does not), and the adapter README documents the naming contract the issue asked for. Behaviour change: a
 > sort on a client-side-only column is now a `400`, not a no-op — see `CHANGELOG.md`. 549 tests/TFM (net8),
-> 0 failed. See §2.28.
+> 0 failed. Shipped as **v0.0.2** (PR #3, rebase-merged after a green CI matrix). See §2.28.
 > Prior: 2026-07-31 (**audit remediation, tranche 6** — `PERF-03` the XLSX worksheet now streams into its
 > archive entry one row at a time (peak memory was ~2× the document in two LOH buffers; byte output unchanged),
 > `DEAD-09` the real accessor-map escaping drift is closed behind one shared literal writer (goldens unchanged;
@@ -1122,8 +1122,10 @@ package-content change). No decision numbers — pure operational tooling.
 **Settled (was "open follow-ups"):** (1) **source-generator packaging** — bundled into `a2n.Vista.Core`
 under `analyzers/dotnet/cs` (verified: a local-feed package consumer's build emits the accessor/invoker/
 json-context generators); (2) **`a2n.Vista.Client.TypeScript`** now ships as a `dotnet tool`
-(`PackAsTool`, command `vista-ts`); (3) `<Version>` is `0.0.1-beta.2` in `Directory.Build.props`, but a
-real release still cuts the version from the Git tag. Every shipping package also carries the brand icon
+(`PackAsTool`, command `vista-ts`); (3) `<Version>` in `Directory.Build.props` is the local/default only
+(kept in step with the latest released tag — **`0.0.2`** as of 2026-08-09), since a real release cuts the
+version from the Git tag (`publish.yml` passes `-p:Version=<tag without the leading v>`, which overrides
+it). Every shipping package also carries the brand icon
 and a per-package `README.md` for its nuget.org page. **Verification** is the first green Actions run
 (workflows cannot be exercised locally).
 
@@ -1440,6 +1442,9 @@ Reverted after cross-check, now **open scope calls** rather than cleanups:
   `a2n.Vista.Client.TypeScript.Tests` — 0 failed, 0 skipped. Both sample self-tests PASS.
 
 ### 2.28 Issue #2 — AG Grid sort channel stopped swallowing an unknown `colId` (landed 2026-08-09; D150)
+
+> Shipped as **v0.0.2** (PR [#3](https://github.com/anwarminarso/a2n.Vista/pull/3), rebase-merged to `main`
+> after a green CI matrix; the sole change in that release).
 
 The first externally reported defect. In `AgGridAdapter.BuildSort`, each `sortModel[].colId` was matched
 against `ViewFieldLookup.For(view)` and any entry that did not resolve was `continue`-d. The `filterModel`

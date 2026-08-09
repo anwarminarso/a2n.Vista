@@ -8,6 +8,16 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
+Nothing yet.
+
+## [0.0.2] - 2026-08-09
+
+A single-defect patch release: the first externally reported bug
+([#2](https://github.com/anwarminarso/a2n.Vista/issues/2)) and the documentation gap that let it
+hide. It touches the AG Grid adapter's sort channel only — no other adapter, route, envelope, or
+error code changes — but read the **breaking behaviour** note: a sort that used to be silently
+ignored is now a `400`.
+
 ### Fixed
 - **The AG Grid adapter no longer silently drops an unknown `sortModel[].colId`**
   ([#2](https://github.com/anwarminarso/a2n.Vista/issues/2), Decision Log D150). The sort channel
@@ -32,6 +42,18 @@ While the version is `0.x`, anything may change between releases.
   DataTables adapter is unchanged: its request declares its own columns
   (`columns[i][data]`/`[orderable]`), so it can still tell a UI column from a typo and only the
   self-declared UI column is skipped.
+
+### Documentation
+- **The AG Grid column-naming contract is written down** (issue #2, ask 4). The adapter README now
+  states it in one table: `rowData` is **camelCase** (the serialized row), while
+  `sortModel[].colId` and `filterModel` keys are the view's **field name** — the PascalCase C#
+  property — matched **ordinally**. Neither channel ignores a name it does not recognize. It also
+  carries the `colId`/`field` colDef pattern and the `sortable: false` note for columns with no
+  server field behind them. Previously this was discoverable only by reading `ViewFieldLookup`,
+  while the `rowData` payload actively suggested camelCase.
+- `docs/spec/04-adapter-contract.md` §6: invariant 2 now says explicitly that it governs the sort
+  channel too, and invariant 5 scopes the "skip non-field UI columns" exception to transports that
+  **declare** their columns.
 
 ## [0.0.1] - 2026-07-31
 
@@ -540,5 +562,7 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.2...HEAD
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...HEAD
+[0.0.2]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1...v0.0.2
+[0.0.1]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.2...v0.0.1
 [0.0.1-beta.2]: https://github.com/anwarminarso/a2n.Vista/releases/tag/v0.0.1-beta.2
