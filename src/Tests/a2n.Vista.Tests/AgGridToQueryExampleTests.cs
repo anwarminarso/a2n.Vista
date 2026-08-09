@@ -22,8 +22,8 @@ namespace a2n.Vista.Tests;
 ///   <c>Page = StartRow / PageSize</c> (zero-based floor), with a non-positive <c>PageSize</c> passed
 ///   through unchanged so the engine rejects it (R3.1/R3.2).</description></item>
 ///   <item><description>multi-sort priority order preserved; a non-<c>"desc"</c> direction is ascending;
-///   an entry whose <c>colId</c> is not a view field is skipped without disturbing the rest
-///   (R3.3/R3.4).</description></item>
+///   an entry whose <c>colId</c> is not a view field is carried through in place (never dropped) so the
+///   engine rejects it (R3.3/R3.4, D150).</description></item>
 ///   <item><description>the parsed <c>filterModel</c> lands only in the <c>Filter</c> slot (AND-ed across
 ///   columns), and the quick filter lands only in the <c>Search</c> slot (a <c>FilterOr</c> of
 ///   <c>Contains</c> over the searchable string fields) (R4.4/R4.5).</description></item>
@@ -242,11 +242,15 @@ public sealed class AgGridToQueryExampleTests
         await Assert.That(query.Sort[1]).IsEqualTo(new SortSpec("Price", true));
     }
 
-    // -- skip non-field colId (R3.4) ------------------------------------------------------------------
+    // -- unknown colId is carried, never dropped (R3.4, D150) -----------------------------------------
 
-    /// <summary>R3.4: an entry whose <c>colId</c> is not a view field is skipped; the rest keep their order.</summary>
+    /// <summary>
+    /// R3.4 (D150): an entry whose <c>colId</c> is not a view field is <b>carried through</b> in place, so the
+    /// engine refuses it with 400 <c>filter-unknown-field</c> instead of the adapter silently reordering
+    /// nothing (issue #2). The surrounding entries keep their positions.
+    /// </summary>
     [Test]
-    public async Task Sort_SkipsNonFieldColId_PreservingRemainingOrder()
+    public async Task Sort_UnknownColId_IsCarriedThrough_ForEngineRejection()
     {
         var request = new AgGridRowsRequest
         {
@@ -260,14 +264,37 @@ public sealed class AgGridToQueryExampleTests
 
         var query = Adapter.ToQuery(request, BuildView());
 
-        await Assert.That(query.Sort.Count).IsEqualTo(2);
+        await Assert.That(query.Sort.Count).IsEqualTo(3);
         await Assert.That(query.Sort[0]).IsEqualTo(new SortSpec("Name", false));
-        await Assert.That(query.Sort[1]).IsEqualTo(new SortSpec("Price", true));
+        await Assert.That(query.Sort[1]).IsEqualTo(new SortSpec("NotAField", true));
+        await Assert.That(query.Sort[2]).IsEqualTo(new SortSpec("Price", true));
     }
 
-    /// <summary>R3.4: an entry with an empty <c>colId</c> is skipped (never fabricating a sort).</summary>
+    /// <summary>
+    /// R3.4 (D150): a mis-cased <c>colId</c> — the exact mistake behind issue #2, since <c>rowData</c> is
+    /// serialized camelCase while field names are PascalCase — is unknown (matching is ordinal) and is
+    /// carried through for the engine to reject, not silently dropped.
+    /// </summary>
     [Test]
-    public async Task Sort_SkipsEmptyColId()
+    public async Task Sort_MisCasedColId_IsCarriedThrough_ForEngineRejection()
+    {
+        var request = new AgGridRowsRequest
+        {
+            SortModel = { new AgGridSortModel { ColId = "price", Sort = "asc" } },
+        };
+
+        var query = Adapter.ToQuery(request, BuildView());
+
+        await Assert.That(query.Sort.Count).IsEqualTo(1);
+        await Assert.That(query.Sort[0]).IsEqualTo(new SortSpec("price", false));
+    }
+
+    /// <summary>
+    /// R3.4 (D150): an empty <c>colId</c> is not special-cased either — it names no field, so it too travels
+    /// to the engine (a single rule: the adapter never drops a sort entry).
+    /// </summary>
+    [Test]
+    public async Task Sort_EmptyColId_IsCarriedThrough_ForEngineRejection()
     {
         var request = new AgGridRowsRequest
         {
@@ -280,8 +307,9 @@ public sealed class AgGridToQueryExampleTests
 
         var query = Adapter.ToQuery(request, BuildView());
 
-        await Assert.That(query.Sort.Count).IsEqualTo(1);
-        await Assert.That(query.Sort[0]).IsEqualTo(new SortSpec("Name", false));
+        await Assert.That(query.Sort.Count).IsEqualTo(2);
+        await Assert.That(query.Sort[0]).IsEqualTo(new SortSpec(string.Empty, true));
+        await Assert.That(query.Sort[1]).IsEqualTo(new SortSpec("Name", false));
     }
 
     // -- Filter slot placement (R4.4) -----------------------------------------------------------------

@@ -36,6 +36,9 @@ namespace a2n.Vista.Tests;
 ///   <item><description>The <c>?q=</c> quick filter is folded into <c>AdapterRequest.Values</c> (Search channel)
 ///   and the JSON body is captured into <c>AdapterRequest.JsonBody</c> (paging/sort applied) (R6.4).</description></item>
 ///   <item><description>Layering is preserved: the AG Grid adapter package gains no ASP.NET dependency (R6.7).</description></item>
+///   <item><description>Regression (issue #2, D150): an unknown <c>sortModel[].colId</c> is refused with the
+///   same 400 problem the <c>filterModel</c> channel produces for the same mistake — no silent drop — while a
+///   known <c>colId</c> still orders the block.</description></item>
 /// </list>
 /// </summary>
 [SuppressMessage(
@@ -135,6 +138,78 @@ public sealed class AgGridEndpointIntegrationTests
 
         await Assert.That(root.GetProperty("rowCount").GetInt64()).IsEqualTo(11L);
         await Assert.That(root.GetProperty("rowData").GetArrayLength()).IsEqualTo(11);
+    }
+
+    /// <summary>
+    /// Regression, issue #2 (D150): an unknown <c>sortModel[].colId</c> is refused with exactly the problem
+    /// the <c>filterModel</c> channel already produced for the identical mistake — same status, same
+    /// <c>type</c>/<c>code</c>, same <c>field</c>. Before D150 the adapter dropped the entry, so the request
+    /// returned <c>200</c> with the provider's incidental row order: a mis-cased name (the natural mistake,
+    /// since <c>rowData</c> is serialized camelCase while field names are PascalCase) produced a precise 400
+    /// on one channel and a healthy-looking wrong answer on the other.
+    /// </summary>
+    [Test]
+    public async Task Unknown_Sort_ColId_Is_Rejected_Exactly_Like_An_Unknown_Filter_Key()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        // "name" is the camelCase spelling of the "Name" field; matching is ordinal, so it is unknown.
+        var sortResponse = await app.Client.PostAsync(
+            AgGridRoute,
+            JsonContent("{\"startRow\":0,\"endRow\":5,\"sortModel\":[{\"colId\":\"name\",\"sort\":\"asc\"}]}"));
+
+        var filterResponse = await app.Client.PostAsync(
+            AgGridRoute,
+            JsonContent(
+                "{\"startRow\":0,\"endRow\":5,\"filterModel\":" +
+                "{\"name\":{\"filterType\":\"text\",\"type\":\"equals\",\"filter\":\"Widget 1\"}}}"));
+
+        await Assert.That(sortResponse.StatusCode).IsEqualTo(HttpStatusCode.BadRequest);
+        await Assert.That(sortResponse.StatusCode).IsEqualTo(filterResponse.StatusCode);
+
+        using var sortDoc = JsonDocument.Parse(await sortResponse.Content.ReadAsStringAsync());
+        using var filterDoc = JsonDocument.Parse(await filterResponse.Content.ReadAsStringAsync());
+
+        // The machine-readable members a client dispatches on are identical across the two channels.
+        await Assert.That(sortDoc.RootElement.GetProperty("code").GetString()).IsEqualTo("filter-unknown-field");
+        await Assert.That(sortDoc.RootElement.GetProperty("field").GetString()).IsEqualTo("name");
+        await Assert.That(sortDoc.RootElement.GetProperty("type").GetString())
+            .IsEqualTo(filterDoc.RootElement.GetProperty("type").GetString());
+        await Assert.That(sortDoc.RootElement.GetProperty("code").GetString())
+            .IsEqualTo(filterDoc.RootElement.GetProperty("code").GetString());
+        await Assert.That(sortDoc.RootElement.GetProperty("field").GetString())
+            .IsEqualTo(filterDoc.RootElement.GetProperty("field").GetString());
+
+        // The detail names the sort channel, so the two 400s remain diagnosable apart.
+        await Assert.That(sortDoc.RootElement.GetProperty("detail").GetString()).Contains("Sort field 'name'");
+    }
+
+    /// <summary>
+    /// Regression, issue #2 (D150): a sort the caller spelled correctly still applies — the fix removes the
+    /// silent drop without weakening the ordinal whitelist. Descending by <c>Name</c> is asserted on the row
+    /// values, not on the request echo: had the entry been dropped, the block would fall back to the
+    /// <c>KeyFields</c> tiebreaker (<c>Id</c> ascending → "Widget 1", "Widget 2", "Widget 3"), which is exactly
+    /// the healthy-looking wrong answer the issue reported.
+    /// </summary>
+    [Test]
+    public async Task Known_Sort_ColId_Still_Orders_The_Block()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync(
+            AgGridRoute,
+            JsonContent("{\"startRow\":0,\"endRow\":3,\"sortModel\":[{\"colId\":\"Name\",\"sort\":\"desc\"}]}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+
+        using var doc = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var rows = doc.RootElement.GetProperty("rowData");
+
+        // Lexicographic descending over "Widget 1".."Widget 25".
+        await Assert.That(rows.GetArrayLength()).IsEqualTo(3);
+        await Assert.That(rows[0].GetProperty("name").GetString()).IsEqualTo("Widget 9");
+        await Assert.That(rows[1].GetProperty("name").GetString()).IsEqualTo("Widget 8");
+        await Assert.That(rows[2].GetProperty("name").GetString()).IsEqualTo("Widget 7");
     }
 
     /// <summary>
