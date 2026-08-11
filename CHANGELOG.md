@@ -10,7 +10,16 @@ While the version is `0.x`, anything may change between releases.
 
 Nothing yet.
 
-## [0.0.3] - 2026-08-11
+## [0.0.4] - 2026-08-11
+
+> **This is the release that carries the issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4)
+> work.** It was meant to ship as `0.0.3`, but the `v0.0.3` tag was created on the **0.0.2 release
+> commit**, and `publish.yml` builds whatever the tag points at while taking the package version from the
+> tag name (`-p:Version=<tag without the leading v>`). The packages published as `0.0.3` are therefore
+> 0.0.2 code wearing a 0.0.3 label — neither member below exists in them. A published NuGet version is
+> immutable, so `0.0.3` cannot be corrected in place; it is superseded by this release. **Action:** if you
+> took `0.0.3` for `ShapeQueryAsync` or the split `AddView`, move to `0.0.4`. Coming from `0.0.2`, the
+> upgrade is purely additive as described below.
 
 A purely additive feature release answering the second externally reported issue
 ([#4](https://github.com/anwarminarso/a2n.Vista/issues/4)): a server-trusted, DB-backed row scope now has
@@ -52,6 +61,25 @@ Both are now addressed, and they are only useful together.
   behaviour changes. The async query-factory overload floated as part 3 of issue #4 is **not**
   implemented: it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`,
   `ICompiledViewExecutionPlan`, and every generated plan, which D151 + D152 make unnecessary.
+
+### Release process (repository only — not part of any package)
+- **`publish.yml` refuses to publish a version the tagged commit does not declare** (Decision Log D153).
+  A new `guard` job resolves the version once (release tag or `workflow_dispatch` input) and compares it
+  with `<Version>` in the checked-out `Directory.Build.props`; `test` and `publish` both depend on it, so
+  a mis-tag fails in seconds instead of after the three-TFM matrix. Exact match is the rule, with a
+  prerelease tag additionally accepted against its own release core (`v1.2.3-rc.1` vs `1.2.3`). This is
+  what was missing when `0.0.3` shipped: the version comes from the tag and the build comes from whatever
+  the tag points at, and nothing related the two. Consumers see no difference — no package content, API,
+  route, or wire change.
+
+## [0.0.3] - 2026-08-11 — VOID, do not use
+
+Published in error and superseded by [0.0.4]. The `v0.0.3` tag was placed on the 0.0.2 release commit, so
+the `0.0.3` packages on nuget.org are byte-equivalent to `0.0.2` apart from their version number: they
+contain **none** of the changes that were intended for this version. Nothing regressed — the code in them
+is 0.0.2, which is the previous good release — but a consumer who upgraded to `0.0.3` for a new member
+found it missing. Use `0.0.4` instead. Kept here rather than deleted because the version exists on
+nuget.org permanently and the gap must be explainable.
 
 ## [0.0.2] - 2026-08-09
 
@@ -605,7 +633,8 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.3...HEAD
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.4...HEAD
+[0.0.4]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.2...v0.0.1

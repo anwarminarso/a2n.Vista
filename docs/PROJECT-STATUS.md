@@ -1,8 +1,21 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-08-11 (**issue #4 — a server-trusted, DB-backed row scope now has a supported seam;
-> D151 + D152, shipped as v0.0.3**). Every per-request extension point was synchronous, so an author whose row scope had to be
+> Last updated: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
+> published is void**). The `v0.0.3` tag was created on the **0.0.2 release commit**, and `publish.yml`
+> builds whatever the tag points at while taking the package version from the tag name
+> (`-p:Version=<tag without the leading v>`), so the packages on nuget.org labelled `0.0.3` are 0.0.2 code:
+> neither `ShapeQueryAsync` nor the split `AddView<TSource, TRow>` is in them. The override is the designed
+> behaviour, so nothing in the pipeline could flag the mismatch — the failure mode is *tag placement*, not
+> packaging. A published NuGet version is immutable, so 0.0.3 cannot be corrected in place; `<Version>` in
+> `Directory.Build.props` is now `0.0.4` and the next tag must be `v0.0.4` **on the release commit**. No
+> source change accompanies the bump. **D153** closes the hole rather than just documenting it: a new
+> `guard` job in `publish.yml` resolves the version once and **refuses to publish unless the tagged tree's
+> `<Version>` agrees** (both `test` and `publish` depend on it, so a mis-tag fails in seconds), which turns
+> that property from decoration into the tree's release assertion. CI-only — no package, source, or wire
+> change. See §2.19 (release pipeline) and `CHANGELOG.md`.
+> Prior: 2026-08-11 (**issue #4 — a server-trusted, DB-backed row scope now has a supported seam;
+> D151 + D152, shipping as v0.0.4**). Every per-request extension point was synchronous, so an author whose row scope had to be
 > *loaded* (a grants table, effective permissions) had one option: `GetAwaiter().GetResult()` inside the query
 > factory — a parked thread-pool thread per request and no `CancellationToken`, so a client abort cancelled
 > nothing. The documented workaround (loading in `IsAllowedAsync`, the only async pre-query hook) is worse than
@@ -21,7 +34,8 @@
 > `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated
 > plan, which D151 + D152 make unnecessary. Additive only — no route, envelope, header, error shape, or existing
 > view behaviour changes. 555 tests/TFM (net8, +6) / 556 (net10) and 115 generator tests, 0 failed; the AG Grid
-> Northwind read + write + OpenAPI self-tests PASS unchanged. Shipped as **v0.0.3**. See §2.29.
+> Northwind read + write + OpenAPI self-tests PASS unchanged. Ships as **v0.0.4** (the `v0.0.3` tag missed
+> this commit — see the entry above). See §2.29.
 > Prior: 2026-08-09 (**issue #2 — the first externally reported defect, fixed as D150**). The AG Grid
 > adapter's sort channel matched every `sortModel[].colId` against the view projection and silently skipped
 > what it could not resolve, while a `filterModel` key with the *same* spelling mistake was rejected with
@@ -1144,11 +1158,49 @@ package-content change). No decision numbers — pure operational tooling.
 under `analyzers/dotnet/cs` (verified: a local-feed package consumer's build emits the accessor/invoker/
 json-context generators); (2) **`a2n.Vista.Client.TypeScript`** now ships as a `dotnet tool`
 (`PackAsTool`, command `vista-ts`); (3) `<Version>` in `Directory.Build.props` is the local/default only
-(kept in step with the latest released tag — **`0.0.3`** as of 2026-08-11), since a real release cuts the
+(kept in step with the version being prepared — **`0.0.4`** as of 2026-08-11), since a real release cuts the
 version from the Git tag (`publish.yml` passes `-p:Version=<tag without the leading v>`, which overrides
 it). Every shipping package also carries the brand icon
 and a per-package `README.md` for its nuget.org page. **Verification** is the first green Actions run
 (workflows cannot be exercised locally).
+
+**Release incident — the tag is the version *and* the source (2026-08-11).** `v0.0.3` was created on the
+**0.0.2 release commit** (`git ls-remote --tags` shows `v0.0.2` and `v0.0.3` on the same object). The
+workflow behaved exactly as designed: it checks out what the tag points at and packs it as the tag's
+version, so nuget.org received 0.0.2 code labelled `0.0.3` — the D151/D152 members are absent from those
+packages. Every existing gate passed, because none of them relates a version to its contents: the release
+test job ran the *tagged* commit's suites (green — they were 0.0.2's tests), and the metadata check verifies
+license + symbols, not provenance. Since `-p:Version` overrides `Directory.Build.props`, the file's
+`<Version>` being `0.0.2` at that commit was not even a signal. A published NuGet version is immutable, so
+the remediation is a new version: `<Version>` → `0.0.4`, `CHANGELOG.md` marks `0.0.3` void and superseded,
+and the next tag is `v0.0.4` **on the release commit**.
+**D153 — the release guard (landed 2026-08-11).** `publish.yml` gained a `guard` job that runs **before**
+the test matrix and refuses to publish unless the tagged tree declares the version being published. It
+resolves the version once (release tag or dispatch input, leading `v` stripped), exposes it as a job
+output, and asserts it against `<Version>` read out of the checked-out `Directory.Build.props`:
+
+- **The assertion:** exact match required. A prerelease/build-metadata tag is additionally accepted
+  against its own release core (`v1.2.3-rc.1` with `<Version>1.2.3</Version>`), so rc tagging stays
+  workable while a **core** mismatch — the failure mode that shipped 0.0.3 — always fails. Verified
+  locally over the truth table: `(0.0.4, 0.0.4)` pass, `(0.0.3, 0.0.2)` **fail**, `(0.0.5-rc.1, 0.0.5)`
+  pass, `(0.0.5, 0.0.5-rc.1)` fail, `(0.0.6-rc.1, 0.0.5)` fail, `(1.0.0, 0.0.4)` fail,
+  `(0.0.4+build.7, 0.0.4)` pass.
+- **Why the props value is now load-bearing.** It used to be decoration (`-p:Version` overrides it), which
+  is why a stale `0.0.2` in the tagged tree was not a signal. It is now the tree's own statement of what
+  it is, and the release fails if the tag disagrees. Keeping it current is part of preparing a release.
+- **Why a separate job, not a step.** `test` and `publish` both `needs: guard`, so a mis-tag fails in
+  seconds instead of after three TFMs, and the version is resolved in exactly one place — the job that
+  verified it. `publish` lists `guard` explicitly because it reads its output.
+- **Reading the value.** `grep -oPm1 '^\s*<Version>\K[^<]+(?=</Version>)'` — anchored at the line start
+  and requiring the closing tag, because the explanatory comment above the property names it inline and
+  an unanchored pattern matches the comment first (it did, in the first draft).
+- **Hardening carried along:** the tag name now reaches bash through the environment instead of a `${{ }}`
+  interpolation inside `run:`. An expression is substituted before bash parses the line, so shell
+  metacharacters in a tag name were executable — narrow (only a release author can create a tag) but free
+  to close.
+- **Not covered:** the guard proves the *tree* agrees with the tag, not that the tree is the one you
+  meant. Tagging the wrong commit whose `<Version>` happens to match still passes, so `git log -1 <tag>`
+  before publishing remains worth a glance.
 
 ### 2.20 `ag-grid-adapter` (landed; spec `.kiro/specs/ag-grid-adapter`) — M16
 
@@ -1521,8 +1573,10 @@ nothing, caught only by asserting the resulting rank sequence against a real dat
 
 ### 2.29 Issue #4 — a DB-backed server-trusted row scope got a supported seam (landed 2026-08-11; D151, D152)
 
-> Shipped as **v0.0.3** — the sole change in that release. Purely additive: no behaviour, route, envelope,
-> header, or error-shape change, so unlike v0.0.2 there is no migration note.
+> Ships as **v0.0.4** — the sole change in that release. Purely additive: no behaviour, route, envelope,
+> header, or error-shape change, so unlike v0.0.2 there is no migration note. It was *intended* to ship as
+> v0.0.3, but that tag was created on the 0.0.2 release commit, so the published `0.0.3` packages do not
+> contain any of this (§2.19, `CHANGELOG.md`).
 
 The second externally reported issue, and unlike #2 **nothing was wrong**: the engine failed closed in exactly
 the right places. What was missing was a *door*. A consumer needed a per-caller set of accessible dataset ids
@@ -1798,8 +1852,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D149 | audit remediation (`DEAD-02`) | **Landed (2026-07-31).** Display-format metadata: **the server publishes, the client applies.** `IFieldBuilder.Format(...)` (on the authored surface per `01-view.md` §5.2, and the successor of DynData's `DataFormatString`) now reaches `FieldMetadata.Format`, the `GET {route}/metadata` projection, and the emitted OpenAPI schema (optional). Vista never interprets the hint, so filter, sort, and export keep operating on raw values — presentation cannot change what a query matches or what an export contains. Previously the value was captured and read by nothing, making `.Format("N2")` silent data loss. Additive: the response member is omitted when unset, so a view that sets no hint has a byte-identical `/metadata` payload. The TypeScript client is untouched (it types wire DTOs, not metadata). See §2.26. |
 | D150 | issue [#2](https://github.com/anwarminarso/a2n.Vista/issues/2) / `ag-grid-adapter` spec R3.4 + R4.6, `04` §6 | **Landed (2026-08-09).** The AG Grid sort channel does **not** drop an unknown `colId`. `AgGridAdapter.BuildSort` no longer consults `ViewFieldLookup` (it no longer takes `fields`): every `sortModel` entry becomes a `SortSpec` with its `colId` verbatim and in position, and the engine rejects an unknown (`filter-unknown-field`) or non-sortable (`filter-field-not-allowed`) field before any SQL runs — the same 400 the `filterModel` channel already produced for the identical spelling mistake. Rationale: matching inside the adapter *is* enforcing the whitelist (violating D67 / `04` §6 invariant 2), and it made a caller's typo indistinguishable from a non-field UI column, so a mis-cased name — the natural mistake, since `rowData` is camelCase and field names are PascalCase — returned `200` with an untouched row order. **Scopes the §6 invariant 5 carve-out:** a UI column is skipped only where the *request declares* it (DataTables `columns[i][data]`/`[orderable]`); an AG Grid `sortModel` declares nothing, so nothing is skipped — a non-field column opts out client-side via `sortable: false`. Supersedes the original R3.4 "skip non-field `colId`" rule and removes the R4.6 carve-out. Behaviour change (`CHANGELOG.md`): a sort on a non-projected column is now a 400 instead of a silent no-op. No route, envelope, or error-vocabulary change; ordinal matching, `filterModel`, and the DataTables adapter are all unchanged. See §2.28. |
 | D151 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.6, `05` §6.1 | **Landed (2026-08-11).** `IViewAuthorizer.ShapeQueryAsync(ViewAuthContext, IViewScope, CancellationToken)` is the shaping member the pipeline calls, added as a **default interface implementation** forwarding to `ShapeQuery` (source- and binary-additive: every existing authorizer compiles and behaves identically, and a synchronous decision still allocates nothing). `ViewRequestExecutor.AuthorizeAndShapeAsync` awaits it with `HttpContext.RequestAborted`. Rationale: an I/O-backed server-trusted scope previously had no door — `GetAwaiter().GetResult()` inside the query factory parked a thread-pool thread per request and had no token, so a client abort cancelled nothing. **Placement is part of the decision:** shaping stays *outside* `GateAsync`'s fail-closed catch, so a scope-loading fault propagates as a 500 instead of being reported as a 403 — the defect in the documented workaround (loading scope data from `IsAllowedAsync`, whose every throw is a deny). Extends D43/D46. Only useful for Style A together with D152. See §2.29. |
-| D152 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.5 + §5.6, `02` §4.1 | **Landed (2026-08-11).** Style A source/projection split: `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` retains the source query and the projection separately (the shape Gaya B always had), carried on `TemplateViewDefinition.SourceProjection` as a closed `TemplateSourceProjection<TDbContext>` hierarchy, and `ViewExecutionPlan.FromTemplateDefinition` turns it into a `SplitViewExecutionPlan<TSource, TRow>` — so authored `WithRowFilter<TSource>` **and** the per-request scope are AND-ed pre-projection and pushed down to SQL. `TSource`/`TRow` are recovered through a double-dispatch `ITemplateSourceProjectionVisitor<TDbContext, TResult>` so the type arguments close at compile time (no `MakeGenericType` over a possibly-anonymous row type). Closes the "FLAGGED Core follow-up" documented on `ProjectedViewExecutionPlan` **without retiring it**: the combined `AddView<TRow>` overload is unchanged and still fails closed on a populated scope (D141), so the limitation is now a property of one authoring choice. Side effects: a `WithRowFilter<TOther>` mismatched with the source query fails at registration rather than per request, and `StyleAShapeGenerator` reads `TRow` as the **last** `AddView` type argument so a split view keeps its generated export accessors / `JsonTypeInfo`. Issue #4 part 3 (an async query-factory overload) is **declined** — it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated plan. See §2.29. |
-| **D153+** | **next free** | Use for new decisions. D151/D152 (issue #4, async shaping + Style A split) were the last landed changes. |
+| D152 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.5 + §5.6, `02` §4.1 | **Landed (2026-08-11).** Style A source/projection split: `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` retains the source query and the projection separately (the shape Style B always had), carried on `TemplateViewDefinition.SourceProjection` as a closed `TemplateSourceProjection<TDbContext>` hierarchy, and `ViewExecutionPlan.FromTemplateDefinition` turns it into a `SplitViewExecutionPlan<TSource, TRow>` — so authored `WithRowFilter<TSource>` **and** the per-request scope are AND-ed pre-projection and pushed down to SQL. `TSource`/`TRow` are recovered through a double-dispatch `ITemplateSourceProjectionVisitor<TDbContext, TResult>` so the type arguments close at compile time (no `MakeGenericType` over a possibly-anonymous row type). Closes the "FLAGGED Core follow-up" documented on `ProjectedViewExecutionPlan` **without retiring it**: the combined `AddView<TRow>` overload is unchanged and still fails closed on a populated scope (D141), so the limitation is now a property of one authoring choice. Side effects: a `WithRowFilter<TOther>` mismatched with the source query fails at registration rather than per request, and `StyleAShapeGenerator` reads `TRow` as the **last** `AddView` type argument so a split view keeps its generated export accessors / `JsonTypeInfo`. Issue #4 part 3 (an async query-factory overload) is **declined** — it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated plan. See §2.29. |
+| D153 | release pipeline (`.github/workflows/publish.yml`) / §2.19 | **Landed (2026-08-11).** The release guard: a `guard` job resolves the publish version once (release tag or `workflow_dispatch` input, leading `v` stripped), exposes it as a job output consumed by `publish`, and **refuses to publish unless the tagged tree's `<Version>` agrees** — exact match, with a prerelease/build-metadata tag additionally accepted against its own release core (`v1.2.3-rc.1` vs `1.2.3`) so a **core** mismatch always fails. Both `test` and `publish` `needs: guard`, so a mis-tag fails in seconds rather than after the three-TFM matrix. Rationale: the version comes from the tag and the build comes from whatever the tag points at, so a tag on the wrong commit yields a valid package with the wrong contents — `v0.0.3` on the 0.0.2 release commit put 0.0.2 code on nuget.org as `0.0.3`, and an immutable version could only be superseded by 0.0.4. No existing gate related a version to its contents (the test job ran the tagged commit's own suites; the metadata check reads license/symbols). Side effect: `<Version>` in `Directory.Build.props` stops being decoration and becomes the tree's release assertion. Carries a small hardening — the tag name reaches bash via the environment instead of a `${{ }}` interpolation inside `run:`. CI-only: no package, source, wire, route, or envelope change. See §2.19. |
+| **D154+** | **next free** | Use for new decisions. D153 (the release guard) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

@@ -46,6 +46,77 @@ env:
     src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
 
 jobs:
+  # Release guard: does the tag actually point at the release it claims to be?
+  #
+  # The version comes from the TAG, not from Directory.Build.props (the `-p:Version` below overrides
+  # it), and the workflow builds whatever the tag points at. A tag on the wrong commit therefore
+  # produces a perfectly valid package with the wrong contents. That is not hypothetical: `v0.0.3` was
+  # created on the 0.0.2 release commit, so nuget.org's 0.0.3 packages are 0.0.2 code wearing a 0.0.3
+  # label — and a NuGet version is immutable, so it could only be superseded (by 0.0.4), never fixed.
+  # Nothing else here could have caught it: the test job runs the *tagged* commit's own suites (green
+  # either way) and the metadata check reads license/symbols, not provenance.
+  #
+  # So this job is the one assertion that ties a version to its contents, by requiring the tagged tree
+  # to declare the version being published. It runs before the matrix, so a mis-tag fails in seconds
+  # instead of after three TFMs, and it resolves the version once for every downstream job.
+  guard:
+    name: Verify the tag matches the declared version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Determine version
+        id: ver
+        shell: bash
+        # A tag name is user-supplied text, so it is passed through the environment rather than
+        # interpolated into the script body (an `${{ }}` expansion inside `run:` is substituted
+        # before bash parses the line, which makes shell metacharacters in a tag executable).
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "release" ]; then
+            v="$RELEASE_TAG"
+          else
+            v="$INPUT_VERSION"
+          fi
+          v="${v#v}"   # strip an optional leading "v" (v1.2.3 -> 1.2.3)
+          if [ -z "$v" ]; then
+            echo "::error::No version resolved from the release tag or the dispatch input."
+            exit 1
+          fi
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+          echo "Publishing version $v"
+
+      - name: Assert the tagged tree declares this version
+        shell: bash
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          # Anchored at the line start and requiring the closing tag, so the explanatory XML comment
+          # above the property (which names it inline) can never be matched instead.
+          declared="$(grep -oPm1 '^\s*<Version>\K[^<]+(?=</Version>)' Directory.Build.props || true)"
+          if [ -z "$declared" ]; then
+            echo "::error::Could not read <Version> from Directory.Build.props."
+            exit 1
+          fi
+          core="${VERSION%%[-+]*}"   # 1.2.3-rc.1+build -> 1.2.3
+          # Exact match is the rule. A prerelease/build-metadata tag is additionally accepted against
+          # its own release core (v1.2.3-rc.1 with <Version>1.2.3</Version>), which keeps rc tagging
+          # workable without weakening the check that matters: a core mismatch always fails.
+          if [ "$declared" = "$VERSION" ] || { [ "$core" != "$VERSION" ] && [ "$declared" = "$core" ]; }; then
+            echo "Directory.Build.props declares $declared; publishing $VERSION. OK."
+            exit 0
+          fi
+          echo "::error::Version mismatch — refusing to publish. The commit being released declares <Version>$declared</Version> but this release publishes $VERSION. Either the tag is on the wrong commit (the 0.0.3 failure mode) or the version bump was never committed. Fix the tag or the version, then re-run; a published NuGet version cannot be corrected afterwards."
+          exit 1
+
   # Release gate. `ci.yml` runs the suites on push/pull_request to main, but a `release:
   # published` event publishes whatever the tag points at — so without this job nothing in the
   # release path verifies that the tagged commit's tests pass, and a NuGet version is immutable
@@ -54,6 +125,7 @@ jobs:
   # Mirrors ci.yml's matrix; a release is rare enough that running all three TFMs is cheap.
   test:
     name: Test (${{ matrix.tfm }})
+    needs: guard
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -85,7 +157,9 @@ jobs:
 
   publish:
     name: Pack & push to nuget.org
-    needs: test
+    # `guard` is listed explicitly (not just transitively through `test`) because this job reads its
+    # output: the version is resolved once, in the job that verified it against the tagged tree.
+    needs: [ guard, test ]
     runs-on: ubuntu-latest
     # The NUGET_USER secret lives in the "nuget" GitHub Environment, so the job must
     # be scoped to it to read the secret (and to benefit from any environment
@@ -103,24 +177,6 @@ jobs:
             9.0.x
             10.0.x
 
-      - name: Determine version
-        id: ver
-        shell: bash
-        run: |
-          set -euo pipefail
-          if [ "${{ github.event_name }}" = "release" ]; then
-            v="${{ github.event.release.tag_name }}"
-          else
-            v="${{ inputs.version }}"
-          fi
-          v="${v#v}"   # strip an optional leading "v" (v1.2.3 -> 1.2.3)
-          if [ -z "$v" ]; then
-            echo "::error::No version resolved from the release tag or the dispatch input."
-            exit 1
-          fi
-          echo "version=$v" >> "$GITHUB_OUTPUT"
-          echo "Publishing version $v"
-
       - name: Restore
         run: dotnet restore src/a2n.Vista.slnx
 
@@ -131,7 +187,7 @@ jobs:
       - name: Build (Release)
         run: >-
           dotnet build src/a2n.Vista.slnx -c Release --no-restore
-          -p:Version=${{ steps.ver.outputs.version }}
+          -p:Version=${{ needs.guard.outputs.version }}
           -p:ContinuousIntegrationBuild=true
 
       - name: Pack
@@ -142,7 +198,7 @@ jobs:
           for proj in $PACK_PROJECTS; do
             echo "==> packing $proj"
             dotnet pack "$proj" -c Release --no-build -o artifacts \
-              -p:Version=${{ steps.ver.outputs.version }} \
+              -p:Version=${{ needs.guard.outputs.version }} \
               -p:ContinuousIntegrationBuild=true
           done
           ls -l artifacts

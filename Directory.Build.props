@@ -12,9 +12,22 @@
     <!--
       Local/default version only. A real release cuts the version from the Git tag: `publish.yml`
       passes -p:Version=<tag without the leading v>, which overrides this. Keep it in step with the
-      most recent released tag so a locally packed artifact is not mistaken for a newer one.
+      version currently being prepared for release so a locally packed artifact is not mistaken for
+      a newer one.
+
+      RELEASE LESSON (0.0.3): because the version comes from the tag and NOT from this property, the
+      tag must point at the commit that actually contains the release. `v0.0.3` was created on the
+      0.0.2 release commit, so nuget.org's 0.0.3 packages were built from 0.0.2 source: the version
+      number moved, the code did not, and nothing in the pipeline noticed because -p:Version simply
+      overrode whatever this file said. NuGet versions are immutable, so 0.0.3 cannot be corrected —
+      0.0.4 re-ships that work.
+
+      This value is therefore no longer decoration: the `guard` job in publish.yml (D153) reads it out
+      of the tagged tree and FAILS THE RELEASE when it disagrees with the version being published. Bump
+      it in the release commit, and still glance at `git log -1 <tag>` before publishing — the guard
+      proves the tree agrees with the tag, not that it is the commit you meant.
     -->
-    <Version>0.0.3</Version>
+    <Version>0.0.4</Version>
     <!--
       License metadata. The project is LGPL-3.0-or-later (see LICENSE, COPYING, NOTICES.md, and
       the README). Until this was set, `dotnet pack` emitted packages with NO <license> element at
