@@ -14,7 +14,7 @@
       passes -p:Version=<tag without the leading v>, which overrides this. Keep it in step with the
       most recent released tag so a locally packed artifact is not mistaken for a newer one.
     -->
-    <Version>0.0.2</Version>
+    <Version>0.0.3</Version>
     <!--
       License metadata. The project is LGPL-3.0-or-later (see LICENSE, COPYING, NOTICES.md, and
       the README). Until this was set, `dotnet pack` emitted packages with NO <license> element at

@@ -1,7 +1,28 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-08-09 (**issue #2 — the first externally reported defect, fixed as D150**). The AG Grid
+> Last updated: 2026-08-11 (**issue #4 — a server-trusted, DB-backed row scope now has a supported seam;
+> D151 + D152, shipped as v0.0.3**). Every per-request extension point was synchronous, so an author whose row scope had to be
+> *loaded* (a grants table, effective permissions) had one option: `GetAwaiter().GetResult()` inside the query
+> factory — a parked thread-pool thread per request and no `CancellationToken`, so a client abort cancelled
+> nothing. The documented workaround (loading in `IsAllowedAsync`, the only async pre-query hook) is worse than
+> it looks: `GateAsync` treats any throw there as a deny, so a transient data-loading fault became a **403**.
+> **D151** makes `IViewAuthorizer.ShapeQueryAsync(ctx, scope, ct)` the member the pipeline calls, as a *default
+> interface implementation* forwarding to `ShapeQuery` — every existing authorizer is untouched, a sync decision
+> still allocates nothing, and shaping now sits deliberately **outside** the fail-closed catch so a scope fault
+> is a 500, not a 403. **D152** makes that usable from Style A: `AddView<TSource, TRow>(name, source,
+> projection)` keeps source and projection separate (the shape Style B always had), carried on
+> `TemplateViewDefinition.SourceProjection` and turned into a `SplitViewExecutionPlan<TSource, TRow>`, so
+> authored `WithRowFilter<TSource>` **and** the request scope are AND-ed pre-projection and pushed down to SQL.
+> Without it part 1 is inert for Style A — any scope makes `RowFilterCount > 0` and the type-erased combined
+> plan fails closed (D141). This closes the "FLAGGED Core follow-up" `ProjectedViewExecutionPlan` carried in its
+> own XML docs; that plan is **not** retired — it remains the plan for the combined overload, which stays
+> supported and unchanged. Part 3 of the issue (an async query-factory overload) is **declined**: it would push
+> `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated
+> plan, which D151 + D152 make unnecessary. Additive only — no route, envelope, header, error shape, or existing
+> view behaviour changes. 555 tests/TFM (net8, +6) / 556 (net10) and 115 generator tests, 0 failed; the AG Grid
+> Northwind read + write + OpenAPI self-tests PASS unchanged. Shipped as **v0.0.3**. See §2.29.
+> Prior: 2026-08-09 (**issue #2 — the first externally reported defect, fixed as D150**). The AG Grid
 > adapter's sort channel matched every `sortModel[].colId` against the view projection and silently skipped
 > what it could not resolve, while a `filterModel` key with the *same* spelling mistake was rejected with
 > `400 filter-unknown-field`. Matching is ordinal and `rowData` is serialized camelCase while field names are
@@ -1123,7 +1144,7 @@ package-content change). No decision numbers — pure operational tooling.
 under `analyzers/dotnet/cs` (verified: a local-feed package consumer's build emits the accessor/invoker/
 json-context generators); (2) **`a2n.Vista.Client.TypeScript`** now ships as a `dotnet tool`
 (`PackAsTool`, command `vista-ts`); (3) `<Version>` in `Directory.Build.props` is the local/default only
-(kept in step with the latest released tag — **`0.0.2`** as of 2026-08-09), since a real release cuts the
+(kept in step with the latest released tag — **`0.0.3`** as of 2026-08-11), since a real release cuts the
 version from the Git tag (`publish.yml` passes `-p:Version=<tag without the leading v>`, which overrides
 it). Every shipping package also carries the brand icon
 and a per-package `README.md` for its nuget.org page. **Verification** is the first green Actions run
@@ -1498,6 +1519,73 @@ nothing, caught only by asserting the resulting rank sequence against a real dat
   exact repro), one asserting a correctly spelled sort still orders the block (its absence would have
   fallen back to the `KeyFields` tiebreaker — precisely the healthy-looking wrong answer that was reported).
 
+### 2.29 Issue #4 — a DB-backed server-trusted row scope got a supported seam (landed 2026-08-11; D151, D152)
+
+> Shipped as **v0.0.3** — the sole change in that release. Purely additive: no behaviour, route, envelope,
+> header, or error-shape change, so unlike v0.0.2 there is no migration note.
+
+The second externally reported issue, and unlike #2 **nothing was wrong**: the engine failed closed in exactly
+the right places. What was missing was a *door*. A consumer needed a per-caller set of accessible dataset ids
+read from a grants table plus effective roles — row-level security, so it must be AND-ed into the query and
+must not be bypassable. Every per-request extension point Vista offered took `IServiceProvider` and was
+synchronous (`AddView`, `FromQuery`, `WithRowFilter`, `WithProjectedRowFilter`, `MaskField`, `ShapeQuery`), so
+the only way to load a scope was:
+
+```csharp
+var scope = sp.GetRequiredService<IAccessResolver>()
+    .GetScopeAsync(CancellationToken.None)   // no token reachable here
+    .GetAwaiter().GetResult();               // parks a thread-pool thread per grid request
+```
+
+The workaround the reporter had found — awaiting the resolver in `IsAllowedAsync`, the only async hook running
+before the query factory, and relying on a per-scope memoization so the later blocking wait observes a
+completed task — is worse than it looks in two ways. `GateAsync` treats **any** throw from `IsAllowedAsync` as
+a deny, so a transient data-loading failure becomes a `403`; and it depends on the `IsAllowedAsync` →
+`ShapeQuery` → executor-resolution ordering, which was an implementation detail, not a contract.
+
+- **D151 — shaping has an awaited door, and it is not on the deny path.**
+  `IViewAuthorizer.ShapeQueryAsync(ViewAuthContext, IViewScope, CancellationToken)` is now the member
+  `ViewRequestExecutor.AuthorizeAndShapeAsync` calls, with `HttpContext.RequestAborted` passed in. It is a
+  **default interface implementation** forwarding to `ShapeQuery`, so it is source- and binary-additive: the
+  seven authorizer test doubles, both samples, and any consumer implementation keep compiling untouched, and a
+  synchronous decision still allocates nothing (the method was already `async`, so this is one `await` at one
+  call site). The placement decision matters as much as the signature: shaping stays **outside** `GateAsync`'s
+  fail-closed `catch`, so a scope-loading fault propagates as a `500` rather than being reported as an
+  authorization failure. That is the defect in the workaround, fixed by construction — and it is why the XML
+  docs now say, in as many words, *do not load scope data from `IsAllowedAsync`*.
+- **D152 — the Style A source/projection split, which is what makes D151 usable there.**
+  `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` retains
+  `Func<TDbContext, IServiceProvider, IQueryable<TSource>>` and `Expression<Func<TSource, TRow>>` separately —
+  the shape Style B always had in its builder state. Core carries it on
+  `TemplateViewDefinition.SourceProjection` (a closed `TemplateSourceProjection<TDbContext>` hierarchy), and
+  `ViewExecutionPlan.FromTemplateDefinition` builds a `SplitViewExecutionPlan<TSource, TRow>` for it, so the
+  authored `WithRowFilter<TSource>` **and** the per-request scope are AND-ed pre-projection and pushed down to
+  SQL. `TRow` may still be anonymous. **Why a visitor, not reflection:** the type arguments are recovered
+  through a double-dispatch `ITemplateSourceProjectionVisitor<TDbContext, TResult>` so they close at compile
+  time; `MakeGenericType` over a possibly-anonymous row type is exactly the shape the trimmer cannot follow.
+  Two smaller consequences: a `WithRowFilter<TOther>` that does not match the source query is now rejected at
+  **registration** (it used to be an inevitable per-request cast failure), and `StyleAShapeGenerator` reads
+  `TRow` as the **last** type argument so a split view keeps its generated export accessors and
+  `JsonTypeInfo` — choosing the security-capable overload must not silently cost coverage.
+- **What did not change.** The combined `AddView<TRow>` overload is untouched and still produces
+  `ProjectedViewExecutionPlan`, which still refuses to execute when a server-trusted filter cannot be applied
+  pre-projection (D141). So the flagged follow-up on that plan is **closed but the plan is not retired** — its
+  documented limitation is now a property of one authoring choice rather than of Style A as a whole. Part 3 of
+  the issue (`Func<TDbContext, IServiceProvider, CancellationToken, ValueTask<IQueryable<TRow>>>`) is
+  **declined**, as the reporter anticipated: it pushes `async` through `IViewExecutionPlan.CreateScopedQueryable`,
+  `ICompiledViewExecutionPlan`, and every generated plan, and D151 + D152 remove the need.
+- **Verified —** build green net8/9/10 (no new warnings); **555 tests/TFM (net8)** in `a2n.Vista.Tests`
+  (+6, 0 failed / 0 skipped) and **115 generator tests**; AG Grid Northwind read + write + OpenAPI self-tests
+  PASS unchanged (19 paths, 0 missing/phantom, `/metadata` byte-identical). New coverage in
+  `AsyncScopeAndStyleASplitTests`: the default `ShapeQueryAsync` forwards to a sync-only authorizer; the
+  pipeline calls the async override and hands it `RequestAborted` (asserting the sync member is *not* called);
+  the split plan honours authored + scoped filters pre-projection over real SQLite (25 → 20 → 5 rows); the
+  combined overload still throws `NotSupportedException` on a populated scope; a mismatched `TSource` throws at
+  `BuildViews()`; and an end-to-end `TestServer` case where a `UseAuthorizer<T>` authorizer *awaits* its id set
+  and the view returns 10 of 25 rows with `totalRowsUnfiltered == 10` — the scope is not probeable through
+  paging metadata either. Plus a generator test pinning that the split overload is recognized and covered
+  identically to the combined one.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1567,8 +1655,20 @@ approval.
   tracked row let a later `SaveChanges` persist the mask over real data. Applies to List, Detail, Export,
   and the count queries. Same decision made the reflection mask **non-destructive** for a get-only row.
   (Audit `BUG-07`; §2.25.)
+- **Shaping is awaited, and a shaping fault is not a deny (D151).** `IViewAuthorizer.ShapeQueryAsync(ctx,
+  scope, ct)` is the member the pipeline calls, as a **default interface implementation** forwarding to the
+  synchronous `ShapeQuery` — so an I/O-backed server-trusted scope is awaited with `RequestAborted` instead
+  of blocking, and every existing authorizer is unchanged. Shaping sits **outside** `GateAsync`'s
+  fail-closed catch: a scope-loading fault is a 500, never a 403. Do **not** load scope data from
+  `IsAllowedAsync` (every throw there is a deny). Issue #4; §2.29.
 
 ### Authoring & routing
+- **Style A has two AddView shapes, and only one supports row-level security (D152).** The combined
+  `AddView<TRow>(name, query)` erases `TSource` behind the projection, so it keeps failing closed when a
+  server-trusted row filter exists (D141); the split `AddView<TSource, TRow>(name, source, projection)`
+  keeps the two separate and is executed by `SplitViewExecutionPlan<TSource, TRow>`, applying authored and
+  per-request filters pre-projection. Both are permanent; `ProjectedViewExecutionPlan` is **not** retired.
+  A `WithRowFilter<TOther>` that does not match the source query fails at registration. Issue #4; §2.29.
 - **Two authoring styles are permanent (D96).** Style A (central template, anonymous) **and** Style B
   (class-per-view, typed) are first-class forever — no deprecation of Style A. **AOT asymmetry is
   permanent & explicit:** Style A serialization stays `[RequiresUnreferencedCode]` (anonymous);
@@ -1697,7 +1797,9 @@ These record where the code intentionally differs from the early spec sketches. 
 | D148 | audit remediation (`BUG-10`) | **Landed (2026-07-31).** `ViewMetadata.Equals`/`GetHashCode` are hand-written over the declarative content (name, route, types, **element-wise** `Fields`, authorization, limits, read-only flag). The synthesized record equality compared every instance field including a per-instance lock object, so two identical snapshots were never equal and the hash was an identity hash unstable across runs; it also compared `Fields` by list reference, since `IReadOnlyList<T>` has no structural equality. The D105 startup-completed `KeyFields` is **excluded from both**, so neither changes during an instance's lifetime — the property that makes a type safe in a hash-based collection. Harmless: view names are globally unique (D101/D103) and `Name` is compared, so equal snapshots describe the same view and resolve the same key. See §2.25. |
 | D149 | audit remediation (`DEAD-02`) | **Landed (2026-07-31).** Display-format metadata: **the server publishes, the client applies.** `IFieldBuilder.Format(...)` (on the authored surface per `01-view.md` §5.2, and the successor of DynData's `DataFormatString`) now reaches `FieldMetadata.Format`, the `GET {route}/metadata` projection, and the emitted OpenAPI schema (optional). Vista never interprets the hint, so filter, sort, and export keep operating on raw values — presentation cannot change what a query matches or what an export contains. Previously the value was captured and read by nothing, making `.Format("N2")` silent data loss. Additive: the response member is omitted when unset, so a view that sets no hint has a byte-identical `/metadata` payload. The TypeScript client is untouched (it types wire DTOs, not metadata). See §2.26. |
 | D150 | issue [#2](https://github.com/anwarminarso/a2n.Vista/issues/2) / `ag-grid-adapter` spec R3.4 + R4.6, `04` §6 | **Landed (2026-08-09).** The AG Grid sort channel does **not** drop an unknown `colId`. `AgGridAdapter.BuildSort` no longer consults `ViewFieldLookup` (it no longer takes `fields`): every `sortModel` entry becomes a `SortSpec` with its `colId` verbatim and in position, and the engine rejects an unknown (`filter-unknown-field`) or non-sortable (`filter-field-not-allowed`) field before any SQL runs — the same 400 the `filterModel` channel already produced for the identical spelling mistake. Rationale: matching inside the adapter *is* enforcing the whitelist (violating D67 / `04` §6 invariant 2), and it made a caller's typo indistinguishable from a non-field UI column, so a mis-cased name — the natural mistake, since `rowData` is camelCase and field names are PascalCase — returned `200` with an untouched row order. **Scopes the §6 invariant 5 carve-out:** a UI column is skipped only where the *request declares* it (DataTables `columns[i][data]`/`[orderable]`); an AG Grid `sortModel` declares nothing, so nothing is skipped — a non-field column opts out client-side via `sortable: false`. Supersedes the original R3.4 "skip non-field `colId`" rule and removes the R4.6 carve-out. Behaviour change (`CHANGELOG.md`): a sort on a non-projected column is now a 400 instead of a silent no-op. No route, envelope, or error-vocabulary change; ordinal matching, `filterModel`, and the DataTables adapter are all unchanged. See §2.28. |
-| **D151+** | **next free** | Use for new decisions. D150 (issue #2, AG Grid sort channel) was the last landed change. |
+| D151 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.6, `05` §6.1 | **Landed (2026-08-11).** `IViewAuthorizer.ShapeQueryAsync(ViewAuthContext, IViewScope, CancellationToken)` is the shaping member the pipeline calls, added as a **default interface implementation** forwarding to `ShapeQuery` (source- and binary-additive: every existing authorizer compiles and behaves identically, and a synchronous decision still allocates nothing). `ViewRequestExecutor.AuthorizeAndShapeAsync` awaits it with `HttpContext.RequestAborted`. Rationale: an I/O-backed server-trusted scope previously had no door — `GetAwaiter().GetResult()` inside the query factory parked a thread-pool thread per request and had no token, so a client abort cancelled nothing. **Placement is part of the decision:** shaping stays *outside* `GateAsync`'s fail-closed catch, so a scope-loading fault propagates as a 500 instead of being reported as a 403 — the defect in the documented workaround (loading scope data from `IsAllowedAsync`, whose every throw is a deny). Extends D43/D46. Only useful for Style A together with D152. See §2.29. |
+| D152 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.5 + §5.6, `02` §4.1 | **Landed (2026-08-11).** Style A source/projection split: `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` retains the source query and the projection separately (the shape Gaya B always had), carried on `TemplateViewDefinition.SourceProjection` as a closed `TemplateSourceProjection<TDbContext>` hierarchy, and `ViewExecutionPlan.FromTemplateDefinition` turns it into a `SplitViewExecutionPlan<TSource, TRow>` — so authored `WithRowFilter<TSource>` **and** the per-request scope are AND-ed pre-projection and pushed down to SQL. `TSource`/`TRow` are recovered through a double-dispatch `ITemplateSourceProjectionVisitor<TDbContext, TResult>` so the type arguments close at compile time (no `MakeGenericType` over a possibly-anonymous row type). Closes the "FLAGGED Core follow-up" documented on `ProjectedViewExecutionPlan` **without retiring it**: the combined `AddView<TRow>` overload is unchanged and still fails closed on a populated scope (D141), so the limitation is now a property of one authoring choice. Side effects: a `WithRowFilter<TOther>` mismatched with the source query fails at registration rather than per request, and `StyleAShapeGenerator` reads `TRow` as the **last** `AddView` type argument so a split view keeps its generated export accessors / `JsonTypeInfo`. Issue #4 part 3 (an async query-factory overload) is **declined** — it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated plan. See §2.29. |
+| **D153+** | **next free** | Use for new decisions. D151/D152 (issue #4, async shaping + Style A split) were the last landed changes. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).
