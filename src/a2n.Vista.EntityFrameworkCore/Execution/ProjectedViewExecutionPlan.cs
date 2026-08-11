@@ -15,7 +15,7 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// </summary>
 /// <remarks>
 /// <para>
-/// <b>Documented limitation (FLAGGED Core follow-up).</b> Because the captured delegate already
+/// <b>Documented limitation.</b> Because the captured delegate already
 /// projected to the (often anonymous) row type, the source type <c>TSource</c> is no longer visible to
 /// the EF layer, so server-trusted predicates expressed over <c>TSource</c> — both the authored
 /// <see cref="TemplateRowFilter"/>s and the per-request scope from <c>IViewAuthorizer.ShapeQuery</c> —
@@ -32,12 +32,14 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// example the Northwind <c>vProductCategory</c> sample) executes normally.
 /// </para>
 /// <para>
-/// <b>Recommended Core change (not made here).</b> Align Gaya A capture with §4.1 by having
-/// <c>IViewTemplateBuilder.AddView</c>/<c>TemplateViewDefinition</c> retain the base
+/// <b>The way out (Decision Log D152).</b> The §4.1-aligned Gaya A form now exists:
+/// <c>IViewTemplateBuilder.AddView&lt;TSource, TRow&gt;(name, source, projection)</c> retains the base
 /// <c>Func&lt;TDbContext, IServiceProvider, IQueryable&lt;TSource&gt;&gt;</c> and the
-/// <c>Expression&lt;Func&lt;TSource, TRow&gt;&gt;</c> projection separately (as Gaya B already does in
-/// its builder state). The EF layer could then build a <see cref="SplitViewExecutionPlan{TSource, TRow}"/>
-/// for Gaya A too, and this combined plan — together with its limitation — would be retired.
+/// <c>Expression&lt;Func&lt;TSource, TRow&gt;&gt;</c> projection separately (as Gaya B always did), and
+/// <see cref="ViewExecutionPlan.FromTemplateDefinition{TDbContext}"/> builds a
+/// <see cref="SplitViewExecutionPlan{TSource, TRow}"/> for it. This combined plan is therefore <em>not</em>
+/// retired: it remains the plan for the combined single-delegate <c>AddView&lt;TRow&gt;</c> overload, which
+/// stays supported for views that need no row-level security, and it keeps failing closed for those that do.
 /// </para>
 /// </remarks>
 public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
@@ -107,9 +109,10 @@ public sealed class ProjectedViewExecutionPlan : IViewExecutionPlan
                 "request-scoped server-trusted row filter(s) over its source entity, but its central-template " +
                 "(Gaya A) query captured the source and projection as a single delegate, so those predicates " +
                 "cannot be applied pre-projection (§4.1). Executing it would silently drop row-level security. " +
-                "Resolve by aligning the Gaya A capture with §4.1 (retain the source query and projection " +
-                "separately so a SplitViewExecutionPlan can be built), or author the view in the class-per-view " +
-                "(Gaya B) style.");
+                "Resolve by re-registering the view through the source/projection overload " +
+                "AddView<TSource, TRow>(name, source, projection), which keeps the two separate so a " +
+                "SplitViewExecutionPlan is built and the predicates are AND-ed before the projection " +
+                "(Decision Log D152), or author the view in the class-per-view (Gaya B) style.");
         }
 
         var queryable = _projectedFactory(dbContext, services)

@@ -125,6 +125,67 @@ namespace App
         await AssertNoErrors(result);
     }
 
+    // ---- Row 1b: the split AddView<TSource, TRow> overload (D152) -> COVERED identically ---------------
+
+    private const string NamedReadOnlySplitView = @"
+using System.Linq;
+
+namespace App
+{
+    public enum CustomerKind { Regular, Premium }
+
+    public sealed class CustomerEntity
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int? Rank { get; set; }
+        public CustomerKind Kind { get; set; }
+    }
+
+    public sealed class CustomerRow
+    {
+        public int Id { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public int? Rank { get; set; }
+        public CustomerKind Kind { get; set; }
+    }
+
+    public class CustomerSplitTemplate
+        : a2n.Vista.Authoring.ViewTemplate<a2n.Vista.TestFixtures.TestDbContext>
+    {
+        protected internal override void Configure(
+            a2n.Vista.Authoring.IViewTemplateBuilder<a2n.Vista.TestFixtures.TestDbContext> views)
+        {
+            views.AddView<CustomerEntity, CustomerRow>(
+                ""customers"",
+                (db, sp) => new CustomerEntity[0].AsQueryable(),
+                e => new CustomerRow { Id = e.Id, Name = e.Name, Rank = e.Rank, Kind = e.Kind });
+        }
+    }
+}
+";
+
+    [Test]
+    public async Task Split_AddView_Overload_Is_Recognized_And_Covered_Like_The_Combined_One()
+    {
+        // D152 added a second AddView overload whose FIRST type argument is TSource. The generator keys on
+        // TRow, so it takes the LAST type argument; a split view must therefore be covered exactly as the
+        // combined one is — otherwise choosing the row-level-security-capable overload would silently cost
+        // the view its generated export accessors and read-DTO JsonTypeInfo.
+        var result = StyleAShapeGeneratorTestHarness.Run(NamedReadOnlySplitView);
+
+        await Assert.That(RecognizedCandidateCount(result)).IsEqualTo(1);
+
+        var covered = DiagnosticsWithId(result, "VISTA0060");
+        await Assert.That(covered.Length).IsEqualTo(1);
+        await Assert.That(Names(covered[0]).Contains("'customers'", StringComparison.Ordinal)).IsTrue();
+        await Assert.That(Vista0060Artifacts(covered[0]))
+            .IsEquivalentTo(new[] { ExportAccessors, ReadDtoJsonTypeInfo });
+
+        await AssertNoDiagnostics(result, "VISTA0061", "VISTA0062", "VISTA0063");
+        await AssertNoErrors(result);
+    }
+
     // ---- Row 2: named TRow + named TCrud, constant name -> COVERED (adds TCrud JsonTypeInfo) -----------
 
     private const string NamedWritableView = @"

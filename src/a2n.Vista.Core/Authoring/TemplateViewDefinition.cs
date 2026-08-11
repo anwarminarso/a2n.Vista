@@ -49,6 +49,36 @@ public sealed class TemplateViewDefinition<TDbContext>
         Func<TDbContext, IServiceProvider, IQueryable> queryFactory,
         IReadOnlyList<TemplateRowFilter> rowFilters,
         CrudFacetDefinition? crud)
+        : this(metadata, queryFactory, rowFilters, crud, sourceProjection: null)
+    {
+    }
+
+    /// <summary>
+    /// Initializes a new <see cref="TemplateViewDefinition{TDbContext}"/> that also carries the
+    /// §4.1-aligned source/projection split (Decision Log D152).
+    /// </summary>
+    /// <param name="metadata">The produced view metadata.</param>
+    /// <param name="queryFactory">
+    /// The captured anonymous projection, type-erased to a non-generic <see cref="IQueryable"/>. For a
+    /// split view this is the equivalent combined query (<c>source.Select(projection)</c>), so
+    /// <see cref="CreateQuery"/> behaves the same for both overloads.
+    /// </param>
+    /// <param name="rowFilters">The captured server-trusted row filters, in declaration order.</param>
+    /// <param name="crud">The captured typed Write facet, or <see langword="null"/> when read-only.</param>
+    /// <param name="sourceProjection">
+    /// The separately-held source query and projection, or <see langword="null"/> when the view was
+    /// authored through the combined single-delegate <c>AddView&lt;TRow&gt;</c> overload.
+    /// </param>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="metadata"/>, <paramref name="queryFactory"/>, or <paramref name="rowFilters"/>
+    /// is <see langword="null"/>.
+    /// </exception>
+    public TemplateViewDefinition(
+        ViewMetadata metadata,
+        Func<TDbContext, IServiceProvider, IQueryable> queryFactory,
+        IReadOnlyList<TemplateRowFilter> rowFilters,
+        CrudFacetDefinition? crud,
+        TemplateSourceProjection<TDbContext>? sourceProjection)
     {
         ArgumentNullException.ThrowIfNull(metadata);
         ArgumentNullException.ThrowIfNull(queryFactory);
@@ -58,6 +88,7 @@ public sealed class TemplateViewDefinition<TDbContext>
         _queryFactory = queryFactory;
         RowFilters = rowFilters;
         Crud = crud;
+        SourceProjection = sourceProjection;
     }
 
     /// <summary>The metadata produced for this view (the shape both authoring styles emit).</summary>
@@ -65,6 +96,19 @@ public sealed class TemplateViewDefinition<TDbContext>
 
     /// <summary>The server-trusted row filters captured for this view, in declaration order.</summary>
     public IReadOnlyList<TemplateRowFilter> RowFilters { get; }
+
+    /// <summary>
+    /// The §4.1-aligned source/projection split, or <see langword="null"/> when the view was authored
+    /// through the combined single-delegate <c>AddView&lt;TRow&gt;</c> overload (Decision Log D152).
+    /// </summary>
+    /// <remarks>
+    /// When present, the execution layer can apply server-trusted predicates — the authored
+    /// <see cref="RowFilters"/> and the per-request scope from <c>IViewAuthorizer.ShapeQuery</c>/
+    /// <c>ShapeQueryAsync</c> — <b>pre-projection</b> over the source entity. When absent, the source type
+    /// is hidden behind the captured projection, so a view that carries any server-trusted row filter
+    /// fails closed instead of returning unscoped rows (Decision Log D141).
+    /// </remarks>
+    public TemplateSourceProjection<TDbContext>? SourceProjection { get; }
 
     /// <summary>
     /// The typed Write facet, or <see langword="null"/> when the view is read-only

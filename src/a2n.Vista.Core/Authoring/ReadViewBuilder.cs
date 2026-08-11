@@ -43,6 +43,11 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     private readonly string _name;
     private readonly Func<TDbContext, IServiceProvider, IQueryable<TRow>> _query;
 
+    // Present only for the §4.1-aligned AddView<TSource, TRow> overload (Decision Log D152). It is a
+    // factory rather than a ready instance because the authored row filters are only complete at Build
+    // time, and the split carrier validates them against TSource. Null for the combined overload.
+    private readonly Func<IReadOnlyList<TemplateRowFilter>, TemplateSourceProjection<TDbContext>>? _sourceProjectionFactory;
+
     // Per-field overrides keyed by projected member name (ordinal). Stored as the non-generic
     // accumulation surface so this builder can read PK/format and materialize FieldMetadata without
     // tracking each field's TProp.
@@ -55,10 +60,41 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
     private List<string>? _explicitKeyFields;
 
     internal ReadViewBuilder(string name, Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
+        : this(name, query, sourceProjectionFactory: null)
+    {
+    }
+
+    private ReadViewBuilder(
+        string name,
+        Func<TDbContext, IServiceProvider, IQueryable<TRow>> query,
+        Func<IReadOnlyList<TemplateRowFilter>, TemplateSourceProjection<TDbContext>>? sourceProjectionFactory)
     {
         _name = name;
         _query = query;
+        _sourceProjectionFactory = sourceProjectionFactory;
     }
+
+    /// <summary>
+    /// Creates a builder for the §4.1-aligned <c>AddView&lt;TSource, TRow&gt;</c> overload: the source
+    /// query and projection are retained separately so the execution layer can AND server-trusted
+    /// predicates pre-projection (Decision Log D152). The equivalent combined query
+    /// (<c>source.Select(projection)</c>) is kept as well, so <c>TemplateViewDefinition.CreateQuery</c>
+    /// behaves identically for both overloads.
+    /// </summary>
+    /// <typeparam name="TSource">The EF source entity type the query is rooted on.</typeparam>
+    internal static ReadViewBuilder<TDbContext, TRow> Split<TSource>(
+        string name,
+        Func<TDbContext, IServiceProvider, IQueryable<TSource>> source,
+        Expression<Func<TSource, TRow>> projection)
+        where TSource : class
+        => new(
+            name,
+            (db, services) => source(db, services).Select(projection),
+            rowFilters => new TemplateSourceProjection<TDbContext, TSource, TRow>(
+                name,
+                source,
+                projection,
+                rowFilters));
 
     /// <inheritdoc />
     public IReadViewBuilder<TRow> MaxPageSize(int rows)
@@ -183,7 +219,17 @@ internal sealed class ReadViewBuilder<TDbContext, TRow> : IReadViewBuilder<TRow>
         // naming an anonymous type (Decision Log D11). IQueryable<TRow> is an IQueryable.
         Func<TDbContext, IServiceProvider, IQueryable> queryFactory = (db, services) => _query(db, services);
 
-        return new TemplateViewDefinition<TDbContext>(metadata, queryFactory, _rowFilters, crudDefinition);
+        // For the split overload, also hand over the separately-held source query + projection, with the
+        // authored row filters typed to TSource (Decision Log D152). A filter over another entity fails
+        // fast here — at registration — instead of at request time.
+        var sourceProjection = _sourceProjectionFactory?.Invoke(_rowFilters);
+
+        return new TemplateViewDefinition<TDbContext>(
+            metadata,
+            queryFactory,
+            _rowFilters,
+            crudDefinition,
+            sourceProjection);
     }
 
     /// <summary>
