@@ -40,10 +40,17 @@ public static class ViewExecutionPlan
         new SplitViewExecutionPlan<TSource, TRow>(viewName, projection, sourceFactory, authoredRowFilters);
 
     /// <summary>
-    /// Builds a <see cref="ProjectedViewExecutionPlan"/> from a Gaya A (central-template) view
-    /// definition. The definition combines source and projection in one delegate, so the resulting plan
-    /// carries the §4.1 limitation documented on <see cref="ProjectedViewExecutionPlan"/> (it fails
-    /// closed if the view declared any server-trusted row filter).
+    /// Builds the execution plan for a Gaya A (central-template) view definition, picking the plan shape
+    /// the definition's capture allows (Decision Log D152):
+    /// <list type="bullet">
+    ///   <item><description>the definition carries a <c>TemplateSourceProjection</c> (the view was
+    ///   registered through <c>AddView&lt;TSource, TRow&gt;</c>) → the §4.1-aligned
+    ///   <see cref="SplitViewExecutionPlan{TSource, TRow}"/>, with authored row filters and the
+    ///   per-request scope applied pre-projection;</description></item>
+    ///   <item><description>otherwise (the combined single-delegate <c>AddView&lt;TRow&gt;</c>) → a
+    ///   <see cref="ProjectedViewExecutionPlan"/>, which carries the §4.1 limitation documented on that
+    ///   type and fails closed if any server-trusted row filter exists.</description></item>
+    /// </list>
     /// </summary>
     /// <typeparam name="TDbContext">
     /// The template's data-source type. At execution time the <see cref="DbContext"/> handed to the plan
@@ -65,6 +72,14 @@ public static class ViewExecutionPlan
 
         var metadata = definition.Metadata;
 
+        // D152: when the view kept its source query and projection separate, build the fully-correct
+        // split plan so server-trusted predicates over TSource are AND-ed pre-projection. The visitor
+        // recovers TSource/TRow with the type arguments closed at compile time — no MakeGenericType.
+        if (definition.SourceProjection is { } sourceProjection)
+        {
+            return sourceProjection.Accept(new TemplateSplitPlanVisitor<TDbContext>(metadata.Name));
+        }
+
         IQueryable ProjectedFactory(DbContext dbContext, IServiceProvider services)
         {
             if (dbContext is not TDbContext typedContext)
@@ -83,5 +98,45 @@ public static class ViewExecutionPlan
             metadata.QueryType,
             ProjectedFactory,
             authoredRowFilterCount: definition.RowFilters.Count);
+    }
+
+    /// <summary>
+    /// Turns the strongly-typed source/projection pair a Gaya A split view captured into a
+    /// <see cref="SplitViewExecutionPlan{TSource, TRow}"/> (Decision Log D152). The visitor is how
+    /// <c>TSource</c>/<c>TRow</c> are recovered with the type arguments closed at compile time, which
+    /// matters because a Gaya A row type is frequently anonymous.
+    /// </summary>
+    /// <typeparam name="TDbContext">The template's data-source type.</typeparam>
+    private sealed class TemplateSplitPlanVisitor<TDbContext>
+        : ITemplateSourceProjectionVisitor<TDbContext, IViewExecutionPlan>
+        where TDbContext : class
+    {
+        private readonly string _viewName;
+
+        internal TemplateSplitPlanVisitor(string viewName) => _viewName = viewName;
+
+        /// <inheritdoc />
+        public IViewExecutionPlan Visit<TSource, TRow>(
+            Func<TDbContext, IServiceProvider, IQueryable<TSource>> source,
+            Expression<Func<TSource, TRow>> projection,
+            IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>> authoredRowFilters)
+            where TSource : class
+            where TRow : class
+            => new SplitViewExecutionPlan<TSource, TRow>(
+                _viewName,
+                projection,
+                (dbContext, services) => source(RequireContext(dbContext), services),
+                authoredRowFilters);
+
+        /// <summary>
+        /// Narrows the executor-supplied context to the type the template was authored against, with the
+        /// same diagnostic the combined Gaya A path emits.
+        /// </summary>
+        private TDbContext RequireContext(DbContext dbContext)
+            => dbContext as TDbContext
+               ?? throw new InvalidOperationException(
+                   $"View '{_viewName}' was authored against data-source type '{typeof(TDbContext)}', " +
+                   $"but the executor supplied a context of type '{dbContext.GetType()}'. Register the view " +
+                   "against the same DbContext the executor resolves (composition root, Task 9.4).");
     }
 }

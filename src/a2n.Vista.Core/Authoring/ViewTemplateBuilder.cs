@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq.Expressions;
 
 namespace a2n.Vista.Authoring;
 
@@ -34,6 +35,29 @@ internal sealed class ViewTemplateBuilder<TDbContext> : IViewTemplateBuilder<TDb
         }
 
         var builder = new ReadViewBuilder<TDbContext, TRow>(name, query);
+        _views.Add(builder);
+        return builder;
+    }
+
+    /// <inheritdoc />
+    public IReadViewBuilder<TRow> AddView<TSource, TRow>(
+        string name,
+        Func<TDbContext, IServiceProvider, IQueryable<TSource>> source,
+        Expression<Func<TSource, TRow>> projection)
+        where TSource : class
+        where TRow : class
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(name);
+        ArgumentNullException.ThrowIfNull(source);
+        ArgumentNullException.ThrowIfNull(projection);
+
+        if (!_names.Add(name))
+        {
+            throw new InvalidOperationException(
+                $"A view named '{name}' is already registered in this template. View names must be unique.");
+        }
+
+        var builder = ReadViewBuilder<TDbContext, TRow>.Split(name, source, projection);
         _views.Add(builder);
         return builder;
     }

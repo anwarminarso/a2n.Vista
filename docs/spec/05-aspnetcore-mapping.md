@@ -211,6 +211,10 @@ public interface IViewAuthorizer
     // Inject a server-trusted row filter (tenant, ownership) — centralized, cannot be bypassed by the client.
     // Added leaves go into the Trusted channel (not validated, Spec 02 §7).
     void ShapeQuery(ViewAuthContext ctx, IViewScope scope);
+
+    // The awaited door for a scope that must be LOADED (Spec 01 D151). Default implementation
+    // forwards to ShapeQuery, so an authorizer needing no I/O implements only the sync member.
+    ValueTask ShapeQueryAsync(ViewAuthContext ctx, IViewScope scope, CancellationToken ct);
 }
 ```
 
@@ -222,13 +226,14 @@ Every endpoint group runs, **before** touching `IViewExecutor`/`IViewWriter`:
 1. resolve ViewMetadata (registry)
 2. ctx = ViewAuthContext(User, viewName, facet, HttpContext, Services)
 3. if (!await authorizer.IsAllowedAsync(ctx)) → 403 forbidden        (Spec 01 §14.1)
-4. scope = new ViewScope();  authorizer.ShapeQuery(ctx, scope)        (read & write)
+4. scope = new ViewScope();  await authorizer.ShapeQueryAsync(ctx, scope, RequestAborted)  (read & write, D151)
 5a. READ : exec = new ViewQueryExecution(viewName, request, scope, sp)
            → IViewExecutor.QueryAsync(exec)                          (Spec 02 §6.3)
 5b. WRITE: IViewWriter.Create/Update/Delete(..., scope, ...)          (§7) — scope limits the rows that may be touched
 ```
 
 - **`ShapeQuery` also applies to writes** (D85): update/delete by-key is `AND`-ed with the trusted filter, so a user cannot modify rows outside their tenant/ownership even if they know the PK. Without this, writes would leak across tenants.
+- **Step 4 is outside the fail-closed catch of step 3** (D151). A throw from `IsAllowedAsync` is a deny (403); a throw from shaping is a scope-loading fault and propagates as a 500. No rows are served either way, but the cause is reported honestly — which is why scope data must not be loaded from `IsAllowedAsync`.
 - **Granular `Facet`** (`Create`/`Update`/`Delete` separated, not a single `Write`) so the authorizer can, e.g., allow `Update` but deny `Delete`.
 
 ### 6.2 Default & warning

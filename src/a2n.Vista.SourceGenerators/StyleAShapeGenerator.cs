@@ -288,7 +288,11 @@ namespace a2n.Vista.SourceGenerators
             // Capture the read row type TRow (the AddView type argument). HasNamedRowType is false when TRow
             // is anonymous or `object` — unnameable in generated source, so the read side stays RUC by design
             // (R1.4); RowTypeFqn is captured global::-qualified only when named.
-            var rowType = addViewMethod.TypeArguments.Length == 1 ? addViewMethod.TypeArguments[0] : null;
+            // TRow is the LAST type argument, which covers both overloads: the combined
+            // AddView<TRow>(name, query) and the §4.1-aligned split AddView<TSource, TRow>(name, source,
+            // projection) (D152), where TSource comes first. IsAddViewMethod already restricted the arity
+            // to 1 or 2, so the last argument is always TRow.
+            var rowType = addViewMethod.TypeArguments[addViewMethod.TypeArguments.Length - 1];
             var hasNamedRowType = IsNamedContractType(rowType);
             var rowTypeFqn = hasNamedRowType
                 ? rowType.ToDisplayString(SymbolDisplayFormat.FullyQualifiedFormat)
@@ -896,14 +900,16 @@ namespace a2n.Vista.SourceGenerators
         }
 
         /// <summary>
-        /// True when <paramref name="method"/> is <c>a2n.Vista.Authoring.IViewTemplateBuilder&lt;TDbContext&gt;
-        /// .AddView&lt;TRow&gt;</c>: named <c>AddView</c>, one type argument (<c>TRow</c>), declared on the
-        /// <c>IViewTemplateBuilder&lt;&gt;</c> interface (recognized by metadata name + namespace, FQN-only,
-        /// R1.6/R7.1).
+        /// True when <paramref name="method"/> is an <c>a2n.Vista.Authoring.IViewTemplateBuilder&lt;TDbContext&gt;
+        /// .AddView</c> overload: named <c>AddView</c>, declared on the <c>IViewTemplateBuilder&lt;&gt;</c>
+        /// interface (recognized by metadata name + namespace, FQN-only, R1.6/R7.1), with either one type
+        /// argument (the combined <c>AddView&lt;TRow&gt;</c>) or two (the §4.1-aligned split
+        /// <c>AddView&lt;TSource, TRow&gt;</c>, D152). Both authoring forms describe the same view shape, so
+        /// both are covered; <c>TRow</c> is the last type argument either way.
         /// </summary>
         private static bool IsAddViewMethod(IMethodSymbol method)
             => method.Name == AddViewMethodName
-               && method.TypeArguments.Length == 1
+               && (method.TypeArguments.Length == 1 || method.TypeArguments.Length == 2)
                && IsRecognizedAuthoringType(
                    method.ContainingType?.OriginalDefinition,
                    ViewTemplateBuilderMetadataName);

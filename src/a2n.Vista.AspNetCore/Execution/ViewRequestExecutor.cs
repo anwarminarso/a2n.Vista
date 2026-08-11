@@ -33,7 +33,9 @@ namespace a2n.Vista.AspNetCore.Execution;
 ///   treated as a deny and also maps to 403 — fail-closed (R7.3). When absent, access is allowed
 ///   (R7.2).</description></item>
 ///   <item><description>Build a fresh Core <see cref="ViewScope"/>. When an authorizer is present,
-///   <see cref="IViewAuthorizer.ShapeQuery"/> populates it with server-trusted row filters (R6.3); when
+///   <see cref="IViewAuthorizer.ShapeQueryAsync"/> populates it with server-trusted row filters (R6.3) —
+///   its default implementation forwards to the synchronous <see cref="IViewAuthorizer.ShapeQuery"/>, so
+///   an I/O-backed scope is awaited with the request token instead of blocking (Decision Log D151); when
 ///   absent the scope stays empty.</description></item>
 ///   <item><description>Resolve <see cref="IViewExecutor"/> from the request services and invoke the
 ///   matching facet, passing metadata + request + scope + <see cref="HttpContext.RequestAborted"/>.</description></item>
@@ -507,7 +509,20 @@ public sealed class ViewRequestExecutor
 
         // AspNetCore owns the per-request scope (see ViewScope remarks); it is then handed to the executor.
         IViewScope scope = new ViewScope();
-        services.GetService<IViewAuthorizer>()?.ShapeQuery(context, scope);
+
+        // Shaping goes through the async door (D151). Its default implementation forwards to the
+        // synchronous ShapeQuery, so a sync authorizer is unaffected and allocates nothing extra; an
+        // authorizer whose scope needs I/O overrides ShapeQueryAsync and receives the request token
+        // instead of blocking a thread-pool thread on GetAwaiter().GetResult().
+        //
+        // Deliberately NOT inside GateAsync's fail-closed catch: an exception here is a scope-loading
+        // fault, not an authorization decision, so it propagates as a 500 rather than being reported as
+        // a 403. No rows are served either way.
+        var authorizer = services.GetService<IViewAuthorizer>();
+        if (authorizer is not null)
+        {
+            await authorizer.ShapeQueryAsync(context, scope, http.RequestAborted).ConfigureAwait(false);
+        }
 
         var executor = services.GetRequiredService<IViewExecutor>();
         return (view, scope, executor);

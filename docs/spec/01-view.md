@@ -409,9 +409,26 @@ public interface IViewTemplateBuilder<TDbContext>
 {
     // Read-only anonymous view. TRow is inferred by the compiler from the lambda body
     // (may be an anonymous type) — no explicit DTO needed.
+    //
+    // This overload COMBINES source and projection in one delegate, which erases TSource:
+    // pre-projection row-level security cannot be applied through it, so a view registered
+    // this way FAILS CLOSED as soon as an authored WithRowFilter<TSource> or a per-request
+    // scope exists (D141). Fine for a view that needs no row-level security.
     IReadViewBuilder<TRow> AddView<TRow>(
         string name,
         Func<TDbContext, IServiceProvider, IQueryable<TRow>> query)
+        where TRow : class;
+
+    // The §4.1-aligned form (D152): source query and projection kept SEPARATE, the shape
+    // Style B always had. TRow may still be anonymous. Prefer this whenever the view needs
+    // row-level security: it is the only Style A form where WithRowFilter<TSource> and the
+    // server-trusted scope from IViewAuthorizer.ShapeQuery/ShapeQueryAsync (§5.6) are AND-ed
+    // BEFORE the projection and pushed down to SQL (EF builds a SplitViewExecutionPlan).
+    IReadViewBuilder<TRow> AddView<TSource, TRow>(
+        string name,
+        Func<TDbContext, IServiceProvider, IQueryable<TSource>> source,
+        Expression<Func<TSource, TRow>> projection)
+        where TSource : class
         where TRow : class;
 }
 
@@ -434,7 +451,10 @@ public interface IReadViewBuilder<TRow>
         Action<IFieldBuilder<TProp>> configure);
 
     // Pre-projection row-level security (see 5.2). For server-trusted scope
-    // across views, use IViewAuthorizer.ShapeQuery (§5.6).
+    // across views, use IViewAuthorizer.ShapeQuery/ShapeQueryAsync (§5.6).
+    // Requires the AddView<TSource, TRow> overload above (D152): TSource must match the
+    // view's source query, or registration fails. On the combined overload, declaring a
+    // row filter makes the view fail closed at request time (D141).
     IReadViewBuilder<TRow> WithRowFilter<TSource>(
         Func<IServiceProvider, Expression<Func<TSource, bool>>> filterFactory)
         where TSource : class;
@@ -553,15 +573,39 @@ public interface IViewAuthorizer
     // The IDynDataAPIAuth.ApplyRequest equivalent: inject server-trusted row/scope
     // filters (tenant, ownership) — centralized, not from the client.
     // This is the trusted "contextual filter" path (see externalFilter reference).
+    // Synchronous: for scope derived from claims already in hand.
     void ShapeQuery(ViewAuthContext ctx, IViewScope scope);
+
+    // D152's counterpart for a scope that must be LOADED (a grants table, effective
+    // permissions). This is the member the pipeline calls; the default implementation
+    // forwards to ShapeQuery, so an authorizer that needs no I/O implements only the
+    // synchronous one. Overriding it removes the sync-over-async an I/O-backed scope
+    // otherwise forces and gives the scope query the request cancellation token.
+    //
+    // An exception here is NOT a deny: it propagates as a 500. Do not load scope data
+    // from IsAllowedAsync — a failure there becomes a 403, reporting a transient data
+    // fault as an authorization failure.
+    ValueTask ShapeQueryAsync(ViewAuthContext ctx, IViewScope scope, CancellationToken ct)
+    {
+        ShapeQuery(ctx, scope);
+        return ValueTask.CompletedTask;
+    }
 }
 
 public interface IViewScope
 {
     // AND-ed into the query, pushed down to SQL. TSource = the view's source entity.
     void AddRowFilter<TSource>(Expression<Func<TSource, bool>> filter) where TSource : class;
+
+    // The fail-closed signal for a type-erased plan that cannot honor a populated scope (D141).
+    int RowFilterCount { get; }
 }
 ```
+
+A row filter added from either shaping member is expressed over the view's `TSource` and applied
+pre-projection, so the view must keep its source and projection separate: Style B always does, and
+Style A does when registered through `AddView<TSource, TRow>` (§5.5, **D152**). A Style A view on the
+combined single-delegate overload fails closed instead (**D141**).
 
 Registration & default semantics:
 
@@ -1184,6 +1228,8 @@ sequentially after D93 (Spec 05).
 | D100 | **Vendor-neutral observability**: instrument via OpenTelemetry-native (`ActivitySource`/`Meter`/`ILogger`), with no APM dependency at all; enrich auto-instrumented spans with View semantics; operational status (e.g. the D94 authorizer) via standard health checks. Opt-in & zero-cost when not enabled. | **Decided** | `10-operations-and-observability.md`. |
 | D101 | **One route source = registration (model R).** A view's full route is composed at registration (`RouteGroup` prefix or the default root `/api/views`) and baked into `ViewMetadata.Route`; the AspNetCore layer is a dumb mapper that maps each view at its `ViewMetadata.Route`. The AspNetCore-owned `RouteRoot` setter was removed, resolving the EF/AspNetCore duplication. | **Done** | `VistaBuilder` composes the route; `VistaEndpointRouteBuilderExtensions` maps from the registry. |
 | D103 | **Route groups + one view = one endpoint.** `RouteGroup(prefix, g => { ... })` scoping on the EF builder (with a default root and `RegisterAssembly` for modular registration, the latter `[RequiresUnreferencedCode]`); nested groups combine prefixes; view names are globally unique; a view maps to exactly one endpoint (registering the same view in two groups fails fast). | **Done** | §4.5 use-case (internal vs external). `IVistaBuilder.RouteGroup`/`RegisterAssembly`. |
+| D151 | **Shaping has an awaited door.** `IViewAuthorizer.ShapeQueryAsync(ctx, scope, ct)` is the member the pipeline calls, as a **default interface implementation** forwarding to `ShapeQuery` — so a server-trusted scope that must be *loaded* is awaited with the request token instead of blocking a thread-pool thread, and every existing authorizer is unchanged. An exception from shaping propagates (500); it is deliberately **not** folded into the fail-closed deny path, so a scope-loading fault is never reported as a 403. | **Done** | §5.6. Issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4). Extends D43/D46. |
+| D152 | **Style A source/projection split.** `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` keeps the source query and the projection separate (the shape Style B always had), carried on `TemplateViewDefinition.SourceProjection` and turned into a `SplitViewExecutionPlan<TSource, TRow>` by the EF layer, so authored `WithRowFilter<TSource>` and the per-request scope are AND-ed pre-projection and pushed down to SQL. The combined `AddView<TRow>` overload and its D141 fail-closed behaviour are unchanged; a row filter over an entity other than the source is now rejected at registration. | **Done** | §5.5, §5.6. Issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4). Closes the follow-up flagged on `ProjectedViewExecutionPlan`; makes D151 usable from Style A. |
 
 > **D101 implementation note.** Resolved via model R (route-at-registration): the EF `VistaBuilder`
 > composes the full route into `ViewMetadata.Route` (default root or `RouteGroup` prefix), and the

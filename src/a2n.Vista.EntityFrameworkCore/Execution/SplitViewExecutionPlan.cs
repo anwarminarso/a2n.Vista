@@ -25,6 +25,12 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// which capture the source type, projection, and row-filter factories as separate, strongly-typed
 /// members. See <see cref="ViewExecutionPlan.Split{TSource, TRow}"/> for the public construction entry.
 /// </para>
+/// <para>
+/// Since Decision Log <b>D152</b> it is also the target for a Gaya A (central template) view registered
+/// through <c>AddView&lt;TSource, TRow&gt;(name, source, projection)</c>, which keeps the same two pieces
+/// separate. Such a view's source query is written against the developer's own context, so it arrives
+/// through the <see cref="DbContext"/>-aware constructor overload.
+/// </para>
 /// </remarks>
 public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
     where TSource : class
@@ -66,6 +72,39 @@ public sealed class SplitViewExecutionPlan<TSource, TRow> : IViewExecutionPlan
         _sourceFactory = sourceFactory is null
             ? static (db, _) => db.Set<TSource>()
             : (_, services) => sourceFactory(services);
+    }
+
+    /// <summary>
+    /// Initializes a new <see cref="SplitViewExecutionPlan{TSource, TRow}"/> whose source query also
+    /// receives the <see cref="DbContext"/> — the shape a Style A (central template) view captures
+    /// through <c>AddView&lt;TSource, TRow&gt;</c>, where the source query is written against the
+    /// developer's own context (Decision Log D152).
+    /// </summary>
+    /// <param name="viewName">The unique view name (matches <c>ViewMetadata.Name</c>).</param>
+    /// <param name="projection">The projection <c>Expression&lt;Func&lt;TSource, TRow&gt;&gt;</c>.</param>
+    /// <param name="sourceFactory">The source-query factory over the context and request services.</param>
+    /// <param name="authoredRowFilters">
+    /// The authored, server-trusted, deferred pre-projection row filters over <typeparamref name="TSource"/>
+    /// (§5.2, Decision Log D28), in declaration order; <see langword="null"/> for none.
+    /// </param>
+    /// <exception cref="ArgumentException"><paramref name="viewName"/> is <see langword="null"/> or whitespace.</exception>
+    /// <exception cref="ArgumentNullException">
+    /// <paramref name="projection"/> or <paramref name="sourceFactory"/> is <see langword="null"/>.
+    /// </exception>
+    public SplitViewExecutionPlan(
+        string viewName,
+        Expression<Func<TSource, TRow>> projection,
+        Func<DbContext, IServiceProvider, IQueryable<TSource>> sourceFactory,
+        IReadOnlyList<Func<IServiceProvider, Expression<Func<TSource, bool>>>>? authoredRowFilters = null)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(viewName);
+        ArgumentNullException.ThrowIfNull(projection);
+        ArgumentNullException.ThrowIfNull(sourceFactory);
+
+        ViewName = viewName;
+        _projection = projection;
+        _authoredRowFilters = authoredRowFilters ?? [];
+        _sourceFactory = sourceFactory;
     }
 
     /// <inheritdoc />

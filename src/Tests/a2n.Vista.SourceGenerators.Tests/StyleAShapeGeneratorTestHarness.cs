@@ -44,8 +44,10 @@ internal static class StyleAShapeGeneratorTestHarness
     /// <summary>
     /// Minimal stub declarations of the Style A authoring types the generator recognizes by
     /// fully-qualified name: the template base <c>ViewTemplate&lt;TDbContext&gt;</c>, the registration
-    /// surface <c>IViewTemplateBuilder&lt;TDbContext&gt;</c> (which declares
-    /// <c>AddView&lt;TRow&gt;(name, projection)</c>), the read-facet builder <c>IReadViewBuilder&lt;TRow&gt;</c>
+    /// surface <c>IViewTemplateBuilder&lt;TDbContext&gt;</c> (which declares both
+    /// <c>AddView&lt;TRow&gt;(name, projection)</c> and the §4.1-aligned split
+    /// <c>AddView&lt;TSource, TRow&gt;(name, source, projection)</c>, D152), the read-facet builder
+    /// <c>IReadViewBuilder&lt;TRow&gt;</c>
     /// (which declares <c>WithCrud&lt;TCrud, TEntity&gt;()</c>), and the <c>WithCrud</c> return type
     /// <c>ICrudFacetBuilder&lt;TCrud, TEntity&gt;</c>. The method names, generic arities, declaring-interface
     /// metadata names, and the <c>a2n.Vista.Authoring</c> namespace mirror the real Core surface, which is
@@ -67,6 +69,13 @@ namespace a2n.Vista.Authoring
         IReadViewBuilder<TRow> AddView<TRow>(
             string name,
             System.Func<TDbContext, System.IServiceProvider, System.Linq.IQueryable<TRow>> query)
+            where TRow : class;
+
+        IReadViewBuilder<TRow> AddView<TSource, TRow>(
+            string name,
+            System.Func<TDbContext, System.IServiceProvider, System.Linq.IQueryable<TSource>> source,
+            System.Linq.Expressions.Expression<System.Func<TSource, TRow>> projection)
+            where TSource : class
             where TRow : class;
     }
 
