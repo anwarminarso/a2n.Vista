@@ -10,6 +10,49 @@ While the version is `0.x`, anything may change between releases.
 
 Nothing yet.
 
+## [0.0.3] - 2026-08-11
+
+A purely additive feature release answering the second externally reported issue
+([#4](https://github.com/anwarminarso/a2n.Vista/issues/4)): a server-trusted, DB-backed row scope now has
+a supported seam. Nothing behaved incorrectly before — the engine failed closed in the right places — so
+there is **no behaviour change and no breaking change** here. What was missing was a door: every
+per-request extension point was synchronous, and Style A erased the source type behind its projection.
+Both are now addressed, and they are only useful together.
+
+### Added
+- **`IViewAuthorizer.ShapeQueryAsync` — an awaited door for a server-trusted scope that needs I/O**
+  ([#4](https://github.com/anwarminarso/a2n.Vista/issues/4), Decision Log D151). Every per-request
+  extension point was synchronous, so an author whose row scope had to be *loaded* (a grants table,
+  effective permissions) had exactly one option: `GetAwaiter().GetResult()` inside the query factory —
+  a parked thread-pool thread per request, and no `CancellationToken` in scope, so a client abort
+  cancelled nothing. `ShapeQueryAsync(context, scope, cancellationToken)` is now the member the
+  pipeline calls, with the request token in hand. It is a **default interface implementation** that
+  forwards to `ShapeQuery`, so every existing authorizer keeps compiling and behaving identically and
+  a synchronous decision still allocates nothing. An exception from shaping is deliberately **not**
+  converted to a deny: it propagates as a `500`, so a transient scope-loading failure is never
+  reported as an authorization failure (which is what loading data from `IsAllowedAsync` — the
+  documented workaround — did).
+- **The Style A source/projection split: `AddView<TSource, TRow>(name, source, projection)`**
+  ([#4](https://github.com/anwarminarso/a2n.Vista/issues/4), Decision Log D152). A central-template
+  view can now keep its source query and its projection separate, the shape Style B always had.
+  `ViewExecutionPlan.FromTemplateDefinition` builds a `SplitViewExecutionPlan<TSource, TRow>` for such
+  a view, so both server-trusted predicate sources — the authored `WithRowFilter<TSource>` and the
+  per-request scope from `ShapeQuery`/`ShapeQueryAsync` — are AND-ed **pre-projection** and pushed
+  down to SQL. This closes the follow-up `ProjectedViewExecutionPlan` flagged in its own XML docs, and
+  it is what makes the async hook above usable from Style A at all: without it, any scope the hook adds
+  makes `IViewScope.RowFilterCount > 0` and the type-erased combined plan fails closed (D141). A row
+  filter declared over an entity other than the view's source is now rejected at **registration**
+  instead of failing per request. The source generator recognizes the new overload on the same terms as
+  the old one, so choosing it costs a view no generated export accessors or `JsonTypeInfo`.
+
+### Unchanged
+- The combined `AddView<TRow>(name, query)` overload and `ProjectedViewExecutionPlan` stay exactly as
+  they were, including the D141 fail-closed refusal when a server-trusted row filter cannot be applied
+  pre-projection. The split is opt-in; no route, envelope, header, error shape, or existing view's
+  behaviour changes. The async query-factory overload floated as part 3 of issue #4 is **not**
+  implemented: it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`,
+  `ICompiledViewExecutionPlan`, and every generated plan, which D151 + D152 make unnecessary.
+
 ## [0.0.2] - 2026-08-09
 
 A single-defect patch release: the first externally reported bug
@@ -562,7 +605,8 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...HEAD
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.3...HEAD
+[0.0.3]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1...v0.0.2
 [0.0.1]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1-beta.2...v0.0.1
 [0.0.1-beta.2]: https://github.com/anwarminarso/a2n.Vista/releases/tag/v0.0.1-beta.2
