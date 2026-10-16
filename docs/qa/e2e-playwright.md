@@ -41,8 +41,9 @@ UI (Chromium):
 - View Browser (`/view-browser.html`): selecting `vProductCategory` renders `Alice Mutton`, and the next page is a different first row
 - Northwind DataTables page (`/`): first row is `Alice Mutton`
 - CSV export download. The showcase has no export button. The test issues `POST /api/views/vProductCategory/export` from the page and clicks a download link so Playwright records a real download. That keeps the sample UI unchanged.
+- TanStack Table (`/tanstack.html`): paging (next, previous, page size), `ProductName` sort ascending then descending, global filter `anton`, hiding Supplier removes the column while `supplierName` stays in the `POST .../tanstack` body, and a direct POST with sort id `notAField` returns 400. The 2026-10-16 smoke is [vista-tanstack-smoke-2026-10-16.md](./vista-tanstack-smoke-2026-10-16.md).
 
-The grids load AG Grid 32.3.9, DataTables 2.1.8, and jQuery 3.7.1 from public CDNs. The UI tests need those hosts to be reachable.
+The grids load AG Grid 32.3.9, DataTables 2.1.8, jQuery 3.7.1, and `@tanstack/table-core` 8.21.3 from public CDNs. The UI tests need those hosts to be reachable.
 
 ## Known gap: `vWritableMemo`
 

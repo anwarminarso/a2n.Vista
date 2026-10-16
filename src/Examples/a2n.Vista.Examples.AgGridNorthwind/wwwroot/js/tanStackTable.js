@@ -146,12 +146,12 @@ function headerLabel(header, id) {
 /**
  * Text for one body cell.
  *
- * Discontinued is a bool on the wire (`true` is Yes). Numeric `1` and the text `"1"` / `"true"` are
- * only a defensive fallback for a row that still carries the stored flag.
+ * Discontinued is a bool on the wire. Yes is only boolean `true`. Text `"1"` / `"true"` and numeric
+ * `1` stay No, so a projection that leaks the stored flag fails the page instead of being painted over.
  */
 export function cellText(columnId, value) {
     if (columnId === 'Discontinued') {
-        return isDiscontinuedValue(value) ? 'Yes' : 'No';
+        return value === true ? 'Yes' : 'No';
     }
     if (value === null || value === undefined) {
         return '';
@@ -160,15 +160,6 @@ export function cellText(columnId, value) {
         return priceFormat.format(value);
     }
     return String(value);
-}
-function isDiscontinuedValue(value) {
-    if (value === true || value === 1) {
-        return true;
-    }
-    if (typeof value !== 'string') {
-        return false;
-    }
-    return value === '1' || value.toLowerCase() === 'true';
 }
 function render() {
     syncOptions();
