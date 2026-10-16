@@ -1,0 +1,27 @@
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Core.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Core.0.0.4.snupkg'.
+PACK_EXIT 0 src/a2n.Vista.Core/a2n.Vista.Core.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.EntityFrameworkCore.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.EntityFrameworkCore.0.0.4.snupkg'.
+PACK_EXIT 0 src/a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.AspNetCore.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.AspNetCore.0.0.4.snupkg'.
+PACK_EXIT 0 src/a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.OpenApi.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.OpenApi.0.0.4.snupkg'.
+PACK_EXIT 0 src/a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.EntityFrameworkCore.Npgsql.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.EntityFrameworkCore.Npgsql.0.0.4.snupkg'.
+PACK_EXIT 0 src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Adapters.DataTablesNet.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Adapters.DataTablesNet.0.0.4.snupkg'.
+PACK_EXIT 0 src/Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Adapters.AgGrid.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Adapters.AgGrid.0.0.4.snupkg'.
+PACK_EXIT 0 src/Adapters/a2n.Vista.Adapters.AgGrid/a2n.Vista.Adapters.AgGrid.csproj
+  a2n.Vista.Client.TypeScript -> /workspace/src/a2n.Vista.Client.TypeScript/bin/Debug/net9.0/publish/
+  a2n.Vista.Client.TypeScript -> /workspace/src/a2n.Vista.Client.TypeScript/bin/Debug/net8.0/publish/
+  a2n.Vista.Client.TypeScript -> /workspace/src/a2n.Vista.Client.TypeScript/bin/Debug/net10.0/publish/
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Client.TypeScript.0.0.4.nupkg'.
+  Successfully created package '/tmp/vista-qa/nupkgs/a2n.Vista.Client.TypeScript.0.0.4.snupkg'.
+PACK_EXIT 0 src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
