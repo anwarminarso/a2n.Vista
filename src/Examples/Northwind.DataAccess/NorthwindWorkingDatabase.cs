@@ -6,9 +6,10 @@ namespace Northwind.DataAccess;
 /// Copies the read-only <c>northwind.db</c> template to a per-run working file.
 /// </summary>
 /// <remarks>
-/// The file shipped at <c>src/Examples/DB/northwind.db</c> is a template. <see cref="CreateCopy"/> reads
-/// it with <see cref="File.Copy(string, string, bool)"/> and never opens it as a writable SQLite
-/// database. Hosts point their connection string at <see cref="WorkingCopy.DatabasePath"/>. Set the
+/// The file at <c>src/Examples/DB/northwind.db</c> is the gitignored extract of
+/// <c>Northwind SQLite.zip</c>. <see cref="CreateCopy"/> reads it with
+/// <see cref="File.Copy(string, string, bool)"/> and never opens it as a writable SQLite database.
+/// Hosts create <c>VistaMemos</c> on the copy, not on this file. Set the
 /// <c>NORTHWIND_WORKING_DIRECTORY</c> environment variable to choose the parent folder; each run still
 /// gets its own subdirectory. <see cref="Cleanup"/> deletes that subdirectory and refuses to delete the
 /// template.

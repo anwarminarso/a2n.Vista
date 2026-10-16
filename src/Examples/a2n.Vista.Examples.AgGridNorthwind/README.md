@@ -22,18 +22,15 @@ undocumented steps.
 
 ### 1. The Northwind database is a read-only template
 
-`src/Examples/DB/northwind.db` is committed in the repository. It is the Microsoft Northwind sample plus
-the `VistaMemos` table (`MemoID`, `Subject`, `Body`, `RowVersion`) that `vWritableMemo` writes. The host
-does not extract a zip, does not run DDL, and does not open that file for writing.
+`src/Examples/DB/Northwind SQLite.zip` is the shipped Microsoft database. Building this project extracts
+it to the gitignored `src/Examples/DB/northwind.db` and skips that work when the extract is already up
+to date. The template is not committed and is never opened for writing.
 
-On startup the host copies the template into a per-run folder under the temp directory and points SQLite
-at the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy. The copy is deleted
-when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different parent folder; each run
-still gets its own subdirectory.
-
-If `northwind.db` is missing, the host exits with a non-zero code and tells you to restore the file from
-git. Do not replace it with a fresh extract of `Northwind SQLite.zip` — that archive has no `VistaMemos`
-table.
+On startup the host hashes the extracted template, copies it into a per-run folder under the temp
+directory, and runs one `CREATE TABLE IF NOT EXISTS VistaMemos` (`MemoID`, `Subject`, `Body`,
+`RowVersion`) against the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy.
+The copy is deleted when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different
+parent folder; each run still gets its own subdirectory.
 
 ### 2. Build the TypeScript client
 

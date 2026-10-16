@@ -4,17 +4,15 @@ A small ASP.NET Core host that serves the Northwind views, including the writabl
 
 ## Database
 
-`src/Examples/DB/northwind.db` is a read-only template committed in the repository. It is the Microsoft
-Northwind sample plus `VistaMemos` (`MemoID`, `Subject`, `Body`, `RowVersion`). The host does not run
-DDL and does not open that file for writing.
+`src/Examples/DB/Northwind SQLite.zip` is the shipped Microsoft database (11,096,792 bytes). Building
+this project extracts it to the gitignored `src/Examples/DB/northwind.db`. The extract is skipped when
+that file is already newer than the zip. The template is not committed and is never opened for writing.
 
-On startup the host copies the template into a per-run folder under the temp directory and points SQLite
-at the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy. The copy is deleted
-when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different parent folder; each run
-still gets its own subdirectory.
-
-If the template is missing, restore `src/Examples/DB/northwind.db` from git. Do not replace it with a
-fresh extract of `Northwind SQLite.zip` — that archive has no `VistaMemos` table.
+On startup the host hashes the extracted template, copies it into a per-run folder under the temp
+directory, and runs one `CREATE TABLE IF NOT EXISTS VistaMemos` (`MemoID`, `Subject`, `Body`,
+`RowVersion`) against the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy.
+The copy is deleted when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different
+parent folder; each run still gets its own subdirectory.
 
 ## Run
 
@@ -31,5 +29,5 @@ dotnet run --project src/Examples/Northwind -- selftest
 ```
 
 The host write pass runs against the working copy. It checks that the copy's `sqlite_master` contains
-`VistaMemos` and that the template's SHA-256 is unchanged after the write round trip. The process exits
-`0` only when every self-test passes.
+`VistaMemos` and that the extracted template's SHA-256, taken before the copy, is unchanged after the
+write round trip. The process exits `0` only when every self-test passes.

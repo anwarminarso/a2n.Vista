@@ -39,8 +39,8 @@ public class NorthwindDbContext : DbContext
 
     /// <summary>
     /// Purpose-made writable table used by the Vista write-path demo (see <see cref="Memo"/>). It is not
-    /// part of the real Northwind schema. The shipped template already contains it; hosts copy that
-    /// template and do not create the table at startup.
+    /// part of the real Northwind schema. Hosts create it on the per-run copy, not on the extracted
+    /// template.
     /// </summary>
     public virtual DbSet<Memo> Memos { get; set; }
 

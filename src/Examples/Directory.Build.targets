@@ -1,0 +1,33 @@
+<Project>
+  <!--
+    Northwind sample hosts set ExtractNorthwindDatabase=true. The Microsoft database is shipped as
+    src/Examples/DB/Northwind SQLite.zip and is never committed as northwind.db. This target extracts
+    it to the gitignored template path. Inputs/Outputs skip the work when the extracted file is
+    already newer than the zip, so local builds, CI, and the sample self-test share one path.
+  -->
+  <PropertyGroup>
+    <_NorthwindDbDirectory>$(MSBuildThisFileDirectory)DB/</_NorthwindDbDirectory>
+    <NorthwindSqliteZip>$(_NorthwindDbDirectory)Northwind SQLite.zip</NorthwindSqliteZip>
+    <NorthwindSqliteDatabase>$(_NorthwindDbDirectory)northwind.db</NorthwindSqliteDatabase>
+  </PropertyGroup>
+
+  <Target Name="ExtractNorthwindDatabase"
+          BeforeTargets="BeforeBuild"
+          Condition="'$(ExtractNorthwindDatabase)' == 'true'"
+          Inputs="$(NorthwindSqliteZip)"
+          Outputs="$(NorthwindSqliteDatabase)">
+    <Error Condition="!Exists('$(NorthwindSqliteZip)')"
+           Text="Northwind database zip not found: $(NorthwindSqliteZip). The samples ship src/Examples/DB/Northwind SQLite.zip and extract it to the gitignored northwind.db. Restore the zip from git." />
+    <Message Importance="high" Text="Extracting $(NorthwindSqliteZip) to $(NorthwindSqliteDatabase)" />
+    <!-- Re-extract only when this target runs (missing or older than the zip). One Unzip, no script. -->
+    <Delete Files="$(NorthwindSqliteDatabase)" Condition="Exists('$(NorthwindSqliteDatabase)')" />
+    <Unzip SourceFiles="$(NorthwindSqliteZip)"
+           DestinationFolder="$(_NorthwindDbDirectory)"
+           SkipUnchangedFiles="true" />
+    <Error Condition="!Exists('$(NorthwindSqliteDatabase)')"
+           Text="Extracting $(NorthwindSqliteZip) did not produce $(NorthwindSqliteDatabase). The zip must contain northwind.db at its root." />
+    <!-- Zip members keep their archived timestamp, which is older than the zip. Touch the extract
+         so the next build sees Outputs newer than Inputs and skips this target. -->
+    <Touch Files="$(NorthwindSqliteDatabase)" />
+  </Target>
+</Project>

@@ -6,8 +6,8 @@
 > `DbUpdateConcurrencyException` and a stale `If-Match` stay 409 `write-concurrency-conflict`. A constraint
 > breach (unique, foreign key, NOT NULL, CHECK) is 422 `write-constraint-violation`, not a 409. Every other
 > `DbUpdateException` (a missing table included) is 500 `write-persistence-failed`. The wire string
-> `write-conflict` is retired. `src/Examples/DB/northwind.db` is a read-only template that already
-> contains `VistaMemos`; both Northwind hosts copy it to a per-run folder and write only to that copy.
+> `write-conflict` is retired. The Northwind hosts extract `Northwind SQLite.zip` to a gitignored
+> template, copy that file per run, and create `VistaMemos` on the copy only.
 > A token-bearing create/detail returns `ETag`. Core constraint detection is SQLSTATE class `23` plus
 > `AddConstraintProbe`. The Northwind hosts register `SqliteErrorCode == 19`, then the message fallback.
 > See `CHANGELOG.md` and spec 01 §14.1 / spec 05 §9.2.

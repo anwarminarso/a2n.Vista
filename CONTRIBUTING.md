@@ -16,9 +16,10 @@ participating you agree to uphold it.
   to build against.
 - Git.
 
-No `sqlite3` CLI is required. The Northwind samples use the read-only template
-`src/Examples/DB/northwind.db` (already in git, including `VistaMemos`). Each host
-copies it to a temporary working file on startup and writes only to that copy.
+No `sqlite3` CLI is required. The Northwind samples ship
+`src/Examples/DB/Northwind SQLite.zip`. Building a sample host extracts it to the
+gitignored `northwind.db`, then copies that template to a temporary working file
+and creates `VistaMemos` on the copy only.
 
 ## Build & test
 

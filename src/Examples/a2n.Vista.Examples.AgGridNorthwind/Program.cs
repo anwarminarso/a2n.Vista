@@ -9,8 +9,8 @@ a2n.Vista.Examples.SqliteConstraintProbe.Register();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// src/Examples/DB/northwind.db is a read-only template (Microsoft Northwind plus VistaMemos). It is
-// never opened for writing. Each run copies it to a temp folder and points SQLite at that copy.
+// The build extracts src/Examples/DB/Northwind SQLite.zip to the gitignored northwind.db template.
+// That file is read-only. Hash it, copy it, then create VistaMemos on the copy only.
 const string DbRelativePath = "../DB/northwind.db";
 var templatePath = Path.GetFullPath(DbRelativePath);
 
@@ -20,12 +20,10 @@ if (!File.Exists(templatePath))
         $"""
         Northwind template database not found at: {templatePath}
 
-        The read-only template is src/Examples/DB/northwind.db in this repository, and it already
-        contains VistaMemos. Restore that file from git. Do not replace it with a fresh extract of
-        "Northwind SQLite.zip": that archive is the original Microsoft database and has no VistaMemos
-        table.
+        Building this project extracts src/Examples/DB/Northwind SQLite.zip to that path
+        (gitignored). The zip is in the repository. Run from the project directory so this
+        relative path resolves:
 
-        Then run this example again from the project directory:
           dotnet run --project src/Examples/a2n.Vista.Examples.AgGridNorthwind
         """);
     Environment.ExitCode = 1;
@@ -34,6 +32,7 @@ if (!File.Exists(templatePath))
 
 var templateHash = NorthwindWorkingDatabase.Sha256(templatePath);
 var working = NorthwindWorkingDatabase.CreateCopy(templatePath);
+a2n.Vista.Examples.NorthwindMemoTable.EnsureOnCopy(templatePath, working.DatabasePath);
 var workingConnectionString = new SqliteConnectionStringBuilder { DataSource = working.DatabasePath }.ToString();
 
 builder.Services.AddDbContext<NorthwindDbContext>(options =>

@@ -9,17 +9,18 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Fixed
-- **Northwind `vWritableMemo` works against a working copy of the shipped database.** The Microsoft
+- **Northwind `vWritableMemo` works against a per-run copy of the extracted database.** The Microsoft
   sample had no `VistaMemos` table, so a live list/update/delete returned 500 (`no such table:
-  VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/northwind.db` is now a
-  read-only template that already contains `VistaMemos` (`MemoID`, `Subject`, `Body`, `RowVersion`).
-  Hosts do not run DDL at startup and do not open that file for writing. On startup each Northwind host
-  copies the template into a per-run folder (under the temp directory, or under
-  `NORTHWIND_WORKING_DIRECTORY` when that variable is set) and points SQLite at the copy. Memo
-  create/update/delete and the self-tests write only to the copy, which is deleted when the process
-  stops. The host self-test asserts the connection is that copy, that the copy's `sqlite_master`
-  contains `VistaMemos`, that a stale `If-Match` is `write-concurrency-conflict`, and that the
-  template's SHA-256 is unchanged after the write round trip. The isolated self-test still runs
+  VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/Northwind SQLite.zip` stays
+  the shipped database. The sample build extracts it, with the built-in `Unzip` task, to the gitignored
+  `northwind.db` and skips that work when the extract is already up to date. That file is a read-only
+  template and is not committed. On startup each Northwind host hashes it, copies it into a per-run
+  folder (under the temp directory, or under `NORTHWIND_WORKING_DIRECTORY`), and runs one
+  `CREATE TABLE IF NOT EXISTS VistaMemos` against the copy only. Memo create/update/delete and the
+  self-tests write only to the copy, which is deleted when the process stops. The host self-test
+  asserts the connection is that copy, that the copy's `sqlite_master` contains `VistaMemos`, that a
+  stale `If-Match` is `write-concurrency-conflict`, and that the extracted template's SHA-256 is
+  unchanged from before the copy through the write round trip. The isolated self-test still runs
   Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
 - **Save failures are three distinct outcomes** (Decision Log D158). A genuine concurrency failure
   (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises

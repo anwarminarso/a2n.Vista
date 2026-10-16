@@ -34,9 +34,10 @@ namespace a2n.Vista.Examples.Northwind;
 /// </para>
 /// <para>
 /// <see cref="RunAgainstHostAsync"/> repeats Create/Update/Delete through the host's own
-/// <see cref="NorthwindDbContext"/>, which is a per-run copy of the read-only <c>northwind.db</c>
-/// template. The copy already contains <c>VistaMemos</c>. The host pass deletes the memo it inserted.
-/// The template's SHA-256 must be unchanged, and the connection must not be the template file.
+/// <see cref="NorthwindDbContext"/>, which is a per-run copy of the extracted <c>northwind.db</c>
+/// template. The host creates <c>VistaMemos</c> on that copy before this pass. The host pass deletes
+/// the memo it inserted. The template hash taken before the copy must still match, and the connection
+/// must not be the template file.
 /// </para>
 /// <para>
 /// The concurrency token (<see cref="Memo.RowVersion"/>) is a <see cref="Guid"/>; the executor renders it
@@ -257,14 +258,14 @@ public static class WriteSelfTest
         var hashAfter = NorthwindWorkingDatabase.Sha256(templatePath);
         if (!string.Equals(hashAfter, templateHash, StringComparison.Ordinal))
         {
-            Console.WriteLine("FAIL: template northwind.db hash changed during the write round trip.");
+            Console.WriteLine("FAIL: extracted template northwind.db hash changed during the write round trip.");
             Console.WriteLine($"    before: {templateHash}");
             Console.WriteLine($"    after : {hashAfter}");
             failures++;
         }
         else
         {
-            Console.WriteLine("    template hash unchanged after write round trip -> PASS");
+            Console.WriteLine("    extracted template hash unchanged after write round trip -> PASS");
         }
 
         var passed = failures == 0;

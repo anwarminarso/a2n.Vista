@@ -36,6 +36,8 @@ jobs:
       - name: Restore
         run: dotnet restore src/a2n.Vista.slnx
 
+      # Northwind hosts extract src/Examples/DB/Northwind SQLite.zip to the gitignored
+      # northwind.db during this build (ExtractNorthwindDatabase). The database file is not committed.
       - name: Build (Release)
         run: dotnet build src/a2n.Vista.slnx -c Release --no-restore
 
