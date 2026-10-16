@@ -1,0 +1,33 @@
+name: E2E
+
+# Browser suite for the Northwind sample and the AG Grid showcase.
+# Separate from ci.yml so the library matrix (net8/net9/net10, no browser) is unchanged.
+# pull_request into develop only. ci.yml already runs on push and pull_request to
+# main and develop (PR #7); this job adds the browser suite and does not replace that matrix.
+on:
+  pull_request:
+    branches: [develop]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  playwright:
+    name: Playwright e2e (net8.0)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Run e2e
+        run: bash tests/e2e/run.sh
