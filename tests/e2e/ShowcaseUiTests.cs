@@ -15,32 +15,30 @@ public sealed class ShowcaseUiTests
     public async Task AgGrid_Simple_Wiring_Renders_Rows_And_Sort_Flips(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var scope = await OpenAsync(SampleSession.Showcase, "/");
+        // The cell node exists before AG Grid paints the row text. Reading InnerTextAsync there
+        // observed "" on PR #12 (run 38882214341, issue #18): string.Compare("", "Alice Mutton") is -12.
+        await using var scope = await OpenAsync(SampleSession.Showcase, "/", IsAgGridPost);
         var page = scope.Page;
-        await page.Locator(".ag-row .ag-cell[col-id='ProductName']").First.WaitForAsync();
-
-        var before = (await page.Locator(".ag-row .ag-cell[col-id='ProductName']").First.InnerTextAsync()).Trim();
-        await Assert.That(before.Length).IsGreaterThan(0);
+        var product = page.Locator(".ag-row .ag-cell[col-id='ProductName']").First;
+        await Assertions.Expect(product).Not.ToHaveTextAsync(string.Empty);
 
         var header = page.Locator(".ag-header-cell[col-id='ProductName'] .ag-header-cell-text");
-        var ascendingRequest = page.WaitForResponseAsync(response => IsAgGridSort(response, "asc"));
+        var ascendingRequest = WaitForDataAsync(page, response => IsAgGridSort(response, "asc"));
         await header.ClickAsync();
         await ascendingRequest;
-        await Assertions.Expect(page.Locator(".ag-row .ag-cell[col-id='ProductName']").First).ToHaveTextAsync("Alice Mutton");
+        await Assertions.Expect(product).ToHaveTextAsync("Alice Mutton");
 
-        var descendingRequest = page.WaitForResponseAsync(response => IsAgGridSort(response, "desc"));
+        var descendingRequest = WaitForDataAsync(page, response => IsAgGridSort(response, "desc"));
         await header.ClickAsync();
         await descendingRequest;
-        var descending = (await page.Locator(".ag-row .ag-cell[col-id='ProductName']").First.InnerTextAsync()).Trim();
-        await Assert.That(descending).IsNotEqualTo("Alice Mutton");
-        await Assert.That(string.Compare(descending, "Alice Mutton", StringComparison.OrdinalIgnoreCase)).IsGreaterThan(0);
+        await Assertions.Expect(product).ToHaveTextAsync("Zaanse koeken");
     }
 
     [Test]
     public async Task AgGrid_Column_Filter_Narrows_To_Chai(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var scope = await OpenAsync(SampleSession.Showcase, "/");
+        await using var scope = await OpenAsync(SampleSession.Showcase, "/", IsAgGridPost);
         var page = scope.Page;
         await page.Locator(".ag-floating-filter input").First.WaitForAsync();
 
@@ -48,33 +46,24 @@ public sealed class ShowcaseUiTests
         await input.ClickAsync();
         // AG Grid debounces the floating filter, so the wait has to be registered before typing
         // and has to ignore the intermediate "C" / "Ch" / "Cha" posts.
-        var filtered = page.WaitForResponseAsync(response =>
+        var filtered = WaitForDataAsync(page, response =>
             IsAgGridPost(response)
             && (response.Request.PostData ?? string.Empty).Contains("Chai", StringComparison.Ordinal));
         await input.PressSequentiallyAsync("Chai", new() { Delay = 40 });
         await filtered;
-        await Assertions.Expect(page.Locator(".ag-row .ag-cell[col-id='ProductName']").First).ToContainTextAsync("Chai");
-
-        var names = await page.Locator(".ag-row .ag-cell[col-id='ProductName']").AllInnerTextsAsync();
-        await Assert.That(names.Count).IsGreaterThan(0);
-        foreach (var name in names)
-        {
-            await Assert.That(name.Contains("Chai", StringComparison.OrdinalIgnoreCase)).IsTrue();
-        }
-
-        await Assert.That(names.Any(n => n.Contains("Alice", StringComparison.OrdinalIgnoreCase))).IsFalse();
+        var products = page.Locator(".ag-row .ag-cell[col-id='ProductName']");
+        await Assertions.Expect(products.First).ToContainTextAsync("Chai");
+        await Assertions.Expect(products.Filter(new() { HasNotText = "Chai" })).ToHaveCountAsync(0);
+        await Assertions.Expect(products.Filter(new() { HasText = "Alice" })).ToHaveCountAsync(0);
     }
 
     [Test]
     public async Task AgGrid_Custom_Renderer_Shows_Formatted_Prices(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var scope = await OpenAsync(SampleSession.Showcase, "/custom-renderer.html");
+        await using var scope = await OpenAsync(SampleSession.Showcase, "/custom-renderer.html", IsAgGridPost);
         var page = scope.Page;
-        await page.Locator(".ag-row").First.WaitForAsync();
-        var prices = await page.Locator(".ag-cell[col-id='UnitPrice']").AllInnerTextsAsync();
-        await Assert.That(prices.Count).IsGreaterThan(0);
-        await Assert.That(prices.Any(p => p.Contains('$', StringComparison.Ordinal))).IsTrue();
+        await Assertions.Expect(page.Locator(".ag-cell[col-id='UnitPrice']").First).ToContainTextAsync("$");
     }
 
     [Test]
@@ -88,39 +77,33 @@ public sealed class ShowcaseUiTests
         {
             State = WaitForSelectorState.Attached,
         });
-        var loaded = page.WaitForResponseAsync(r => r.Url.Contains("/datatable", StringComparison.Ordinal) && r.Ok);
+        var loaded = WaitForDataAsync(page, IsDataTablesPost);
         await page.Locator("#viewSelector").SelectOptionAsync("vProductCategory");
         await loaded;
-        await page.Locator("#grid tbody tr td").First.WaitForAsync();
+        var firstCell = page.Locator("#grid tbody tr td").First;
+        await Assertions.Expect(firstCell).ToHaveTextAsync("Alice Mutton");
 
-        var firstPage = (await page.Locator("#grid tbody tr td").First.InnerTextAsync()).Trim();
-        await Assert.That(firstPage).IsEqualTo("Alice Mutton");
-
-        var next = page.WaitForResponseAsync(r => r.Url.Contains("/datatable", StringComparison.Ordinal) && r.Ok);
+        var next = WaitForDataAsync(page, IsDataTablesPost);
         await page.Locator(".dt-paging-button.next").ClickAsync();
         await next;
-        var secondPage = (await page.Locator("#grid tbody tr td").First.InnerTextAsync()).Trim();
-        await Assert.That(secondPage).IsNotEqualTo(firstPage);
+        await Assertions.Expect(firstCell).ToHaveTextAsync("Chocolade");
     }
 
     [Test]
     public async Task Northwind_DataTables_Page_Renders_Rows(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var scope = await OpenAsync(SampleSession.Northwind, "/");
+        await using var scope = await OpenAsync(SampleSession.Northwind, "/", IsDataTablesPost);
         var page = scope.Page;
-        await page.Locator("#grid tbody tr td").First.WaitForAsync();
-        var name = (await page.Locator("#grid tbody tr td").First.InnerTextAsync()).Trim();
-        await Assert.That(name).IsEqualTo("Alice Mutton");
+        await Assertions.Expect(page.Locator("#grid tbody tr td").First).ToHaveTextAsync("Alice Mutton");
     }
 
     [Test]
     public async Task Export_Csv_Downloads_From_The_Showcase_Page(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await using var scope = await OpenAsync(SampleSession.Showcase, "/");
+        await using var scope = await OpenAsync(SampleSession.Showcase, "/", IsAgGridPost);
         var page = scope.Page;
-        await page.Locator(".ag-row").First.WaitForAsync();
 
         var download = await page.RunAndWaitForDownloadAsync(async () =>
         {
@@ -153,7 +136,7 @@ public sealed class ShowcaseUiTests
         await Assert.That(text).Contains("Alice Mutton");
     }
 
-    private static async Task<BrowserPage> OpenAsync(Uri host, string path)
+    private static async Task<BrowserPage> OpenAsync(Uri host, string path, Func<IResponse, bool>? dataResponse = null)
     {
         var context = await SampleSession.Browser.NewContextAsync(new()
         {
@@ -162,14 +145,51 @@ public sealed class ShowcaseUiTests
         });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(45_000);
+        // Register before navigation so the first data POST is not missed.
+        var pending = dataResponse is null ? null : page.WaitForResponseAsync(dataResponse);
         await page.GotoAsync(new Uri(host, path).AbsoluteUri, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+        if (pending is not null)
+        {
+            await EnsureSuccessAsync(await pending);
+        }
+
         return new BrowserPage(context, page);
+    }
+
+    /// <summary>
+    /// Waits for the POST whose request body matches, then fails immediately when that response
+    /// is not 2xx. Matching on <c>response.Ok</c> would ignore the error and wait until timeout.
+    /// </summary>
+    private static async Task<IResponse> WaitForDataAsync(IPage page, Func<IResponse, bool> match)
+    {
+        var response = await page.WaitForResponseAsync(match);
+        await EnsureSuccessAsync(response);
+        return response;
+    }
+
+    private static async Task EnsureSuccessAsync(IResponse response)
+    {
+        if (response.Status is >= 200 and < 300)
+        {
+            return;
+        }
+
+        var body = await response.TextAsync();
+        if (body.Length > 500)
+        {
+            body = body[..500];
+        }
+
+        throw new InvalidOperationException($"POST {response.Url} returned {response.Status}: {body}");
     }
 
     private static bool IsAgGridPost(IResponse response) =>
         response.Url.Contains("/aggrid", StringComparison.Ordinal)
-        && response.Request.Method == "POST"
-        && response.Ok;
+        && response.Request.Method == "POST";
+
+    private static bool IsDataTablesPost(IResponse response) =>
+        response.Url.Contains("/datatable", StringComparison.Ordinal)
+        && response.Request.Method == "POST";
 
     private static bool IsAgGridSort(IResponse response, string direction) =>
         IsAgGridPost(response)
