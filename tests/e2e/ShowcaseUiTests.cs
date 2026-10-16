@@ -16,7 +16,7 @@ public sealed class ShowcaseUiTests
     {
         cancellationToken.ThrowIfCancellationRequested();
         // The cell node exists before AG Grid paints the row text. Reading InnerTextAsync there
-        // observed "" on PR #12 (run 38882214341, issue #18): string.Compare("", "Alice Mutton") is -12.
+        // observed "" on PR #12 (run 38882214341, issue #20): string.Compare("", "Alice Mutton") is -12.
         await using var scope = await OpenAsync(SampleSession.Showcase, "/", IsAgGridPost);
         var page = scope.Page;
         var product = page.Locator(".ag-row .ag-cell[col-id='ProductName']").First;

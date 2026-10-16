@@ -45,7 +45,7 @@ UI (Chromium):
 
 The grids load AG Grid 32.3.9, DataTables 2.1.8, jQuery 3.7.1, and `@tanstack/table-core` 8.21.3 from public CDNs. The UI tests need those hosts to be reachable.
 
-UI assertions wait for the data POST whose body matches the action, fail immediately when that response is not 2xx, and then use Playwright's retrying `Expect(locator).ToHaveTextAsync`. They do not read cell text with `InnerTextAsync` once the response has arrived. AG Grid and DataTables insert the cell before the row text is painted, so a direct read can observe `""`. That flake is [issue #18](https://github.com/anwarminarso/a2n.Vista/issues/18); the 2026-10-16 note is [vista-aggrid-e2e-flake-2026-10-16.md](./vista-aggrid-e2e-flake-2026-10-16.md).
+UI assertions wait for the data POST whose body matches the action, fail immediately when that response is not 2xx, and then use Playwright's retrying `Expect(locator).ToHaveTextAsync`. They do not read cell text with `InnerTextAsync` once the response has arrived. AG Grid and DataTables insert the cell before the row text is painted, so a direct read can observe `""`. That flake is [issue #20](https://github.com/anwarminarso/a2n.Vista/issues/20) ([issue #18](https://github.com/anwarminarso/a2n.Vista/issues/18) was opened first); the 2026-10-16 note is [vista-aggrid-e2e-flake-2026-10-16.md](./vista-aggrid-e2e-flake-2026-10-16.md).
 
 ## Known gap: `vWritableMemo`
 
