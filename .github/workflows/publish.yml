@@ -30,7 +30,9 @@ env:
   NUGET_FEED: "https://api.nuget.org/v3/index.json"
   # Only the implemented, shippable libraries. Intentionally excluded:
   #   * the empty scaffolds (a2n.Vista.Newtonsoft + the MudBlazor/OData/GraphQL/
-  #     PrimeNG/Syncfusion/TanStackTable/Telerik adapters) until they have content;
+  #     PrimeNG/Syncfusion/Telerik adapters) until they have content;
+  #   * a2n.Vista.Adapters.TanStackTable — implemented, but NuGet publishing is deferred
+  #     until after a QA smoke and an owner decision;
   #   * a2n.Vista.SourceGenerators - NOT shipped standalone. It is bundled into the
   #     a2n.Vista.Core package (packed under analyzers/dotnet/cs) so consumers get the
   #     generator transitively; packing it on its own would emit an empty package
