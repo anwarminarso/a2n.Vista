@@ -50,6 +50,7 @@
       register AddVistaAdapter<AgGridAdapter>() and exercise the POST {route}/aggrid endpoint end to end.
     -->
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.TanStackTable\a2n.Vista.Adapters.TanStackTable.csproj" />
     <!--
       End-to-end generator consumer (Spec source-generator, Task 6.1, R6.4): referencing this sample
       loads its [ModuleInitializer]-driven accessor registration so GeneratorEndToEndTests can assert

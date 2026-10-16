@@ -224,7 +224,7 @@ public sealed class DeletePrecisionPropertyTests
     }
 
     /// <summary>EF source entity the writable Gaya B view projects from and deletes (single-source, Id-keyed).</summary>
-    private sealed class DeleteSource
+    internal sealed class DeleteSource
     {
         public int Id { get; set; }
 
@@ -250,14 +250,14 @@ public sealed class DeletePrecisionPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Gaya B view.</summary>
-    private sealed class DeleteContext : DbContext
+    internal sealed class DeleteContext : DbContext
     {
         public DeleteContext(DbContextOptions<DeleteContext> options)
             : base(options)
         {
         }
 
-        public DbSet<DeleteSource> Sources => Set<DeleteSource>();
+        internal DbSet<DeleteSource> Sources => Set<DeleteSource>();
     }
 
     /// <summary>

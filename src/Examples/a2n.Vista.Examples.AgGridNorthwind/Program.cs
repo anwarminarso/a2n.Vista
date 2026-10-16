@@ -75,6 +75,10 @@ builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdap
 // Additive only: this changes no existing view route, envelope, or error shape.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.AgGrid.AgGridAdapter>();
 
+// Register the TanStack Table adapter (Decision Log D154). Each view then also exposes
+// POST {route}/tanstack, driving the showcase's TanStack Table page. Additive only.
+builder.Services.AddVistaAdapter<a2n.Vista.Adapters.TanStackTable.TanStackTableAdapter>();
+
 // Register the jQuery-QueryBuilder metadata-schema emitter (Decision Log D116). Each view then also
 // exposes GET {route}/querybuilder returning the metadataQB schema.
 builder.Services.AddVistaMetadataAdapter<a2n.Vista.Adapters.DataTablesNet.QueryBuilderSchemaAdapter>();

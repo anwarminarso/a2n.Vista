@@ -172,7 +172,7 @@ public sealed class ListPageBoundPropertyTests
     /// Test-only EF context exposing <see cref="P1Customer"/> over SQLite so the generated compiled plan
     /// can root its queryable on <c>DbContext.Set&lt;P1Customer&gt;()</c>.
     /// </summary>
-    private sealed class P2ListDbContext : DbContext
+    internal sealed class P2ListDbContext : DbContext
     {
         public P2ListDbContext(DbContextOptions<P2ListDbContext> options)
             : base(options)

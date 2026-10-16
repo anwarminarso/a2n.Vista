@@ -25,7 +25,8 @@ namespace a2n.Vista.Tests;
 /// </para>
 /// <para>
 /// The warmed set is exactly the contexts constructed inside a CsCheck <c>Sample</c> (CsCheck runs
-/// iterations on worker threads). No other test context is warmed here:
+/// iterations on worker threads). Each one is named with <c>Warm&lt;T&gt;()</c>. No other test context
+/// is warmed here:
 /// </para>
 /// <list type="bullet">
 /// <item><see cref="CompositeKeyOrderIndependencePropertyTests"/> — <c>CompositeKeyContext</c></item>
@@ -43,33 +44,14 @@ namespace a2n.Vista.Tests;
 /// </remarks>
 internal static class RelationalModelWarmup
 {
-    /// <summary>
-    /// Assembly-qualified CLR names (<c>FullName</c>, nested types joined with <c>+</c>) of the
-    /// contexts constructed inside a parallel sample. <see cref="WarmAll"/> warms this set and nothing else.
-    /// </summary>
-    internal static readonly IReadOnlyList<string> InventoriedContextNames =
-    [
-        "a2n.Vista.Tests.CompositeKeyOrderIndependencePropertyTests+CompositeKeyContext",
-        "a2n.Vista.Tests.DeletePrecisionPropertyTests+DeleteContext",
-        "a2n.Vista.Examples.StyleBExecP3.P3TestDbContext",
-        "a2n.Vista.Tests.DisallowedFieldRejectionPropertyTests+P4TestDbContext",
-        "a2n.Vista.Tests.P1ParityDbContext",
-        "a2n.Vista.Tests.HttpSurfaceParityDbContext",
-        "a2n.Vista.Tests.ConditionalMaskingPropertyTests+P5MaskingDbContext",
-        "a2n.Vista.Tests.RequestKeyAuthorityPropertyTests+SpoofContext",
-        "a2n.Vista.Examples.StyleBExecP7.P7TestDbContext",
-        "a2n.Vista.Tests.ListPageBoundPropertyTests+P2ListDbContext",
-        "a2n.Vista.Tests.NonProbeableMaskedFieldPropertyTests+P6Db",
-    ];
-
-    private static readonly Assembly[] CandidateAssemblies =
-    [
-        typeof(RelationalModelWarmup).Assembly,
-        typeof(P3TestDbContext).Assembly,
-        typeof(P7TestDbContext).Assembly,
-    ];
-
     private static Type[] warmedContextTypes = [];
+
+    /// <summary>
+    /// CLR names (<c>FullName</c>, nested types joined with <c>+</c>) of the contexts
+    /// <see cref="WarmAll"/> finalizes. The warmed set is exactly this list.
+    /// </summary>
+    internal static IReadOnlyList<string> InventoriedContextNames =>
+        warmedContextTypes.Select(type => type.FullName!).ToArray();
 
     /// <summary>
     /// The context types <see cref="WarmAll"/> actually finalized, in inventory order.
@@ -83,57 +65,49 @@ internal static class RelationalModelWarmup
     [ModuleInitializer]
     internal static void WarmAll()
     {
-        var warmed = new Type[InventoriedContextNames.Count];
-        for (var i = 0; i < InventoriedContextNames.Count; i++)
-        {
-            var contextName = InventoriedContextNames[i];
-            var contextType = Resolve(contextName);
-            try
-            {
-                Warm(contextType);
-            }
-            catch (Exception ex)
-            {
-                throw new InvalidOperationException(
-                    $"RelationalModelWarmup failed while finalizing '{contextType.FullName}'.",
-                    ex);
-            }
-
-            warmed[i] = contextType;
-        }
-
-        warmedContextTypes = warmed;
+        warmedContextTypes =
+        [
+            Warm<CompositeKeyOrderIndependencePropertyTests.CompositeKeyContext>(),
+            Warm<DeletePrecisionPropertyTests.DeleteContext>(),
+            Warm<P3TestDbContext>(),
+            Warm<DisallowedFieldRejectionPropertyTests.P4TestDbContext>(),
+            Warm<P1ParityDbContext>(),
+            Warm<HttpSurfaceParityDbContext>(),
+            Warm<ConditionalMaskingPropertyTests.P5MaskingDbContext>(),
+            Warm<RequestKeyAuthorityPropertyTests.SpoofContext>(),
+            Warm<P7TestDbContext>(),
+            Warm<ListPageBoundPropertyTests.P2ListDbContext>(),
+            Warm<NonProbeableMaskedFieldPropertyTests.P6Db>(),
+        ];
     }
 
-    private static Type Resolve(string contextName)
+    private static Type Warm<TContext>()
+        where TContext : DbContext
     {
-        foreach (var assembly in CandidateAssemblies)
+        try
         {
-            var type = assembly.GetType(contextName, throwOnError: false);
-            if (type is not null)
-            {
-                return type;
-            }
+            Finalize<TContext>();
+        }
+        catch (Exception ex)
+        {
+            throw new InvalidOperationException(
+                $"RelationalModelWarmup failed while finalizing '{typeof(TContext).FullName}'.",
+                ex);
         }
 
-        throw new InvalidOperationException(
-            $"RelationalModelWarmup could not resolve inventoried context '{contextName}'.");
+        return typeof(TContext);
     }
 
-    private static void Warm(Type contextType)
+    private static void Finalize<TContext>()
+        where TContext : DbContext
     {
         using var connection = new SqliteConnection("DataSource=:memory:");
         connection.Open();
 
-        var builderType = typeof(DbContextOptionsBuilder<>).MakeGenericType(contextType);
-        var builder = (DbContextOptionsBuilder)Activator.CreateInstance(builderType)!;
+        var builder = new DbContextOptionsBuilder<TContext>();
         builder.UseSqlite(connection);
-        // DbContextOptionsBuilder<T>.Options hides the base property; ask for the declared one.
-        var options = builderType
-                .GetProperty(nameof(DbContextOptionsBuilder.Options), BindingFlags.Public | BindingFlags.Instance | BindingFlags.DeclaredOnly)!
-                .GetValue(builder)
-            ?? throw new InvalidOperationException($"Options for '{contextType.FullName}' were null.");
 
+        var contextType = typeof(TContext);
         var ctor = contextType
             .GetConstructors(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
             .Where(candidate => candidate.GetParameters().Any(parameter =>
@@ -148,7 +122,7 @@ internal static class RelationalModelWarmup
         var parameters = ctor.GetParameters();
         for (var i = 0; i < parameters.Length; i++)
         {
-            args[i] = CreateArgument(parameters[i].ParameterType, options, contextType);
+            args[i] = CreateArgument(parameters[i].ParameterType, builder.Options, contextType);
         }
 
         using var context = (DbContext)ctor.Invoke(args);

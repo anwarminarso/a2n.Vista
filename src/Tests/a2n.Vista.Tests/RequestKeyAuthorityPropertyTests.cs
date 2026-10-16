@@ -232,7 +232,7 @@ public sealed class RequestKeyAuthorityPropertyTests
     }
 
     /// <summary>The EF source entity the writable view projects from (single-source, Id-keyed).</summary>
-    private sealed class SpoofSource
+    internal sealed class SpoofSource
     {
         public int Id { get; set; }
 
@@ -260,14 +260,14 @@ public sealed class RequestKeyAuthorityPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class SpoofContext : DbContext
+    internal sealed class SpoofContext : DbContext
     {
         public SpoofContext(DbContextOptions<SpoofContext> options)
             : base(options)
         {
         }
 
-        public DbSet<SpoofSource> Sources => Set<SpoofSource>();
+        internal DbSet<SpoofSource> Sources => Set<SpoofSource>();
     }
 
     /// <summary>

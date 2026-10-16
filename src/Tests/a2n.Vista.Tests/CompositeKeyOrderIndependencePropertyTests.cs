@@ -384,7 +384,7 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
     }
 
     /// <summary>EF source entity for the composite-key writable view; keyed by (A, B, C).</summary>
-    private sealed class CompositeKeySource
+    internal sealed class CompositeKeySource
     {
         public int A { get; set; }
 
@@ -414,14 +414,14 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
     }
 
     /// <summary>Minimal EF context backing the composite-key writable view, with a three-field key.</summary>
-    private sealed class CompositeKeyContext : DbContext
+    internal sealed class CompositeKeyContext : DbContext
     {
         public CompositeKeyContext(DbContextOptions<CompositeKeyContext> options)
             : base(options)
         {
         }
 
-        public DbSet<CompositeKeySource> Sources => Set<CompositeKeySource>();
+        internal DbSet<CompositeKeySource> Sources => Set<CompositeKeySource>();
 
         protected override void OnModelCreating(ModelBuilder modelBuilder) =>
             modelBuilder.Entity<CompositeKeySource>().HasKey(e => new { e.A, e.B, e.C });

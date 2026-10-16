@@ -159,18 +159,18 @@ README message:
 - Vista's release is planned in three stages:
   1. **v0.x — Foundation**: Core, AspNetCore, EF Core integration, a basic source generator, and one reference adapter (DataTablesNet)
   2. **v1.0 — Production-ready**: security hardening, hard limits, OpenAPI, the TS client generator, and two major adapters (AG Grid, MudBlazor)
-  3. **v1.x — Ecosystem**: additional adapters (Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL), bulk ops, audit log, soft delete, SignalR live updates
+  3. **v1.x — Ecosystem**: additional adapters (Telerik, Syncfusion, PrimeNG, OData, GraphQL; TanStack Table landed early as D154–D157), bulk ops, audit log, soft delete, SignalR live updates
 
 ## Status & Next Steps
 
 > For the detailed, authoritative snapshot see `docs/PROJECT-STATUS.md`; for the milestone tracker with
 > progress bars and the dependency graph see `docs/MILESTONES.md`. Build is green on net8/9/10 with
-> **516 tests/TFM (net8) / 517 (net9/net10)** + **112 generator tests** + **136 tests/TFM** for the
-> TypeScript client generator (M17); the AOT probe is clean (zero IL2026/IL3050 on the full generated Style B
-> HTTP round-trip), and the Northwind read + write + OpenAPI self-tests pass (write reports both
-> `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`), as does the Northwind sample showcase self-test
-> (read + write + OpenAPI + a view-browser round-trip combining paging, global search, multi-sort, and an
-> advanced filter).
+> **596 tests/TFM (net8) / 597 (net9/net10)** in `a2n.Vista.Tests` (+41 for the TanStack Table adapter) +
+> **115 generator tests** + **143 tests/TFM** for the TypeScript client generator (M17); the AOT probe is
+> clean (zero IL2026/IL3050 on the full generated Style B HTTP round-trip), and the Northwind read + write +
+> OpenAPI self-tests pass (write reports both `WriteMapper: GENERATED` and `ViewInvoker: GENERATED`), as does
+> the Northwind sample showcase self-test (read + write + OpenAPI + a view-browser round-trip combining
+> paging, global search, multi-sort, and an advanced filter, plus a TanStack Table round-trip).
 
 **Done (v0.x foundation):**
 
@@ -180,17 +180,17 @@ README message:
    - **Core** — `View`/`ViewBuilder`/`ViewTemplate`, metadata, filter contract, the `IViewExecutor`/`IViewScope`/`IViewRegistry` ports, `FilterCompiler` (tri-whitelist + DoS guards), the write seam (`WriteMapper`/`IWriteFacetRegistry`).
    - **EntityFrameworkCore** — View execution (List + Detail, deterministic paging, filter/sort/search, composite keys, provider-aware) and the write facet (Create/Update/Delete with mass-assignment whitelist, optimistic concurrency, single `SaveChanges`); `IQueryDialect` port + Npgsql dialect; startup PK auto-derivation (D105) and provider guard.
    - **AspNetCore** — action-style endpoint mapping (`POST list/detail/export/create/update/delete` + `GET metadata`), RFC 7807 error mapping, secure-by-default one-door auth (fail-closed in non-Development).
-4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: two real grid adapters — the **DataTables.NET** reference adapter and the **AG Grid** adapter (M16, D133–D136 — server-side row model: block paging, `filterModel`/`sortModel`, quick filter, with an AG Grid + TypeScript Northwind sample) — plus the pluggable **export pipeline** (CSV/XLSX) and the **QueryBuilder metadata-schema** emitter.
+4. **Pillar 2 — server-half query engine (complete & hardened)**; client half: three real grid adapters — the **DataTables.NET** reference adapter, the **AG Grid** adapter (M16, D133–D136 — server-side row model: block paging, `filterModel`/`sortModel`, quick filter, with an AG Grid + TypeScript Northwind sample), and the **TanStack Table** adapter (D154–D157 — manual table state: pagination, sorting, column filters, global filter, column visibility, with a TanStack page on the same Northwind showcase) — plus the pluggable **export pipeline** (CSV/XLSX) and the **QueryBuilder metadata-schema** emitter.
 5. **Pillar 3 — source generator (complete):** Phase 1 (shape-driven export accessors), Phase 2 (executable typed Style B via generated `ICompiledViewExecutionPlan` + masking runtime), the write-DSL phase (the generated write mapper), the HTTP-surface phase (a generated Core-only dispatch invoker + `ViewInvokerStore` and an AOT-clean serialization seam), the per-view `JsonTypeInfo` phase (a generated per-view `IJsonTypeInfoResolver` built via `JsonMetadataServices` + a Core-resident `GeneratedJsonContextStore` the seam auto-chains, making the developer-authored `App_Json_Context` **optional**), and the final **Style A coverage** phase (a fifth generator covering the nameable central-template subset — named-`TRow` export accessors + read-DTO `JsonTypeInfo`, and every writable view's `TCrud` `JsonTypeInfo`) have all landed — **every planned generator phase has shipped**. The **full** typed Style B `request → authorize → execute → serialize` path is AOT-clean, including serialization with no hand-authored context; anonymous Style A read serialization stays permanently `[RequiresUnreferencedCode]` by design (the deliberate AOT trade-off above).
 6. **OpenAPI (M18):** an opt-in `a2n.Vista.OpenApi` package emits a deterministic OpenAPI v3.x document for every mapped View (served off-by-default at `GET /openapi/v1.json`, additive-only).
 7. **TypeScript client generator (M17):** the standalone `a2n.Vista.Client.TypeScript` CLI generates a framework-agnostic, strongly-typed TS client from the emitted OpenAPI document — a pure downstream consumer with no Vista project reference (read facets by default, write facets opt-in, secure-by-default, deterministic output).
 8. End-to-end Northwind example with passing read **and** write self-tests (the write self-test runs through the generated write mapper *and* the generated dispatch invoker) — now with its developer `NorthwindJsonContext` removed, exercising the generated per-view serialization, plus an OpenAPI self-test.
-9. **CI + NuGet publish workflows (M19):** `.github/workflows/ci.yml` (build the solution + run the three TUnit suites across net8/9/10) and `publish.yml` (pack + push the 7 shipping packages to nuget.org via **NuGet Trusted Publishing / OIDC** — no long-lived API key) — with M19 the v0.x foundation is complete.
-10. **Northwind sample showcase (D137–D140):** the `a2n.Vista.Examples.AgGridNorthwind` host became a three-page showcase (Simple Wiring / View Browser / Custom Renderer) reaching DynData "Table Browser" parity on the read surface — a `GET /api/showcase/views` catalog over `IViewRegistry`, dynamic columns from metadata, server-side paging/global-search/multi-sort, and a jQuery-QueryBuilder advanced filter — plus the `vOrder` view. Additive at the sample layer only.
+9. **CI + NuGet publish workflows (M19):** `.github/workflows/ci.yml` (build the solution + run the three TUnit suites across net8/9/10) and `publish.yml` (pack + push the shipping packages to nuget.org via **NuGet Trusted Publishing / OIDC** — no long-lived API key) — with M19 the v0.x foundation is complete. TanStack Table is implemented and stays off that pack list until after a QA smoke and an owner decision.
+10. **Northwind sample showcase (D137–D140, extended by D157):** the `a2n.Vista.Examples.AgGridNorthwind` host is a four-page showcase (Simple Wiring / View Browser / Custom Renderer / TanStack Table) reaching DynData "Table Browser" parity on the read surface — a `GET /api/showcase/views` catalog over `IViewRegistry`, dynamic columns from metadata, server-side paging/global-search/multi-sort, and a jQuery-QueryBuilder advanced filter — plus the `vOrder` view. Additive at the sample layer only.
 
 **Next:**
 
 1. Observability (D100 — OpenTelemetry) and versioning/deprecation (D99).
-2. The remaining reference adapters (MudBlazor next; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — seven are still empty scaffolds (DataTables.NET and AG Grid are done).
+2. The remaining reference adapters (MudBlazor next; then Telerik, Syncfusion, PrimeNG, OData, GraphQL) — six are still empty scaffolds (DataTables.NET, AG Grid, and TanStack Table are done).
 3. Bulk write operations (v1.x; an array body is rejected with 400 today).
 4. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).
