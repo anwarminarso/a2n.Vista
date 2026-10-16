@@ -37,6 +37,19 @@ namespace a2n.Vista.Tests;
 /// (they resolve the key/facet from metadata at runtime); trimming is not used for tests, so IL2026 is
 /// suppressed at the class level, matching the sibling write-path tests.
 /// </remarks>
+/// <remarks>
+/// CsCheck runs sample iterations in parallel, and every iteration calls
+/// <c>Database.EnsureCreated</c> on a fresh in-memory
+/// <see cref="CompositeKeyContext"/>. EF Core 9 and 10 build the relational model lazily on that first
+/// use, and <c>GetRelationalModel</c> can throw <c>ModelNotFinalized</c> when two threads take the first
+/// step together (dotnet/efcore#39214, present in the pinned 9.0.6 and 10.0.0 packages). EF Core 8
+/// finalizes the relational model during context initialization, which is why the same seed passed on
+/// net8. The Sqlite connection is not part of the service-provider cache key
+/// (<c>SqliteOptionsExtension.ExtensionInfo.ShouldUseSameServiceProvider</c> is true for every SQLite
+/// extension), so one single-threaded <c>EnsureCreated</c> publishes the shared runtime model and later
+/// parallel calls take the fast path. That warmup is not a weakening of the property: the generated keys
+/// and both map orders are still asserted.
+/// </remarks>
 [SuppressMessage(
     "Trimming",
     "IL2026:Members annotated with RequiresUnreferencedCodeAttribute may break when trimming",
@@ -45,6 +58,12 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
 {
     /// <summary>Minimum generated cases required for the property (design Testing Strategy).</summary>
     private const int Iterations = 100;
+
+    /// <summary>Serializes the first relational-model build. See <see cref="WarmRelationalModel"/>.</summary>
+    private static readonly object RelationalModelGate = new();
+
+    /// <summary>Set once <see cref="WarmRelationalModel"/> has published the shared relational model.</summary>
+    private static volatile bool _relationalModelReady;
 
     private const string ViewName = "composite-key-order-independence";
 
@@ -105,68 +124,191 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
                 $"expected the canonical composite key [{string.Join(", ", CanonicalOrder)}].");
         }
 
+        // Publish the shared relational model before CsCheck's worker threads call EnsureCreated.
+        // See the class remarks and WarmRelationalModel.
+        WarmRelationalModel();
+
         Gen.Select(genRows, Gen.Int[0, int.MaxValue], Gen.Int[0, Permutations.Length - 1]).Sample(
             data =>
             {
                 var (rows, targetSeed, permIndex) = data;
-
-                // Choose the target row present in the seed set, and a permutation of its key field order.
-                var target = rows[targetSeed % rows.Length];
-                var shuffledOrder = Permutations[permIndex];
-
-                var canonicalKey = BuildKeyMap(target, CanonicalOrder);
-                var shuffledKey = BuildKeyMap(target, shuffledOrder);
-
-                // Two identically seeded databases: delete the same target from each, one by canonical
-                // order and one by the permuted order.
-                using var canonical = WriteHarness.Create(provider, planRegistry, view, rows);
-                using var shuffled = WriteHarness.Create(provider, planRegistry, view, rows);
-
-                var deletedCanonical = canonical.Delete(canonicalKey);
-                var deletedShuffled = shuffled.Delete(shuffledKey);
-
-                // Both orders resolve the seeded target: each delete matches exactly one in-scope row.
-                if (!deletedCanonical)
-                {
-                    throw new Exception(
-                        $"Canonical-order delete resolved no row for present key ({target.A}, '{target.B}', {target.C}).");
-                }
-
-                if (!deletedShuffled)
-                {
-                    throw new Exception(
-                        $"Shuffled-order delete (order [{string.Join(", ", shuffledOrder)}]) resolved no row " +
-                        $"for present key ({target.A}, '{target.B}', {target.C}); resolution is order-dependent.");
-                }
-
-                var remainingCanonical = canonical.SnapshotKeys();
-                var remainingShuffled = shuffled.SnapshotKeys();
-
-                // The canonical-order delete removed exactly the target: every other row survives.
-                var expectedRemaining = rows
-                    .Where(r => (r.A, r.B, r.C) != (target.A, target.B, target.C))
-                    .Select(r => (r.A, r.B, r.C))
-                    .OrderBy(static k => k)
-                    .ToArray();
-
-                if (!remainingCanonical.SequenceEqual(expectedRemaining))
-                {
-                    throw new Exception(
-                        "Canonical-order delete did not remove exactly the keyed row; " +
-                        $"remaining [{FormatKeys(remainingCanonical)}], expected [{FormatKeys(expectedRemaining)}].");
-                }
-
-                // Order independence: the shuffled-order delete produced the identical final state, i.e. it
-                // resolved and removed the very same row the canonical order did (Requirement R3.6).
-                if (!remainingShuffled.SequenceEqual(remainingCanonical))
-                {
-                    throw new Exception(
-                        $"Shuffled-order delete (order [{string.Join(", ", shuffledOrder)}]) removed a different " +
-                        $"row than the canonical order: remaining [{FormatKeys(remainingShuffled)}] vs " +
-                        $"[{FormatKeys(remainingCanonical)}].");
-                }
+                AssertOrderIndependentDelete(provider, planRegistry, view, rows, targetSeed, permIndex);
             },
             iter: Iterations);
+    }
+
+    /// <summary>
+    /// The exact sample CI run 38877351961 reported for seed <c>9CKbg4_346s7</c>
+    /// (0 shrinks): five rows, target selector 388739900, permutation index 1
+    /// (<c>A, C, B</c>). CsCheck threw from <c>EnsureCreated</c> before either delete ran, so this
+    /// case never demonstrated a wrong row. Replaying it here locks both halves: the reported input
+    /// deletes the same row in both map orders, and a concurrent <c>EnsureCreated</c> burst after the
+    /// warmup does not throw <c>ModelNotFinalized</c>.
+    /// </summary>
+    [Test]
+    public void Reported_Seed_9CKbg4_346s7_Deletes_The_Same_Row_For_Both_Key_Orders()
+    {
+        using var provider = new ServiceCollection()
+            .AddVista(v => v.Register<CompositeKeyOrderView>())
+            .BuildServiceProvider();
+
+        var viewRegistry = provider.GetRequiredService<IViewRegistry>();
+        var planRegistry = provider.GetRequiredService<IViewExecutionPlanRegistry>();
+        var view = viewRegistry.Get(ViewName)
+            ?? throw new InvalidOperationException($"View '{ViewName}' was not registered.");
+
+        WarmRelationalModel();
+
+        RowSeed[] rows =
+        {
+            new(9, "b5", 19, "p5"),
+            new(27, "b5", 13, "p4"),
+            new(39, "b3", 24, "p4"),
+            new(1, "b1", 8, "p2"),
+            new(33, "b1", 5, "p1"),
+        };
+
+        AssertOrderIndependentDelete(provider, planRegistry, view, rows, targetSeed: 388739900, permIndex: 1);
+
+        // The CI failure was a first-touch race, not this input. After the warmup, the same
+        // EnsureCreated the sample performs must succeed on many threads at once.
+        Exception? failure = null;
+        var burst = new Thread[32];
+        var gate = new Barrier(burst.Length);
+        for (var i = 0; i < burst.Length; i++)
+        {
+            burst[i] = new Thread(() =>
+            {
+                gate.SignalAndWait();
+                try
+                {
+                    EnsureCreatedOnFreshDatabase();
+                }
+                catch (Exception ex)
+                {
+                    Interlocked.CompareExchange(ref failure, ex, null);
+                }
+            });
+            burst[i].Start();
+        }
+
+        foreach (var thread in burst)
+        {
+            thread.Join();
+        }
+
+        if (failure is not null)
+        {
+            throw new Exception(
+                "Concurrent EnsureCreated threw after the relational model was warmed. " +
+                "The CI failure (GetRelationalModel / ModelNotFinalized) is still reachable.",
+                failure);
+        }
+    }
+
+    /// <summary>
+    /// Deletes <paramref name="rows"/>'s selected target from two identical databases, one with the
+    /// canonical key-field order and one with <see cref="Permutations"/>[<paramref name="permIndex"/>],
+    /// and throws when the two deletes do not remove that same row.
+    /// </summary>
+    private static void AssertOrderIndependentDelete(
+        IServiceProvider provider,
+        IViewExecutionPlanRegistry planRegistry,
+        ViewMetadata view,
+        IReadOnlyList<RowSeed> rows,
+        int targetSeed,
+        int permIndex)
+    {
+        var target = rows[targetSeed % rows.Count];
+        var shuffledOrder = Permutations[permIndex];
+
+        var canonicalKey = BuildKeyMap(target, CanonicalOrder);
+        var shuffledKey = BuildKeyMap(target, shuffledOrder);
+
+        // Two identically seeded databases: delete the same target from each, one by canonical
+        // order and one by the permuted order.
+        using var canonical = WriteHarness.Create(provider, planRegistry, view, rows);
+        using var shuffled = WriteHarness.Create(provider, planRegistry, view, rows);
+
+        var deletedCanonical = canonical.Delete(canonicalKey);
+        var deletedShuffled = shuffled.Delete(shuffledKey);
+
+        // Both orders resolve the seeded target: each delete matches exactly one in-scope row.
+        if (!deletedCanonical)
+        {
+            throw new Exception(
+                $"Canonical-order delete resolved no row for present key ({target.A}, '{target.B}', {target.C}).");
+        }
+
+        if (!deletedShuffled)
+        {
+            throw new Exception(
+                $"Shuffled-order delete (order [{string.Join(", ", shuffledOrder)}]) resolved no row " +
+                $"for present key ({target.A}, '{target.B}', {target.C}); resolution is order-dependent.");
+        }
+
+        var remainingCanonical = canonical.SnapshotKeys();
+        var remainingShuffled = shuffled.SnapshotKeys();
+
+        // The canonical-order delete removed exactly the target: every other row survives.
+        var expectedRemaining = rows
+            .Where(r => (r.A, r.B, r.C) != (target.A, target.B, target.C))
+            .Select(r => (r.A, r.B, r.C))
+            .OrderBy(static k => k)
+            .ToArray();
+
+        if (!remainingCanonical.SequenceEqual(expectedRemaining))
+        {
+            throw new Exception(
+                "Canonical-order delete did not remove exactly the keyed row; " +
+                $"remaining [{FormatKeys(remainingCanonical)}], expected [{FormatKeys(expectedRemaining)}].");
+        }
+
+        // Order independence: the shuffled-order delete produced the identical final state, i.e. it
+        // resolved and removed the very same row the canonical order did (Requirement R3.6).
+        if (!remainingShuffled.SequenceEqual(remainingCanonical))
+        {
+            throw new Exception(
+                $"Shuffled-order delete (order [{string.Join(", ", shuffledOrder)}]) removed a different " +
+                $"row than the canonical order: remaining [{FormatKeys(remainingShuffled)}] vs " +
+                $"[{FormatKeys(remainingCanonical)}].");
+        }
+    }
+
+    /// <summary>
+    /// Single-threaded first <c>EnsureCreated</c> for <see cref="CompositeKeyContext"/>. Safe to call
+    /// from tests that TUnit runs in parallel with each other: only the first caller builds the
+    /// relational model, and every later caller waits for that build to finish.
+    /// </summary>
+    private static void WarmRelationalModel()
+    {
+        if (_relationalModelReady)
+        {
+            return;
+        }
+
+        lock (RelationalModelGate)
+        {
+            if (_relationalModelReady)
+            {
+                return;
+            }
+
+            EnsureCreatedOnFreshDatabase();
+            _relationalModelReady = true;
+        }
+    }
+
+    /// <summary>Opens a private in-memory database and creates the composite-key schema.</summary>
+    private static void EnsureCreatedOnFreshDatabase()
+    {
+        using var connection = new SqliteConnection("DataSource=:memory:");
+        connection.Open();
+        var options = new DbContextOptionsBuilder<CompositeKeyContext>()
+            .UseSqlite(connection)
+            .Options;
+        using var context = new CompositeKeyContext(options);
+        context.Database.EnsureCreated();
     }
 
     /// <summary>
