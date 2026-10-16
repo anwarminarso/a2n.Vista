@@ -10,7 +10,8 @@ using Microsoft.EntityFrameworkCore;
 namespace a2n.Vista.Tests;
 
 /// <summary>
-/// Finalizes EF relational models on one thread before TUnit or CsCheck run anything in parallel.
+/// Finalizes the relational model of each inventoried test context on one thread before TUnit or
+/// CsCheck run anything in parallel.
 /// </summary>
 /// <remarks>
 /// <para>
@@ -23,8 +24,8 @@ namespace a2n.Vista.Tests;
 /// fast path.
 /// </para>
 /// <para>
-/// Contexts constructed inside a CsCheck <c>Sample</c> (CsCheck runs iterations on worker threads) or
-/// another parallel sample:
+/// The warmed set is exactly the contexts constructed inside a CsCheck <c>Sample</c> (CsCheck runs
+/// iterations on worker threads). No other test context is warmed here:
 /// </para>
 /// <list type="bullet">
 /// <item><see cref="CompositeKeyOrderIndependencePropertyTests"/> — <c>CompositeKeyContext</c></item>
@@ -39,48 +40,85 @@ namespace a2n.Vista.Tests;
 /// <item><c>ListPageBoundPropertyTests</c> — <c>P2ListDbContext</c></item>
 /// <item><c>NonProbeableMaskedFieldPropertyTests</c> — <c>P6Db</c></item>
 /// </list>
-/// <para>
-/// The same hook also finalizes every other concrete <see cref="DbContext"/> in this test assembly.
-/// TUnit runs test methods in parallel, and several of those types (for example <c>WidgetContext</c>)
-/// are first-touched from more than one test. Property tests that build one context on the calling
-/// thread before <c>Sample</c> — <c>ConcurrencyAbortPropertyTests</c>,
-/// <c>WriteResponseMinimalityPropertyTests</c>, <c>RejectedWriteStatePreservationPropertyTests</c>,
-/// <c>ErrorEnvelopeConformancePropertyTests</c>, <c>NotFoundIndistinguishabilityPropertyTests</c> —
-/// do not create a context inside the sample; they are still covered because their context types live
-/// in this assembly.
-/// </para>
 /// </remarks>
 internal static class RelationalModelWarmup
 {
     /// <summary>
-    /// Builds each concrete test <see cref="DbContext"/> once, on this thread, and calls
+    /// Assembly-qualified CLR names (<c>FullName</c>, nested types joined with <c>+</c>) of the
+    /// contexts constructed inside a parallel sample. <see cref="WarmAll"/> warms this set and nothing else.
+    /// </summary>
+    internal static readonly IReadOnlyList<string> InventoriedContextNames =
+    [
+        "a2n.Vista.Tests.CompositeKeyOrderIndependencePropertyTests+CompositeKeyContext",
+        "a2n.Vista.Tests.DeletePrecisionPropertyTests+DeleteContext",
+        "a2n.Vista.Examples.StyleBExecP3.P3TestDbContext",
+        "a2n.Vista.Tests.DisallowedFieldRejectionPropertyTests+P4TestDbContext",
+        "a2n.Vista.Tests.P1ParityDbContext",
+        "a2n.Vista.Tests.HttpSurfaceParityDbContext",
+        "a2n.Vista.Tests.ConditionalMaskingPropertyTests+P5MaskingDbContext",
+        "a2n.Vista.Tests.RequestKeyAuthorityPropertyTests+SpoofContext",
+        "a2n.Vista.Examples.StyleBExecP7.P7TestDbContext",
+        "a2n.Vista.Tests.ListPageBoundPropertyTests+P2ListDbContext",
+        "a2n.Vista.Tests.NonProbeableMaskedFieldPropertyTests+P6Db",
+    ];
+
+    private static readonly Assembly[] CandidateAssemblies =
+    [
+        typeof(RelationalModelWarmup).Assembly,
+        typeof(P3TestDbContext).Assembly,
+        typeof(P7TestDbContext).Assembly,
+    ];
+
+    private static Type[] warmedContextTypes = [];
+
+    /// <summary>
+    /// The context types <see cref="WarmAll"/> actually finalized, in inventory order.
+    /// </summary>
+    internal static IReadOnlyList<Type> WarmedContextTypes => warmedContextTypes;
+
+    /// <summary>
+    /// Builds each inventoried <see cref="DbContext"/> once, on this thread, and calls
     /// <c>EnsureCreated</c> so the shared relational model is published before parallel work.
     /// </summary>
     [ModuleInitializer]
     internal static void WarmAll()
     {
-        var seen = new HashSet<Type>();
-        foreach (var type in typeof(RelationalModelWarmup).Assembly.GetTypes())
+        var warmed = new Type[InventoriedContextNames.Count];
+        for (var i = 0; i < InventoriedContextNames.Count; i++)
         {
-            if (IsConcreteContext(type))
+            var contextName = InventoriedContextNames[i];
+            var contextType = Resolve(contextName);
+            try
             {
-                seen.Add(type);
+                Warm(contextType);
+            }
+            catch (Exception ex)
+            {
+                throw new InvalidOperationException(
+                    $"RelationalModelWarmup failed while finalizing '{contextType.FullName}'.",
+                    ex);
+            }
+
+            warmed[i] = contextType;
+        }
+
+        warmedContextTypes = warmed;
+    }
+
+    private static Type Resolve(string contextName)
+    {
+        foreach (var assembly in CandidateAssemblies)
+        {
+            var type = assembly.GetType(contextName, throwOnError: false);
+            if (type is not null)
+            {
+                return type;
             }
         }
 
-        // These two live in fixture assemblies. Parallel samples in this test assembly construct them.
-        seen.Add(typeof(P3TestDbContext));
-        seen.Add(typeof(P7TestDbContext));
-
-        foreach (var type in seen)
-        {
-            Warm(type);
-        }
+        throw new InvalidOperationException(
+            $"RelationalModelWarmup could not resolve inventoried context '{contextName}'.");
     }
-
-    private static bool IsConcreteContext(Type type) =>
-        type is { IsAbstract: false, IsGenericTypeDefinition: false }
-        && typeof(DbContext).IsAssignableFrom(type);
 
     private static void Warm(Type contextType)
     {
@@ -114,16 +152,7 @@ internal static class RelationalModelWarmup
         }
 
         using var context = (DbContext)ctor.Invoke(args);
-        try
-        {
-            context.Database.EnsureCreated();
-        }
-        catch (Exception ex)
-        {
-            throw new InvalidOperationException(
-                $"RelationalModelWarmup failed while finalizing '{contextType.FullName}'.",
-                ex);
-        }
+        context.Database.EnsureCreated();
     }
 
     private static object CreateArgument(Type parameterType, object options, Type contextType)
