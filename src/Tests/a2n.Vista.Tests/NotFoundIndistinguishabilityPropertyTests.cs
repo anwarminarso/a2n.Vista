@@ -204,7 +204,7 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
     private static StringContent JsonContent(string json) => new(json, Encoding.UTF8, "application/json");
 
     /// <summary>The EF source entity the views project from; tenant-scoped, single-source, Id-keyed.</summary>
-    private sealed class ScopedSource
+    internal sealed class ScopedSource
     {
         public int Id { get; set; }
 
@@ -236,7 +236,7 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
     }
 
     /// <summary>Minimal EF context backing both views.</summary>
-    private sealed class ScopedContext : DbContext
+    internal sealed class ScopedContext : DbContext
     {
         public ScopedContext(DbContextOptions<ScopedContext> options)
             : base(options)

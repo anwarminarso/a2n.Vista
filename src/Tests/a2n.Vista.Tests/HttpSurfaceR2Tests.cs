@@ -273,7 +273,7 @@ public sealed class HttpSurfaceR2Tests
 
     // ---- Fixtures -----------------------------------------------------------------------------------
 
-    private sealed class R2Order
+    internal sealed class R2Order
     {
         public int Id { get; set; }
 
@@ -282,7 +282,7 @@ public sealed class HttpSurfaceR2Tests
         public decimal Total { get; set; }
     }
 
-    private sealed class R2OrderDetail
+    internal sealed class R2OrderDetail
     {
         public int OrderId { get; set; }
 
@@ -291,7 +291,7 @@ public sealed class HttpSurfaceR2Tests
         public int Quantity { get; set; }
     }
 
-    private sealed class R2Context : DbContext
+    internal sealed class R2Context : DbContext
     {
         public R2Context(DbContextOptions<R2Context> options)
             : base(options)

@@ -47,13 +47,6 @@ internal static class RelationalModelWarmup
     private static Type[] warmedContextTypes = [];
 
     /// <summary>
-    /// CLR names (<c>FullName</c>, nested types joined with <c>+</c>) of the contexts
-    /// <see cref="WarmAll"/> finalizes. The warmed set is exactly this list.
-    /// </summary>
-    internal static IReadOnlyList<string> InventoriedContextNames =>
-        warmedContextTypes.Select(type => type.FullName!).ToArray();
-
-    /// <summary>
     /// The context types <see cref="WarmAll"/> actually finalized, in inventory order.
     /// </summary>
     internal static IReadOnlyList<Type> WarmedContextTypes => warmedContextTypes;

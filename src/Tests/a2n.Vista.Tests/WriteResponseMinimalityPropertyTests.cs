@@ -277,7 +277,7 @@ public sealed class WriteResponseMinimalityPropertyTests
     /// (set from the write model) and a non-whitelisted <c>InternalNote</c> that defaults to a fixed
     /// sentinel on every created row.
     /// </summary>
-    private sealed class MinimalitySource
+    internal sealed class MinimalitySource
     {
         public int Id { get; set; }
 
@@ -309,7 +309,7 @@ public sealed class WriteResponseMinimalityPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class MinimalityContext : DbContext
+    internal sealed class MinimalityContext : DbContext
     {
         public MinimalityContext(DbContextOptions<MinimalityContext> options)
             : base(options)
