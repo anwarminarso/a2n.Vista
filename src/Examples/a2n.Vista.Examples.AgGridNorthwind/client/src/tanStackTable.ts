@@ -32,7 +32,11 @@ interface ProductRow {
   productName?: string;
   unitPrice?: number | null;
   unitsInStock?: number | null;
-  discontinued?: boolean;
+  /**
+   * Northwind stores `Products.Discontinued` as text `"0"` / `"1"`. The list response leaves that
+   * text in place; boolean and numeric forms are accepted by the cell renderer as well.
+   */
+  discontinued?: string | boolean | number | null;
   categoryName?: string;
   supplierName?: string;
 }
@@ -198,17 +202,34 @@ function headerLabel(header: string | unknown, id: string): string {
   return typeof header === 'string' ? header : id;
 }
 
-function cellText(columnId: string, value: unknown): string {
+/**
+ * Text for one body cell.
+ *
+ * `Products.Discontinued` arrives as the text `"0"` / `"1"` (and the adapter does not coerce it).
+ * Yes is boolean `true`, numeric `1`, the text `"1"`, or the text `"true"` in any case. Every other
+ * value, including `"0"` and boolean `false`, is No. Other columns still render blank for null.
+ */
+export function cellText(columnId: string, value: unknown): string {
+  if (columnId === 'Discontinued') {
+    return isDiscontinuedValue(value) ? 'Yes' : 'No';
+  }
   if (value === null || value === undefined) {
     return '';
-  }
-  if (columnId === 'Discontinued') {
-    return value === true ? 'Yes' : 'No';
   }
   if (columnId === 'UnitPrice' && typeof value === 'number') {
     return priceFormat.format(value);
   }
   return String(value);
+}
+
+function isDiscontinuedValue(value: unknown): boolean {
+  if (value === true || value === 1) {
+    return true;
+  }
+  if (typeof value !== 'string') {
+    return false;
+  }
+  return value === '1' || value.toLowerCase() === 'true';
 }
 
 function render(): void {
@@ -353,4 +374,7 @@ function bootstrap(): void {
   void load();
 }
 
-bootstrap();
+// The page script boots the table. Unit tests import {@link cellText} from Node, where there is no document.
+if (typeof document !== 'undefined') {
+  bootstrap();
+}

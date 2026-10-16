@@ -104,6 +104,20 @@ public sealed class ShowcaseUiTests
     }
 
     [Test]
+    public async Task TanStack_Discontinued_Renders_Yes_For_Known_Products(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var scope = await OpenAsync(SampleSession.Showcase, "/tanstack.html");
+        var page = scope.Page;
+        await page.Locator("#grid-body tr td").First.WaitForAsync();
+
+        // Products.Discontinued is text "0"/"1". These two rows are discontinued; Chai is not.
+        await AssertDiscontinuedCellAsync(page, "Alice Mutton", "Yes");
+        await AssertDiscontinuedCellAsync(page, "Chef Anton's Gumbo Mix", "Yes");
+        await AssertDiscontinuedCellAsync(page, "Chai", "No");
+    }
+
+    [Test]
     public async Task Northwind_DataTables_Page_Renders_Rows(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
@@ -151,6 +165,14 @@ public sealed class ShowcaseUiTests
         var text = await File.ReadAllTextAsync(path!);
         await Assert.That(text).Contains("Product Name");
         await Assert.That(text).Contains("Alice Mutton");
+    }
+
+    private static async Task AssertDiscontinuedCellAsync(IPage page, string productName, string expected)
+    {
+        var row = page.Locator("#grid-body tr").Filter(new() { HasText = productName });
+        await Assertions.Expect(row).ToHaveCountAsync(1);
+        var discontinued = (await row.Locator("td").Last.InnerTextAsync()).Trim();
+        await Assert.That(discontinued).IsEqualTo(expected);
     }
 
     private static async Task<BrowserPage> OpenAsync(Uri host, string path)

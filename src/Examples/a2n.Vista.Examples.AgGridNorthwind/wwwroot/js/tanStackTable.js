@@ -143,17 +143,33 @@ async function load() {
 function headerLabel(header, id) {
     return typeof header === 'string' ? header : id;
 }
-function cellText(columnId, value) {
+/**
+ * Text for one body cell.
+ *
+ * `Products.Discontinued` arrives as the text `"0"` / `"1"` (and the adapter does not coerce it).
+ * Yes is boolean `true`, numeric `1`, the text `"1"`, or the text `"true"` in any case. Every other
+ * value, including `"0"` and boolean `false`, is No. Other columns still render blank for null.
+ */
+export function cellText(columnId, value) {
+    if (columnId === 'Discontinued') {
+        return isDiscontinuedValue(value) ? 'Yes' : 'No';
+    }
     if (value === null || value === undefined) {
         return '';
-    }
-    if (columnId === 'Discontinued') {
-        return value === true ? 'Yes' : 'No';
     }
     if (columnId === 'UnitPrice' && typeof value === 'number') {
         return priceFormat.format(value);
     }
     return String(value);
+}
+function isDiscontinuedValue(value) {
+    if (value === true || value === 1) {
+        return true;
+    }
+    if (typeof value !== 'string') {
+        return false;
+    }
+    return value === '1' || value.toLowerCase() === 'true';
 }
 function render() {
     syncOptions();
@@ -278,5 +294,8 @@ function bootstrap() {
     render();
     void load();
 }
-bootstrap();
+// The page script boots the table. Unit tests import {@link cellText} from Node, where there is no document.
+if (typeof document !== 'undefined') {
+    bootstrap();
+}
 //# sourceMappingURL=tanStackTable.js.map
