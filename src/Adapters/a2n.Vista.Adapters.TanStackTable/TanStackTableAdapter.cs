@@ -8,7 +8,7 @@ using a2n.Vista.Metadata;
 namespace a2n.Vista.Adapters.TanStackTable;
 
 /// <summary>
-/// The TanStack Table adapter (Spec 04, D155–D158). Translates a manual table's state — pagination,
+/// The TanStack Table adapter (Spec 04, D154–D157). Translates a manual table's state — pagination,
 /// sorting, column filters, global filter, and column visibility — into the neutral
 /// <see cref="ViewQueryRequest"/> and the neutral result back into <c>{ rows, rowCount, pageCount }</c>.
 /// The three steps are pure; the adapter references <c>a2n.Vista.Core</c> only (D48/D66).
@@ -160,7 +160,7 @@ public sealed class TanStackTableAdapter : ViewAdapter<TanStackTableRequest, Tan
 
     /// <summary>
     /// Maps <b>every</b> <c>sorting</c> entry to a <see cref="SortSpec"/>, carrying <c>id</c> through
-    /// verbatim and preserving array order (D157, D150). The adapter builds; the engine rejects an
+    /// verbatim and preserving array order (D156, D150). The adapter builds; the engine rejects an
     /// unknown or non-sortable id. A TanStack sort entry declares nothing about whether the column is a
     /// view field — the same posture as an AG Grid <c>sortModel</c> — so no entry is dropped.
     /// </summary>
@@ -210,7 +210,7 @@ public sealed class TanStackTableAdapter : ViewAdapter<TanStackTableRequest, Tan
     }
 
     /// <summary>
-    /// Maps <c>columnVisibility</c> onto <see cref="ViewQueryRequest.SelectFields"/> (D157).
+    /// Maps <c>columnVisibility</c> onto <see cref="ViewQueryRequest.SelectFields"/> (D156).
     /// <see langword="null"/> or a map that hides nothing → <see langword="null"/> (the full projection).
     /// A <see langword="false"/> entry whose key equals a view field name (ordinal) omits that field.
     /// Keys the view does not declare are UI columns the request itself describes as hidden — they are

@@ -75,7 +75,7 @@ builder.Services.AddVistaAdapter<a2n.Vista.Adapters.DataTablesNet.DataTablesAdap
 // Additive only: this changes no existing view route, envelope, or error shape.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.AgGrid.AgGridAdapter>();
 
-// Register the TanStack Table adapter (Decision Log D155). Each view then also exposes
+// Register the TanStack Table adapter (Decision Log D154). Each view then also exposes
 // POST {route}/tanstack, driving the showcase's TanStack Table page. Additive only.
 builder.Services.AddVistaAdapter<a2n.Vista.Adapters.TanStackTable.TanStackTableAdapter>();
 

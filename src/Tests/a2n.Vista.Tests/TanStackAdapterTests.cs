@@ -13,7 +13,7 @@ namespace a2n.Vista.Tests;
 
 /// <summary>
 /// Feature: tanstack-table-adapter — the three pure steps of <see cref="TanStackTableAdapter"/>
-/// (D155–D157). Bind parses TanStack table state, ToQuery places each slice in its Vista channel,
+/// (D154–D156). Bind parses TanStack table state, ToQuery places each slice in its Vista channel,
 /// and ToResponse emits <c>{ rows, rowCount, pageCount }</c>.
 /// </summary>
 public sealed class TanStackAdapterTests
@@ -197,7 +197,7 @@ public sealed class TanStackAdapterTests
         await Assert.That(query.SelectFields).IsEquivalentTo(new[] { "Id", "Name", "Price" });
     }
 
-    // -- paging (D144 / D157) -------------------------------------------------------------------------
+    // -- paging (D144 / D156) -------------------------------------------------------------------------
 
     [Test]
     public async Task Paging_Carries_Absolute_Offset()
@@ -304,7 +304,7 @@ public sealed class TanStackAdapterTests
         await Assert.That(query.Sort[2].Field).IsEqualTo(string.Empty);
     }
 
-    // -- column filters (D156) ------------------------------------------------------------------------
+    // -- column filters (D155) ------------------------------------------------------------------------
 
     [Test]
     public async Task Filter_String_Is_Contains_And_Blank_Is_Skipped()

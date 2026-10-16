@@ -31,6 +31,8 @@ env:
   # Only the implemented, shippable libraries. Intentionally excluded:
   #   * the empty scaffolds (a2n.Vista.Newtonsoft + the MudBlazor/OData/GraphQL/
   #     PrimeNG/Syncfusion/Telerik adapters) until they have content;
+  #   * a2n.Vista.Adapters.TanStackTable — implemented, but NuGet publishing is deferred
+  #     until after a QA smoke and an owner decision;
   #   * a2n.Vista.SourceGenerators - NOT shipped standalone. It is bundled into the
   #     a2n.Vista.Core package (packed under analyzers/dotnet/cs) so consumers get the
   #     generator transitively; packing it on its own would emit an empty package
@@ -43,7 +45,6 @@ env:
     src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj
     src/Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj
     src/Adapters/a2n.Vista.Adapters.AgGrid/a2n.Vista.Adapters.AgGrid.csproj
-    src/Adapters/a2n.Vista.Adapters.TanStackTable/a2n.Vista.Adapters.TanStackTable.csproj
     src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
 
 jobs:

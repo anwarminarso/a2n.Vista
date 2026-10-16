@@ -1,5 +1,5 @@
 /**
- * Framework-agnostic client for `POST {route}/tanstack` (D158).
+ * Framework-agnostic client for `POST {route}/tanstack` (D157).
  *
  * TanStack Table does not define an HTTP protocol. A manual table already holds the state slices the
  * adapter binds — `pagination`, `sorting`, `columnFilters`, `globalFilter`, `columnVisibility` — and
