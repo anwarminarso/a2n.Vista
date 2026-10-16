@@ -80,4 +80,4 @@ Chromium is launched with `--no-sandbox` and `--disable-dev-shm-usage` so the sa
 
 ## CI
 
-`.github/workflows/e2e.yml` runs `bash tests/e2e/run.sh` on pull requests into `develop`, and on `workflow_dispatch`. It does not modify `.github/workflows/ci.yml`. The library matrix in `ci.yml` still listens to `main` only, so this job is the check that runs when a change targets `develop`. It needs outbound network access for NuGet, the Playwright browser download, and the grid CDNs.
+`.github/workflows/e2e.yml` runs `bash tests/e2e/run.sh` on pull requests into `develop`, and on `workflow_dispatch`. It does not modify `.github/workflows/ci.yml`. The library matrix in `ci.yml` already runs on push and pull_request to `main` and `develop` (PR #7); this job adds the browser suite. The job timeout is 20 minutes. It needs outbound network access for NuGet, the Playwright browser download, and the grid CDNs.

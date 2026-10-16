@@ -2,8 +2,8 @@ name: E2E
 
 # Browser suite for the Northwind sample and the AG Grid showcase.
 # Separate from ci.yml so the library matrix (net8/net9/net10, no browser) is unchanged.
-# pull_request into develop only: ci.yml still listens to main, and this job is the
-# one that runs when a change targets the integration branch.
+# pull_request into develop only. ci.yml already runs on push and pull_request to
+# main and develop (PR #7); this job adds the browser suite and does not replace that matrix.
 on:
   pull_request:
     branches: [develop]
@@ -16,6 +16,7 @@ jobs:
   playwright:
     name: Playwright e2e (net8.0)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@v4
