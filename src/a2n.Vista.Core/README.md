@@ -11,6 +11,7 @@ This package provides the core building blocks:
 - **View authoring** — `View`/`ViewBuilder`/`ViewTemplate` for declaring LINQ projections as first-class, secure-by-default units.
 - **Metadata** — `ViewMetadata`, field/key metadata, and the neutral filter contract.
 - **Ports** — the `IViewExecutor`/`IViewScope` seams plus the write seam (`WriteMapper`/`IWriteFacetRegistry`).
+- **Operation telemetry** — `VistaTelemetry` (`ActivitySource` and `Meter`, both `a2n.Vista`). No OpenTelemetry package; see [observability](https://github.com/anwarminarso/a2n.Vista/blob/develop/docs/observability.md).
 - **Pillar 3 codegen, bundled** — the Vista source generator ships **inside this package** (`analyzers/dotnet/cs`). Referencing `a2n.Vista.Core` gives you AOT-clean metadata/execution/serialization codegen transitively — no extra package reference, no manual analyzer wiring.
 
 ## Install

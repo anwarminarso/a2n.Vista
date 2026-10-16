@@ -1,3 +1,4 @@
+using a2n.Vista.Diagnostics;
 using a2n.Vista.Write;
 
 namespace a2n.Vista.AspNetCore.Execution;
@@ -14,7 +15,7 @@ namespace a2n.Vista.AspNetCore.Execution;
 /// <c>invalid-request</c> code (Decision Log D120). When <see cref="WriteErrorCode"/> is
 /// <see langword="null"/>, the read-path <c>invalid-request</c> classification applies.
 /// </remarks>
-public sealed class VistaInvalidRequestException : Exception
+public sealed class VistaInvalidRequestException : Exception, IVistaErrorCode
 {
     /// <summary>Initializes a new <see cref="VistaInvalidRequestException"/> without a write classification.</summary>
     /// <param name="message">A human-readable description of why the request is invalid.</param>
@@ -58,4 +59,11 @@ public sealed class VistaInvalidRequestException : Exception
     /// invalid request. Drives <c>extensions["code"]</c> on the shared problem-details envelope.
     /// </summary>
     public WriteErrorCode? WriteErrorCode { get; }
+
+    /// <summary>
+    /// The stable wire code: the write classification when one was supplied, otherwise
+    /// <see cref="VistaTelemetry.ErrorCodes.InvalidRequest"/>.
+    /// </summary>
+    public string ErrorCode =>
+        WriteErrorCode is { } code ? code.ToWireCode() : VistaTelemetry.ErrorCodes.InvalidRequest;
 }

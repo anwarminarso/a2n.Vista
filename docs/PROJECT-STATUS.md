@@ -1,7 +1,14 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
+> Last updated: 2026-10-16 (**operation telemetry — D159**). List, detail, export, create, update, and
+> delete each emit one outermost `Activity` and `vista.operation.count` / `duration` / `rows` from
+> `VistaTelemetry` in Core (`ActivitySource` and `Meter` both named `a2n.Vista`). No OpenTelemetry
+> package. Empty scope when nothing is listening. Tags stay low-cardinality; wire codes including
+> `write-conflict`, `write-constraint-violation`, and `write-persistence-failed` are copied from
+> `IVistaErrorCode` when they are safe tokens. `ILogger`, health checks, `vista.auth.denied`, and
+> `vista.deprecated.hit` are still not built. See `docs/observability.md` and Spec 10 §5–§6.
+> Prior: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
 > published is void**). The `v0.0.3` tag was created on the **0.0.2 release commit**, and `publish.yml`
 > builds whatever the tag points at while taking the package version from the tag name
 > (`-p:Version=<tag without the leading v>`), so the packages on nuget.org labelled `0.0.3` are 0.0.2 code:
@@ -358,8 +365,9 @@ Three pillars (see `ROADMAP.md`):
   Publishing / OIDC, off long-lived keys) — see §2.19. **AG Grid adapter landed (M16, D133–D136, spec
   `ag-grid-adapter`):** the second Pillar 2 client-half grid adapter (`a2n.Vista.Adapters.AgGrid`, Core-only)
   + an AG Grid + TypeScript Northwind sample — see §2.20. **Still to come (planned, not started):** the
-  remaining ecosystem — the other seven grid adapters (MudBlazor next), observability (M14, D100), and
-  versioning (M15, D99) — see §6.
+  remaining ecosystem — the other seven grid adapters (MudBlazor next), the rest of observability
+  (M14: D159 traces and metrics landed; `ILogger` and health checks have not), and versioning
+  (M15, D99) — see §6.
 
 Multi-target: `net8.0;net9.0;net10.0`. Nullable enabled. Central Package Management. Test framework:
 **TUnit**.
@@ -1749,12 +1757,17 @@ approval.
   `VistaEndpointOptions.CurrentWireVersion` seam exists for additive future versioning; **route groups
   are the intended versioning vehicle**. Avoids premature abstraction. (`11-versioning-and-deprecation.md`.)
 
-### Operations & observability (designed, NOT built)
-- **Vendor-neutral observability (D100).** Instrument via OpenTelemetry-native `ActivitySource`/`Meter`/
-  `ILogger` (no APM dependency — Instana/Datadog/Jaeger/Prometheus/Serilog all consume OTel). Enrich
-  auto-instrumented HTTP/EF spans with View semantics; expose operational status (e.g. authorizer) via
-  standard health checks; opt-in & zero-cost when unused. Observability names = an operational contract,
-  subject to the deprecation policy. (`10-operations-and-observability.md`.)
+### Operations & observability (traces and metrics built, D159; logging and health checks not built)
+- **Operation telemetry (D159, built).** `VistaTelemetry` in Core: `ActivitySource` and `Meter` both
+  named `a2n.Vista`. One span per outermost list/detail/export/create/update/delete
+  (`vista.view.*`), plus `vista.operation.count`, `vista.operation.duration`, and
+  `vista.operation.rows`. The parent HTTP span is tagged and its status is left alone. No listener
+  means an empty scope. No OpenTelemetry package reference. Wiring: `docs/observability.md`.
+- **Still designed, not built (D100).** Structured `ILogger`, health checks (`vista:authorizer`,
+  `vista:registry`, `vista:config`), and the separate counters `vista.auth.denied` and
+  `vista.deprecated.hit`. A denial is already visible as `vista.operation.count` with outcome
+  `forbidden`. Observability names = an operational contract, subject to the deprecation policy.
+  (`10-operations-and-observability.md`.)
 - **Operating-model assumption (org-neutral).** The operator is often not the code author and may lack
   source access; therefore defaults fail safe, failures are operator-actionable via standard signals
   (health/logs/telemetry), and breaking changes must be deploy-time-detectable (startup config
@@ -1985,7 +1998,7 @@ per-finding detail; the §3 method-correction box there is mandatory reading bef
   locking behaviour was touched). Worth a dedicated look if it recurs, since a flaky suite erodes the parity
   guards everything else depends on.
 
-- **Observability (D100) & versioning (D99)** — designed, not built.
+- **Observability (D100, D159)** — operation traces and metrics are built (`docs/observability.md`). `ILogger`, health checks, `vista.auth.denied`, and `vista.deprecated.hit` are not. **Versioning (D99)** is not built.
 - **Adapters (Spec 04, Pillar 2 client half)** — **DataTables.NET + export (CSV/XLSX) + QueryBuilder
   metadata schema landed** (§2.7/§2.8/§2.9); remaining reference adapters (AG Grid, MudBlazor, OData, …)
   are follow-ups.

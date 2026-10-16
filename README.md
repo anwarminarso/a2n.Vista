@@ -25,7 +25,7 @@ Vista is the design successor to [`a2n.DynData`](https://github.com/anwarminarso
 
 Runnable examples: [`src/Examples/Northwind`](./src/Examples/Northwind) — read-only and writable Views over the real Northwind database, with an end-to-end self-test (`dotnet run -- selftest`) that exercises the generated dispatch and serialization; and [`src/Examples/a2n.Vista.Examples.AgGridNorthwind`](./src/Examples) — a three-page **Northwind sample showcase** (Simple Wiring, View Browser, Custom Renderer) that drives DataTables.NET + jQuery-QueryBuilder and AG Grid over several Northwind Views, populated from a `GET /api/showcase/views` catalog (secure-by-default: only registered Views appear).
 
-Not started / skeleton only: the remaining UI adapters (Pillar 2, client half — DataTables.NET and AG Grid are real; MudBlazor, Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL are scaffolds), observability (OpenTelemetry), and versioning/deprecation.
+Not started / skeleton only: the remaining UI adapters (Pillar 2, client half — DataTables.NET and AG Grid are real; MudBlazor, Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL are scaffolds), the rest of observability (health checks and structured logging; operation traces and metrics are in [`docs/observability.md`](./docs/observability.md)), and versioning/deprecation.
 
 Specs under refinement live in [`docs/spec/`](./docs/spec/).
 
@@ -68,6 +68,7 @@ src/
 - [04 — Adapter Contract](./docs/spec/04-adapter-contract.md) — UI adapter contract (Pillar 2, client half)
 - [05 — ASP.NET Core Mapping](./docs/spec/05-aspnetcore-mapping.md) — HTTP composition: read, write, auth, error
 - [10 — Operations & Observability](./docs/spec/10-operations-and-observability.md) — cross-cutting
+- [Observability wiring](./docs/observability.md) — subscribe to the `a2n.Vista` source and meter
 - [11 — Versioning & Deprecation](./docs/spec/11-versioning-and-deprecation.md) — cross-cutting
 
 ## Building

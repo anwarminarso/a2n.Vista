@@ -190,7 +190,7 @@ README message:
 
 **Next:**
 
-1. Observability (D100 — OpenTelemetry) and versioning/deprecation (D99).
+1. Observability remainder (D100): `ILogger`, health checks (`vista:authorizer`, `vista:registry`, `vista:config`), `vista.auth.denied`, and `vista.deprecated.hit`. Operation traces and metrics landed (D159 — `ActivitySource`/`Meter` `a2n.Vista`, see `docs/observability.md`). Versioning/deprecation (D99) is still not started.
 2. The remaining reference adapters (MudBlazor next; then Telerik, Syncfusion, TanStack, PrimeNG, OData, GraphQL) — seven are still empty scaffolds (DataTables.NET and AG Grid are done).
 3. Bulk write operations (v1.x; an array body is rejected with 400 today).
 4. Final availability check: NuGet `a2n.Vista.*`, GitHub username/org, domain (optional).

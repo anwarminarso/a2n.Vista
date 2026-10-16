@@ -4,6 +4,7 @@ using System.Linq.Expressions;
 using System.Reflection;
 using a2n.Vista.Authoring;
 using a2n.Vista.Contracts;
+using a2n.Vista.Diagnostics;
 using a2n.Vista.Filter;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
@@ -207,15 +208,30 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(request);
         ArgumentNullException.ThrowIfNull(scope);
 
-        // Source-generator Phase 2 (D118): when the resolved plan is a generated, non-RUC compiled plan,
-        // route through the AOT-clean compiled read path; otherwise take the reflection fallback.
-        if (TryResolveCompiledPlan(view) is { } compiledPlan)
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.List);
+        try
         {
-            return await ListCompiledAsync<TRow>(compiledPlan, view, request, scope, cancellationToken).ConfigureAwait(false);
-        }
+            // Source-generator Phase 2 (D118): when the resolved plan is a generated, non-RUC compiled plan,
+            // route through the AOT-clean compiled read path; otherwise take the reflection fallback.
+            ViewListResult<TRow> result;
+            if (TryResolveCompiledPlan(view) is { } compiledPlan)
+            {
+                result = await ListCompiledAsync<TRow>(compiledPlan, view, request, scope, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
+                result = await ListReflectionAsync<TRow>(view, request, scope, cancellationToken).ConfigureAwait(false);
+            }
 
-        // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
-        return await ListReflectionAsync<TRow>(view, request, scope, cancellationToken).ConfigureAwait(false);
+            telemetry.Succeed(result.Page.Items.Count, result.Page.TotalRows, result.TotalRowsUnfiltered);
+            return result;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -314,14 +330,37 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(scope);
 
-        // Source-generator Phase 2 (D118): route a generated compiled plan through the AOT-clean path.
-        if (TryResolveCompiledPlan(view) is { } compiledPlan)
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.Detail);
+        try
         {
-            return await DetailCompiledAsync<TRow>(compiledPlan, view, key, scope, cancellationToken).ConfigureAwait(false);
-        }
+            // Source-generator Phase 2 (D118): route a generated compiled plan through the AOT-clean path.
+            TRow? row;
+            if (TryResolveCompiledPlan(view) is { } compiledPlan)
+            {
+                row = await DetailCompiledAsync<TRow>(compiledPlan, view, key, scope, cancellationToken).ConfigureAwait(false);
+            }
+            else
+            {
+                // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
+                row = await DetailReflectionAsync<TRow>(view, key, scope, cancellationToken).ConfigureAwait(false);
+            }
 
-        // No compiled plan: the reflection fallback, isolated in a RUC helper (Decision Log D123).
-        return await DetailReflectionAsync<TRow>(view, key, scope, cancellationToken).ConfigureAwait(false);
+            if (row is null)
+            {
+                telemetry.NotFound();
+            }
+            else
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+
+            return row;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -739,7 +778,44 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(scope);
 
-        return CreateReflectionAsync(view, model, scope, cancellationToken);
+        // When nothing is listening, return the inner task directly so the disabled path does not
+        // allocate a second async state machine. When a listener is attached, the observed wrapper
+        // records the outcome (and joins an ambient HTTP operation instead of emitting a second one).
+        if (!VistaTelemetry.IsEnabled)
+        {
+            return CreateReflectionAsync(view, model, scope, cancellationToken);
+        }
+
+        return CreateObservedAsync(view, model, scope, cancellationToken);
+    }
+
+    /// <summary>
+    /// Create path used only while telemetry is enabled. Kept separate so the disabled path does not
+    /// pay for an extra state machine, and so the RUC stays on the reflection helper.
+    /// </summary>
+    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification = "Forwards to the existing reflection create bridge. Reached only when a telemetry listener is attached.")]
+    private async Task<object> CreateObservedAsync(
+        ViewMetadata view,
+        object model,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.Create);
+        try
+        {
+            var key = await CreateReflectionAsync(view, model, scope, cancellationToken).ConfigureAwait(false);
+            telemetry.Succeed(rowsReturned: 1);
+            return key;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -892,7 +968,51 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(model);
         ArgumentNullException.ThrowIfNull(scope);
 
-        return UpdateReflectionAsync(view, key, model, scope, concurrencyToken, cancellationToken);
+        if (!VistaTelemetry.IsEnabled)
+        {
+            return UpdateReflectionAsync(view, key, model, scope, concurrencyToken, cancellationToken);
+        }
+
+        return UpdateObservedAsync(view, key, model, scope, concurrencyToken, cancellationToken);
+    }
+
+    /// <summary>
+    /// Update path used only while telemetry is enabled. A <see langword="false"/> result (no in-scope
+    /// row) is <see cref="VistaTelemetry.Outcomes.NotFound"/>, not an error.
+    /// </summary>
+    [RequiresUnreferencedCode("Write mapping (TCrud to entity) is resolved from metadata at runtime; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification = "Forwards to the existing reflection update bridge. Reached only when a telemetry listener is attached.")]
+    private async Task<bool> UpdateObservedAsync(
+        ViewMetadata view,
+        object key,
+        object model,
+        IViewScope scope,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.Update);
+        try
+        {
+            var updated = await UpdateReflectionAsync(view, key, model, scope, concurrencyToken, cancellationToken).ConfigureAwait(false);
+            if (updated)
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+            else
+            {
+                telemetry.NotFound();
+            }
+
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -1006,6 +1126,26 @@ public class EfViewExecutor : IViewExecutor
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(scope);
 
+        if (!VistaTelemetry.IsEnabled)
+        {
+            return DeleteReflectionAsync(view, key, scope, concurrencyToken, cancellationToken);
+        }
+
+        return DeleteObservedAsync(view, key, scope, concurrencyToken, cancellationToken);
+    }
+
+    /// <summary>
+    /// The reflection (RUC) Delete bridge. Kept separate from <see cref="DeleteAsync"/> so the disabled
+    /// telemetry path returns this task directly.
+    /// </summary>
+    [RequiresUnreferencedCode("Delete key resolution is built from metadata at runtime; use the source generator path for AOT.")]
+    private Task<bool> DeleteReflectionAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
         // Bridge from the port's non-generic signature to the runtime entity type, exactly as
         // Create/Update do. The delete body operates on ViewMetadata.CrudEntityType (the EF entity), known
         // only at runtime, so close DeleteCoreAsync<TEntity> over it and invoke (R3.1).
@@ -1014,6 +1154,44 @@ public class EfViewExecutor : IViewExecutor
         return (Task<bool>)closed.Invoke(
             this,
             new object[] { view, key, scope, concurrencyToken!, cancellationToken })!;
+    }
+
+    /// <summary>
+    /// Delete path used only while telemetry is enabled. A <see langword="false"/> result (no in-scope
+    /// row) is <see cref="VistaTelemetry.Outcomes.NotFound"/>, not an error.
+    /// </summary>
+    [RequiresUnreferencedCode("Delete key resolution is built from metadata at runtime; use the source generator path for AOT.")]
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2026:Members annotated with 'RequiresUnreferencedCodeAttribute' require dynamic access otherwise can break functionality when trimming application code",
+        Justification = "Forwards to the existing reflection delete bridge. Reached only when a telemetry listener is attached.")]
+    private async Task<bool> DeleteObservedAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        string? concurrencyToken,
+        CancellationToken cancellationToken)
+    {
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.Delete);
+        try
+        {
+            var deleted = await DeleteReflectionAsync(view, key, scope, concurrencyToken, cancellationToken).ConfigureAwait(false);
+            if (deleted)
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+            else
+            {
+                telemetry.NotFound();
+            }
+
+            return deleted;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>

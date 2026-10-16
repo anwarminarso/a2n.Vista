@@ -4,6 +4,7 @@ using System.Reflection;
 using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Contracts;
+using a2n.Vista.Diagnostics;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using Microsoft.AspNetCore.Http;
@@ -121,17 +122,29 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(request);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
-
-        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.List);
+        try
         {
-            var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
-            return result.BoxedResult;
-        }
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
 
-        return await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
+            // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
+                telemetry.Succeed(result.Rows.Count, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+                return result.BoxedResult;
+            }
+
+            var boxed = await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
+            telemetry.Succeed();
+            return boxed;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -158,20 +171,32 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(request);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
-
-        // Prefer the generated invoker: its ViewInvocationListResult carries rows + both totals without
-        // reflecting over ViewListResult<TRow> (replacing ToAdapterResult, D123 R2.2/R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.List);
+        try
         {
-            var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
-            return new AdapterListResult(result.Rows, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.List).ConfigureAwait(false);
+
+            // Prefer the generated invoker: its ViewInvocationListResult carries rows + both totals without
+            // reflecting over ViewListResult<TRow> (replacing ToAdapterResult, D123 R2.2/R4.1).
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                var result = await invoker.ListAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false);
+                telemetry.Succeed(result.Rows.Count, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+                return new AdapterListResult(result.Rows, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+            }
+
+            var boxed = await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
+
+            var adapted = ToAdapterResult(boxed);
+            telemetry.Succeed(adapted.Rows.Count, adapted.RecordsFiltered, adapted.RecordsTotal);
+            return adapted;
         }
-
-        var boxed = await ListReflectionAsync(executor, view, request, scope, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' List execution returned no result.");
-
-        return ToAdapterResult(boxed);
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -224,21 +249,33 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(request);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
-
-        var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
-
-        // Prefer the generated invoker: consume the materialized rows without ViewListResult<TRow> reflection.
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Export);
+        try
         {
-            var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
-            return (view, result.Rows);
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
+
+            var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
+
+            // Prefer the generated invoker: consume the materialized rows without ViewListResult<TRow> reflection.
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
+                telemetry.Succeed(result.Rows.Count, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+                return (view, result.Rows);
+            }
+
+            var boxed = await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
+
+            var rows = ToAdapterResult(boxed).Rows;
+            telemetry.Succeed(rows.Count);
+            return (view, rows);
         }
-
-        var boxed = await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
-
-        return (view, ToAdapterResult(boxed).Rows);
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -265,15 +302,38 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(key);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Detail).ConfigureAwait(false);
-
-        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Detail);
+        try
         {
-            return await invoker.DetailAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
-        }
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Detail).ConfigureAwait(false);
 
-        return await DetailReflectionAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
+            // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+            object? row;
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                row = await invoker.DetailAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
+            }
+            else
+            {
+                row = await DetailReflectionAsync(executor, view, key, scope, http.RequestAborted).ConfigureAwait(false);
+            }
+
+            if (row is null)
+            {
+                telemetry.NotFound();
+            }
+            else
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+
+            return row;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -312,19 +372,31 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(request);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
-
-        var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
-
-        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Export);
+        try
         {
-            var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
-            return result.BoxedResult;
-        }
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Export).ConfigureAwait(false);
 
-        return await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
+            var exportRequest = request with { Page = 0, PageSize = view.Limits.MaxExportRows };
+
+            // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                var result = await invoker.ListAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false);
+                telemetry.Succeed(result.Rows.Count, result.TotalRowsFiltered, result.TotalRowsUnfiltered);
+                return result.BoxedResult;
+            }
+
+            var boxed = await ListReflectionAsync(executor, view, exportRequest, scope, http.RequestAborted).ConfigureAwait(false)
+                ?? throw new InvalidOperationException($"View '{viewName}' Export execution returned no result.");
+            telemetry.Succeed();
+            return boxed;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -354,17 +426,32 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(model);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Create).ConfigureAwait(false);
-        RequireCrudType(view);
-
-        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Create);
+        try
         {
-            return await invoker.CreateAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false);
-        }
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Create).ConfigureAwait(false);
+            RequireCrudType(view);
 
-        return await CreateReflectionAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' Create execution returned no primary key.");
+            // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+            object key;
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                key = await invoker.CreateAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false);
+            }
+            else
+            {
+                key = await CreateReflectionAsync(executor, view, model, scope, http.RequestAborted).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"View '{viewName}' Create execution returned no primary key.");
+            }
+
+            telemetry.Succeed(rowsReturned: 1);
+            return key;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -403,18 +490,41 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(key);
         ArgumentNullException.ThrowIfNull(model);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Update).ConfigureAwait(false);
-        RequireCrudType(view);
-
-        // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
-        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Update);
+        try
         {
-            return await invoker.UpdateAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
-        }
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Update).ConfigureAwait(false);
+            RequireCrudType(view);
 
-        var result = await UpdateReflectionAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false)
-            ?? throw new InvalidOperationException($"View '{viewName}' Update execution returned no result.");
-        return (bool)result;
+            // Prefer the source-generated, reflection-free dispatch invoker; fall back to reflection (D123, R4.1).
+            bool updated;
+            if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+            {
+                updated = await invoker.UpdateAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
+            }
+            else
+            {
+                var result = await UpdateReflectionAsync(executor, view, key, model, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false)
+                    ?? throw new InvalidOperationException($"View '{viewName}' Update execution returned no result.");
+                updated = (bool)result;
+            }
+
+            if (updated)
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+            else
+            {
+                telemetry.NotFound();
+            }
+
+            return updated;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -440,9 +550,28 @@ public sealed class ViewRequestExecutor
         ArgumentNullException.ThrowIfNull(http);
         ArgumentNullException.ThrowIfNull(key);
 
-        var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Delete).ConfigureAwait(false);
+        using var telemetry = VistaTelemetry.Begin(VistaTelemetry.UnregisteredViewName, VistaTelemetry.Operations.Delete);
+        try
+        {
+            var (view, scope, executor) = await AuthorizeAndShapeAsync(http, viewName, ViewFacet.Delete).ConfigureAwait(false);
 
-        return await executor.DeleteAsync(view, key, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
+            var deleted = await executor.DeleteAsync(view, key, scope, concurrencyToken, http.RequestAborted).ConfigureAwait(false);
+            if (deleted)
+            {
+                telemetry.Succeed(rowsReturned: 1);
+            }
+            else
+            {
+                telemetry.NotFound();
+            }
+
+            return deleted;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>
@@ -540,6 +669,9 @@ public sealed class ViewRequestExecutor
         ViewFacet facet)
     {
         var view = _registry.Get(viewName) ?? throw new VistaViewNotFoundException(viewName);
+
+        // Canonical name only — an unregistered request never reaches here, so the raw miss is not a tag.
+        VistaTelemetry.NoteView(view.Name);
 
         var services = http.RequestServices;
         var authorizer = services.GetService<IViewAuthorizer>();

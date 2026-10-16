@@ -1,4 +1,5 @@
 using System;
+using a2n.Vista.Diagnostics;
 
 namespace a2n.Vista.Adapters;
 
@@ -9,7 +10,7 @@ namespace a2n.Vista.Adapters;
 /// This is distinct from whitelist/operator/complexity violations, which the engine raises while
 /// compiling the filter tree (Spec 04 §10).
 /// </summary>
-public sealed class AdapterBindException : Exception
+public sealed class AdapterBindException : Exception, IVistaErrorCode
 {
     /// <summary>Initializes a new <see cref="AdapterBindException"/> with a message.</summary>
     /// <param name="message">A description of the binding failure.</param>
@@ -25,4 +26,7 @@ public sealed class AdapterBindException : Exception
         : base(message, innerException)
     {
     }
+
+    /// <summary>The stable wire code (<see cref="VistaTelemetry.ErrorCodes.AdapterBindFailed"/>).</summary>
+    public string ErrorCode => VistaTelemetry.ErrorCodes.AdapterBindFailed;
 }

@@ -8,7 +8,18 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+- **View operation telemetry (D159).** `a2n.Vista.Core` records one `System.Diagnostics` activity and
+  three instruments per outermost list, detail, export, create, update, and delete. The source and
+  meter are both named `a2n.Vista` (`VistaTelemetry.ActivitySourceName`, `VistaTelemetry.MeterName`).
+  Spans are `vista.view.list|detail|export|create|update|delete`. Instruments are
+  `vista.operation.count`, `vista.operation.duration` (ms), and `vista.operation.rows`. Tags are the
+  view name, operation, and outcome; failures add a safe wire code (`write-conflict`,
+  `write-concurrency-conflict`, `write-constraint-violation`, `write-persistence-failed`, and the
+  other `IVistaErrorCode` values). No SQL, exception message, row value, or unresolved route string
+  is copied into a tag. With no listener, `Begin` returns an empty scope and does not allocate.
+  Core does not reference an OpenTelemetry package; subscribe with `AddSource` / `AddMeter` as
+  described in `docs/observability.md`. Health checks and `ILogger` events remain unbuilt.
 
 ## [0.0.4] - 2026-08-11
 

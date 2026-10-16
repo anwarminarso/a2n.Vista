@@ -6,6 +6,7 @@ using System.Text.Json;
 using System.Threading;
 using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Authorization;
+using a2n.Vista.Diagnostics;
 using a2n.Vista.AspNetCore.Configuration;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Serialization;
@@ -191,21 +192,49 @@ public static class VistaEndpointRouteBuilderExtensions
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleListAsync(HttpContext http, ViewMetadata view)
     {
-        var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
-        var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
+        // The route is mapped from registered metadata, so view.Name is canonical — not a raw probe string.
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.List);
+        try
+        {
+            var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
+            var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
 
-        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
-        var result = await executor.ListAsync(http, view.Name, request).ConfigureAwait(false);
+            var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+            var result = await executor.ListAsync(http, view.Name, request).ConfigureAwait(false);
 
-        // Serialize the boxed ViewListResult<TRow> through the seam by its runtime type (D124): resolve
-        // the JsonTypeInfo via VistaJson.Options and write with the AOT-safe overload. This replaces the
-        // framework Results.Ok(obj) pipeline while preserving the 200 status and byte-for-byte body (R5.2).
-        return VistaJsonWriter.Json(result, result.GetType());
+            // Serialize the boxed ViewListResult<TRow> through the seam by its runtime type (D124): resolve
+            // the JsonTypeInfo via VistaJson.Options and write with the AOT-safe overload. This replaces the
+            // framework Results.Ok(obj) pipeline while preserving the 200 status and byte-for-byte body (R5.2).
+            var response = VistaJsonWriter.Json(result, result.GetType());
+            telemetry.Succeed();
+            return response;
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>Handles <c>POST {route}/detail</c>: read the key from the body; a missing row maps to 404.</summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleDetailAsync(HttpContext http, string viewName)
+    {
+        // viewName is the name captured when the route was mapped from the registry.
+        using var telemetry = VistaTelemetry.Begin(viewName, VistaTelemetry.Operations.Detail);
+        try
+        {
+            return await HandleDetailCoreAsync(http, viewName, telemetry).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
+    }
+
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleDetailCoreAsync(HttpContext http, string viewName, VistaOperationScope telemetry)
     {
         var body = await ReadBodyAsync<VistaDetailRequestBody>(http).ConfigureAwait(false)
             ?? throw new VistaInvalidRequestException("A detail request requires a JSON body with a 'key'.");
@@ -235,7 +264,10 @@ public static class VistaEndpointRouteBuilderExtensions
 
         // A missing row keeps the 404 contract; a present row is serialized through the seam by its
         // runtime row type (D124), preserving the 200 status and byte-for-byte body (R5.2).
-        return row is null ? Results.NotFound() : VistaJsonWriter.Json(row, row.GetType());
+        // Succeed does not override the not-found outcome DetailAsync already recorded.
+        var result = row is null ? Results.NotFound() : VistaJsonWriter.Json(row, row.GetType());
+        telemetry.Succeed();
+        return result;
     }
 
     /// <summary>Handles <c>GET {route}/metadata</c>: authorize, then return the serializable metadata.</summary>
@@ -336,6 +368,26 @@ public static class VistaEndpointRouteBuilderExtensions
     {
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
 
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.List);
+        try
+        {
+            return await HandleAdapterCoreAsync(http, view, adapter, executor, telemetry).ConfigureAwait(false);
+        }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
+    }
+
+    [RequiresUnreferencedCode(AotMessage)]
+    private static async Task<IResult> HandleAdapterCoreAsync(
+        HttpContext http,
+        ViewMetadata view,
+        IViewAdapter adapter,
+        ViewRequestExecutor executor,
+        VistaOperationScope telemetry)
+    {
         // Authorize before reading the body and binding (D145): otherwise an unauthorized caller could
         // distinguish an existing view from a nonexistent one through a 400 adapter-bind-failed response,
         // and could force a full body read plus adapter parsing.
@@ -354,6 +406,7 @@ public static class VistaEndpointRouteBuilderExtensions
         // grid shape (and the projected rows) are emitted. Anonymous Style A rows ride the documented RUC
         // serialization path (D96).
         var json = JsonSerializer.Serialize(response, response.GetType(), VistaJson.Options);
+        telemetry.Succeed();
         return Results.Content(json, "application/json");
     }
 
@@ -365,36 +418,48 @@ public static class VistaEndpointRouteBuilderExtensions
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleExportAsync(HttpContext http, ViewMetadata view)
     {
-        var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
-        var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
-        var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
-
-        if (string.IsNullOrWhiteSpace(body.Format))
+        using var telemetry = VistaTelemetry.Begin(view.Name, VistaTelemetry.Operations.Export);
+        try
         {
-            // No format → preserve the JSON ViewListResult behavior, now serialized through the seam by
-            // its runtime type (D124): 200 status and byte-for-byte body unchanged (R5.2).
-            var jsonResult = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
-            return VistaJsonWriter.Json(jsonResult, jsonResult.GetType());
+            var body = await ReadBodyAsync<VistaListRequestBody>(http).ConfigureAwait(false) ?? new VistaListRequestBody();
+            var request = VistaSearchMerge.Apply(view, body.ToBaseRequest(), body.Search);
+            var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+
+            if (string.IsNullOrWhiteSpace(body.Format))
+            {
+                // No format → preserve the JSON ViewListResult behavior, now serialized through the seam by
+                // its runtime type (D124): 200 status and byte-for-byte body unchanged (R5.2).
+                var jsonResult = await executor.ExportAsync(http, view.Name, request).ConfigureAwait(false);
+                var response = VistaJsonWriter.Json(jsonResult, jsonResult.GetType());
+                telemetry.Succeed();
+                return response;
+            }
+
+            var writer = ResolveExportWriter(http, body.Format)
+                ?? throw new VistaInvalidRequestException(
+                    $"Export format '{body.Format}' is not supported. Register a writer via AddVistaExportWriter<T>() "
+                    + "or use a built-in format (csv, xlsx).");
+
+            var (resolvedView, rows) = await executor.ExportRowsAsync(http, view.Name, request).ConfigureAwait(false);
+
+            var buffer = new MemoryStream();
+            await writer.WriteAsync(buffer, resolvedView, rows, http.RequestAborted).ConfigureAwait(false);
+            buffer.Position = 0;
+
+            // Stream the buffer instead of ToArray(): the payload is already fully materialized once, and
+            // copying it again doubled peak memory (two large-object-heap buffers per concurrent export) for no
+            // behavioural gain. Content type, download name, and body bytes are unchanged.
+            telemetry.Succeed();
+            return Results.Stream(
+                buffer,
+                contentType: writer.ContentType,
+                fileDownloadName: $"{resolvedView.Name}.{writer.FileExtension}");
         }
-
-        var writer = ResolveExportWriter(http, body.Format)
-            ?? throw new VistaInvalidRequestException(
-                $"Export format '{body.Format}' is not supported. Register a writer via AddVistaExportWriter<T>() "
-                + "or use a built-in format (csv, xlsx).");
-
-        var (resolvedView, rows) = await executor.ExportRowsAsync(http, view.Name, request).ConfigureAwait(false);
-
-        var buffer = new MemoryStream();
-        await writer.WriteAsync(buffer, resolvedView, rows, http.RequestAborted).ConfigureAwait(false);
-        buffer.Position = 0;
-
-        // Stream the buffer instead of ToArray(): the payload is already fully materialized once, and
-        // copying it again doubled peak memory (two large-object-heap buffers per concurrent export) for no
-        // behavioural gain. Content type, download name, and body bytes are unchanged.
-        return Results.Stream(
-            buffer,
-            contentType: writer.ContentType,
-            fileDownloadName: $"{resolvedView.Name}.{writer.FileExtension}");
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
 
     /// <summary>Resolves the registered <see cref="IViewExportWriter"/> for <paramref name="format"/> (case-insensitive; last wins).</summary>
@@ -468,6 +533,7 @@ public static class VistaEndpointRouteBuilderExtensions
         }
 
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
+        using var telemetry = VistaTelemetry.Begin(view.Name, OperationFor(facet));
 
         try
         {
@@ -479,22 +545,40 @@ public static class VistaEndpointRouteBuilderExtensions
 
             var body = await VistaWriteBinding.ReadBodyAsync(http).ConfigureAwait(false);
 
-            return facet switch
+            var result = facet switch
             {
                 ViewFacet.Create => await HandleCreateAsync(http, view, body, executor).ConfigureAwait(false),
                 ViewFacet.Update => await HandleUpdateAsync(http, view, body, executor).ConfigureAwait(false),
                 ViewFacet.Delete => await HandleDeleteAsync(http, view, body, executor).ConfigureAwait(false),
                 _ => Results.NotFound(),
             };
+            // Succeed does not override a not-found outcome already recorded by update/delete.
+            telemetry.Succeed();
+            return result;
         }
         catch (VistaWriteException ex) when (ex.Code == WriteErrorCode.NoWritePlan)
         {
             // R12.3/R12.4: a writable view registered as metadata-only (no executable write plan) is
             // rendered as a plain 404 — indistinguishable from a genuinely nonexistent view, never a
-            // coded body that would disclose the view exists.
+            // coded body that would disclose the view exists. The wire code is still recorded for operators.
+            telemetry.Fail(ex);
             return Results.NotFound();
         }
+        catch (Exception ex)
+        {
+            telemetry.Fail(ex);
+            throw;
+        }
     }
+
+    /// <summary>Maps a write facet to its telemetry operation token.</summary>
+    private static string OperationFor(ViewFacet facet) => facet switch
+    {
+        ViewFacet.Create => VistaTelemetry.Operations.Create,
+        ViewFacet.Update => VistaTelemetry.Operations.Update,
+        ViewFacet.Delete => VistaTelemetry.Operations.Delete,
+        _ => VistaTelemetry.Operations.Unknown,
+    };
 
     /// <summary>
     /// Handles <c>POST {route}/create</c>: bind the write model, insert through the executor, and return

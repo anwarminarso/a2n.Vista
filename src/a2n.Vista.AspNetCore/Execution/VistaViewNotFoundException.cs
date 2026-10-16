@@ -1,3 +1,5 @@
+using a2n.Vista.Diagnostics;
+
 namespace a2n.Vista.AspNetCore.Execution;
 
 /// <summary>
@@ -19,7 +21,7 @@ namespace a2n.Vista.AspNetCore.Execution;
 /// the contract the error-mapping middleware consumes.
 /// </para>
 /// </remarks>
-public sealed class VistaViewNotFoundException : Exception
+public sealed class VistaViewNotFoundException : Exception, IVistaErrorCode
 {
     /// <summary>
     /// Initializes a new <see cref="VistaViewNotFoundException"/>.
@@ -33,4 +35,10 @@ public sealed class VistaViewNotFoundException : Exception
 
     /// <summary>The unregistered view name the request targeted.</summary>
     public string ViewName { get; }
+
+    /// <summary>
+    /// The stable wire code (<see cref="VistaTelemetry.ErrorCodes.ViewNotFound"/>). Telemetry records
+    /// this code and does not copy <see cref="ViewName"/> into a tag.
+    /// </summary>
+    public string ErrorCode => VistaTelemetry.ErrorCodes.ViewNotFound;
 }

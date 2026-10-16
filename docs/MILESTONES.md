@@ -176,7 +176,7 @@ OpenAPI document. The **CI + NuGet publish workflows (M19)** have landed (`.gith
 `publish.yml`, the latter using NuGet Trusted Publishing / OIDC). The **AG Grid adapter (M16, D133–D136)**
 has now landed too — the second real Pillar 2 grid adapter (`a2n.Vista.Adapters.AgGrid`) plus an AG Grid +
 TypeScript Northwind sample. The heavy remaining work is now the rest of the ecosystem: the other seven grid
-adapters (MudBlazor next), observability (M14), and versioning (M15).
+adapters (MudBlazor next), the rest of observability (M14 — traces and metrics have landed; health checks and logging have not), and versioning (M15).
 
 > **Adapter reality check (from the source tree):** of the ten projects under `src/Adapters/`, only
 > **DataTables.NET**, **AG Grid** (M16, D133–D136), and the **Npgsql dialect** contain real implementations.
@@ -319,7 +319,7 @@ List/Detail path).
 
 | # | Milestone | Depends on | Notes |
 |---|-----------|-----------|-------|
-| **M14** | **Observability (D100)** — OpenTelemetry `ActivitySource`/`Meter`/`ILogger`, health checks | M1 | Cross-cutting; parallelizable |
+| **M14** | **Observability (D100, D159)** — `ActivitySource`/`Meter` traces and metrics have landed; `ILogger` and health checks have not | M1 | Cross-cutting; partial |
 | **M15** | **Versioning & deprecation (D99)** — policy + wire-version seam (route groups as the vehicle) | M4 | Seam already exists |
 | **M16** | **More grid adapters** — AG Grid, MudBlazor, OData, Telerik, Syncfusion, TanStack, PrimeNG, GraphQL | M5, M8 | Repetitive once the contract is mature |
 
@@ -516,7 +516,8 @@ existing Core stores (no new store, no new seam). Anonymous Style A read seriali
 by design (D96/D130); the write side of the same view still binds AOT-clean.
 
 **Next up — the parallelizable v1.0 workstreams (M9, M17, and M19 are now complete):** **M14**
-observability, **M15** versioning, and the two flagship **M16** adapters (AG Grid + MudBlazor) — the eight
+observability is partial (D159 operation traces and metrics landed; `ILogger` and health checks remain),
+**M15** versioning, and the remaining **M16** adapters (MudBlazor next; AG Grid has landed) — seven
 adapter scaffolds under `src/Adapters/` are still empty. **M17** (the TypeScript client generator, D131/D132)
 has **landed** — a framework-agnostic typed client generated from the emitted OpenAPI document (M18),
 building on the AOT-clean surface, the serialization seam (M9-P4), the generated per-view contexts (M9-P5),

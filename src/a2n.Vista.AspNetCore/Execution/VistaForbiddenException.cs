@@ -1,4 +1,5 @@
 using a2n.Vista.AspNetCore.Authorization;
+using a2n.Vista.Diagnostics;
 
 namespace a2n.Vista.AspNetCore.Execution;
 
@@ -15,7 +16,7 @@ namespace a2n.Vista.AspNetCore.Execution;
 /// (400), and <see cref="System.ArgumentOutOfRangeException"/> from page-size clamping (400) for the
 /// rest of the contract the error-mapping middleware consumes.
 /// </remarks>
-public sealed class VistaForbiddenException : Exception
+public sealed class VistaForbiddenException : Exception, IVistaErrorCode
 {
     /// <summary>
     /// Initializes a new <see cref="VistaForbiddenException"/>.
@@ -34,4 +35,7 @@ public sealed class VistaForbiddenException : Exception
 
     /// <summary>The facet whose access was denied.</summary>
     public ViewFacet Facet { get; }
+
+    /// <summary>The stable wire code (<see cref="VistaTelemetry.ErrorCodes.Forbidden"/>).</summary>
+    public string ErrorCode => VistaTelemetry.ErrorCodes.Forbidden;
 }

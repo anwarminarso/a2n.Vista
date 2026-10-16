@@ -1,4 +1,5 @@
 using a2n.Vista.Contracts;
+using a2n.Vista.Diagnostics;
 
 namespace a2n.Vista.Filter;
 
@@ -11,7 +12,7 @@ namespace a2n.Vista.Filter;
 /// dependency. Authoritative behavior: docs/spec/01-view.md §8.3 and §14; Requirements R5.5, R5.6,
 /// R6.2, R9.2.
 /// </summary>
-public sealed class FilterValidationException : Exception
+public sealed class FilterValidationException : Exception, IVistaErrorCode
 {
     /// <summary>
     /// Initializes a new <see cref="FilterValidationException"/>.

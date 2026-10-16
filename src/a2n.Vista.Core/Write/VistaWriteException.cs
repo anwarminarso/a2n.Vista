@@ -1,3 +1,5 @@
+using a2n.Vista.Diagnostics;
+
 namespace a2n.Vista.Write;
 
 /// <summary>
@@ -13,7 +15,7 @@ namespace a2n.Vista.Write;
 /// they never interpolate provider exception text, SQL, schema/object names, connection strings,
 /// masked field values, or non-projected entity fields (Requirements R9.6, R10.5).
 /// </remarks>
-public abstract class VistaWriteException : Exception
+public abstract class VistaWriteException : Exception, IVistaErrorCode
 {
     /// <summary>Initializes a new <see cref="VistaWriteException"/>.</summary>
     /// <param name="message">A human-readable, leak-free description of the failure.</param>
