@@ -1230,6 +1230,7 @@ sequentially after D93 (Spec 05).
 | D103 | **Route groups + one view = one endpoint.** `RouteGroup(prefix, g => { ... })` scoping on the EF builder (with a default root and `RegisterAssembly` for modular registration, the latter `[RequiresUnreferencedCode]`); nested groups combine prefixes; view names are globally unique; a view maps to exactly one endpoint (registering the same view in two groups fails fast). | **Done** | §4.5 use-case (internal vs external). `IVistaBuilder.RouteGroup`/`RegisterAssembly`. |
 | D151 | **Shaping has an awaited door.** `IViewAuthorizer.ShapeQueryAsync(ctx, scope, ct)` is the member the pipeline calls, as a **default interface implementation** forwarding to `ShapeQuery` — so a server-trusted scope that must be *loaded* is awaited with the request token instead of blocking a thread-pool thread, and every existing authorizer is unchanged. An exception from shaping propagates (500); it is deliberately **not** folded into the fail-closed deny path, so a scope-loading fault is never reported as a 403. | **Done** | §5.6. Issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4). Extends D43/D46. |
 | D152 | **Style A source/projection split.** `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` keeps the source query and the projection separate (the shape Style B always had), carried on `TemplateViewDefinition.SourceProjection` and turned into a `SplitViewExecutionPlan<TSource, TRow>` by the EF layer, so authored `WithRowFilter<TSource>` and the per-request scope are AND-ed pre-projection and pushed down to SQL. The combined `AddView<TRow>` overload and its D141 fail-closed behaviour are unchanged; a row filter over an entity other than the source is now rejected at registration. | **Done** | §5.5, §5.6. Issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4). Closes the follow-up flagged on `ProjectedViewExecutionPlan`; makes D151 usable from Style A. |
+| D154 | **SaveChanges failures are three outcomes.** `DbUpdateConcurrencyException` is HTTP 409 `write-conflict` (the previous wire code `write-concurrency-conflict` is retired). A database constraint violation — unique, foreign key, NOT NULL, or CHECK, recognized from the provider error (SQLite result 19, SQL Server 2601/2627/547/515, PostgreSQL SQLSTATE class 23, MySQL/MariaDB 1048/1062/1364/1451/1452/1586/3819/4025) — is HTTP 422 `write-constraint-violation`, not a 409. Every other `DbUpdateException` — a missing table included — is HTTP 500 `write-persistence-failed`, with a fixed leak-free message and the provider exception only as `InnerException`. The legacy `WriteErrorCode.WriteConflict` name now aliases the 422 constraint code. | **Done** | §14.1. Spec 05 §7.3, §9.2. |
 
 > **D101 implementation note.** Resolved via model R (route-at-registration): the EF `VistaBuilder`
 > composes the full route into `ViewMetadata.Route` (default root or `RouteGroup` prefix), and the
@@ -1252,7 +1253,9 @@ All Vista endpoints return `application/problem+json` for errors, with `type` na
 | Authorize policy failed | 403 | `.../forbidden` |
 | Not found (CRUD by key) | 404 | `.../not-found` |
 | `If-Match` token wrong / missing | 412 | `.../precondition-failed` |
-| Concurrency conflict on `SaveChanges` | 409 | `.../concurrency-conflict` |
+| Concurrency conflict on `SaveChanges` (`DbUpdateConcurrencyException`) | 409 | `.../write-conflict` |
+| Database constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `.../write-constraint-violation` |
+| Other `DbUpdateException` (missing table, I/O, unrecognized provider error) | 500 | `.../write-persistence-failed` |
 | Page size / export rows hard limit reached | 413 | `.../payload-too-large` |
 | Unexpected error | 500 | `.../unexpected` |
 

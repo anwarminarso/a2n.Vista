@@ -96,7 +96,9 @@ public sealed class WriteLayeringGuardTests
             typeof(VistaValidationException),
             typeof(VistaPreconditionRequiredException),
             typeof(VistaConcurrencyConflictException),
+            typeof(VistaConstraintViolationException),
             typeof(VistaWriteConflictException),
+            typeof(VistaPersistenceException),
             typeof(VistaBulkNotEnabledException),
         ];
 

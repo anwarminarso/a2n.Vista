@@ -81,7 +81,13 @@ builder.Services.AddVistaMetadataAdapter<a2n.Vista.Adapters.DataTablesNet.QueryB
 
 var app = builder.Build();
 
-// No seeding: the extracted Northwind database is the source of truth (read-only sample).
+// The extracted Northwind file is the source of truth for the sample tables and is never recreated.
+// VistaMemos is not part of that file; create only that demo table so vWritableMemo works on first run.
+using (var schemaScope = app.Services.CreateScope())
+{
+    NorthwindDemoSchema.EnsureWritableMemoTable(
+        schemaScope.ServiceProvider.GetRequiredService<NorthwindDbContext>());
+}
 
 // Serve the interactive demo UI from wwwroot (index.html): a jQuery DataTables grid plus a
 // jQuery-QueryBuilder panel wired to the adapter endpoints (POST {route}/datatable and
@@ -111,20 +117,21 @@ app.MapGet(
 app.MapVistaOpenApi();
 
 // Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises
-// List paging, filter/sort/search, and Detail-by-key against the shipped read-only northwind.db through
-// the real executor. The write self-test exercises Create/Update/Delete on the writable vWritableMemo
-// view against an isolated in-memory database (the read-only sample has no VistaMemos table and is never
-// mutated). Both run, print their outcomes, and the process exits 0 only when BOTH pass.
+// List paging, filter/sort/search, and Detail-by-key against the shipped northwind.db through the real
+// executor. The write self-test exercises Create/Update/Delete on vWritableMemo twice: once on an
+// isolated in-memory database, and once on the host database (VistaMemos ensured above; the inserted
+// memo is deleted afterwards). The process exits 0 only when every pass succeeds.
 if (args.Contains("selftest", StringComparer.OrdinalIgnoreCase))
 {
     var readPassed = await SelfTest.RunAsync(app.Services);
     var writePassed = await WriteSelfTest.RunAsync();
+    var hostWritePassed = await WriteSelfTest.RunAgainstHostAsync(app.Services);
     // The OpenAPI self-test stands up an in-process test host (with and without the emitter) over the same
     // Vista wiring, issues a real GET /openapi/v1.json, asserts the served document is a valid OpenAPI 3.x
     // document whose operation set equals the registered views' live View_Operation_Set (endpoint parity),
     // and asserts a representative existing endpoint response is byte-for-byte unchanged by the emitter.
     var openApiPassed = await OpenApiSelfTest.RunAsync(DbRelativePath);
-    Environment.ExitCode = readPassed && writePassed && openApiPassed ? 0 : 1;
+    Environment.ExitCode = readPassed && writePassed && hostWritePassed && openApiPassed ? 0 : 1;
     return;
 }
 

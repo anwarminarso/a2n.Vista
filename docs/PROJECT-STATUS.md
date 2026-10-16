@@ -1,7 +1,14 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
+> Last updated: 2026-10-16 (**D154 — `vWritableMemo` on the shipped database, and save failures are three
+> outcomes**). The Northwind hosts create only `VistaMemos` at startup (the Microsoft file has no such
+> table; Northwind tables are not recreated). `DbUpdateConcurrencyException` is 409 `write-conflict`
+> (the old `write-concurrency-conflict` wire code is retired). A constraint breach (unique, foreign key,
+> NOT NULL, CHECK) is 422 `write-constraint-violation`, not a 409. Every other `DbUpdateException`
+> (a missing table included) is 500 `write-persistence-failed`. See `CHANGELOG.md` and spec 01 §14.1 /
+> spec 05 §9.2.
+> Prior: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
 > published is void**). The `v0.0.3` tag was created on the **0.0.2 release commit**, and `publish.yml`
 > builds whatever the tag points at while taking the package version from the tag name
 > (`-p:Version=<tag without the leading v>`), so the packages on nuget.org labelled `0.0.3` are 0.0.2 code:

@@ -68,7 +68,8 @@ public sealed class ErrorEnvelopeConformancePropertyTests
         WriteErrorCodes.ValidationFailed,
         WriteErrorCodes.PreconditionRequired,
         WriteErrorCodes.ConcurrencyConflict,
-        WriteErrorCodes.WriteConflict,
+        WriteErrorCodes.ConstraintViolation,
+        WriteErrorCodes.PersistenceFailed,
         WriteErrorCodes.BulkNotEnabled,
     };
 

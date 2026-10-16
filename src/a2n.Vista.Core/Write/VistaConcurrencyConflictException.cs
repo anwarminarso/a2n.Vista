@@ -4,8 +4,9 @@ namespace a2n.Vista.Write;
 /// Thrown when an optimistic-concurrency check fails: either the supplied <c>If-Match</c> token does
 /// not exactly match the stored row's current token (pre-check), or <c>SaveChanges</c> raised a
 /// concurrency violation. The operation is aborted with no partial persistence and the AspNetCore
-/// layer maps it to HTTP 409 Conflict with <see cref="WriteErrorCode.ConcurrencyConflict"/>
-/// (Requirements R6.3, R6.5).
+/// layer maps it to HTTP 409 with wire code <c>write-conflict</c>
+/// (<see cref="WriteErrorCode.ConcurrencyConflict"/>, Requirements R6.3, R6.5, Decision Log D154).
+/// A constraint violation is not this exception.
 /// </summary>
 public sealed class VistaConcurrencyConflictException : VistaWriteException
 {

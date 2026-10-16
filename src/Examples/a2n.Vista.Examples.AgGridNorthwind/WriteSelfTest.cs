@@ -1,5 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using a2n.Vista.Contracts;
 using a2n.Vista.Examples.AgGridNorthwind.Views;
 using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Metadata;
@@ -19,15 +20,22 @@ namespace a2n.Vista.Examples.AgGridNorthwind;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The shipped <c>northwind.db</c> is a read-only sample that does not contain the <c>VistaMemos</c>
-/// table, so the write self-test never touches it. Instead it stands up its own isolated, in-memory
-/// SQLite database (a single open connection kept alive for the run), calls
+/// <see cref="RunAsync"/> stands up its own isolated, in-memory SQLite database (a single open
+/// connection kept alive for the run), calls
 /// <see cref="Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade.EnsureCreated"/> to materialize
 /// the schema (including <c>VistaMemos</c>), and wires a self-contained DI container:
 /// <c>AddDbContext&lt;NorthwindDbContext&gt;</c> over that connection, an <c>AddScoped&lt;DbContext&gt;</c>
 /// forwarder (so the executor resolves the concrete context when no template captured one), and
 /// <c>AddVista(v =&gt; v.Register&lt;WritableMemoView&gt;())</c> which publishes the view metadata, the
-/// write-facet registry, and the reflection write-mapper resolver.
+/// write-facet registry, and the reflection write-mapper resolver. That pass never touches the shipped
+/// sample file.
+/// </para>
+/// <para>
+/// <see cref="RunAgainstHostAsync"/> repeats Create/Update/Delete through the host's own
+/// <see cref="NorthwindDbContext"/>, the database <c>dotnet run</c> serves. Startup creates
+/// <c>VistaMemos</c> there when the Microsoft sample does not already contain it
+/// (<see cref="NorthwindDemoSchema.EnsureWritableMemoTable"/>). The host pass deletes the memo it
+/// inserted, so Northwind's own tables stay untouched.
 /// </para>
 /// <para>
 /// The concurrency token (<see cref="Memo.RowVersion"/>) is a <see cref="Guid"/>; the executor renders it
@@ -109,12 +117,23 @@ public static class WriteSelfTest
         var failures = 0;
 
         // ---- Create ---------------------------------------------------------------------------------
-        var memoId = await CreateAsync(provider, view, incrementFailures: () => failures++);
+        var memoId = await CreateAsync(
+            provider,
+            view,
+            subject: "Welcome",
+            body: "First memo created by the write self-test.",
+            incrementFailures: () => failures++);
 
         // ---- Update ---------------------------------------------------------------------------------
         if (memoId is int createdId)
         {
-            await UpdateAsync(provider, view, createdId, incrementFailures: () => failures++);
+            await UpdateAsync(
+                provider,
+                view,
+                createdId,
+                subject: "Welcome (edited)",
+                body: "Body updated by the write self-test.",
+                incrementFailures: () => failures++);
 
             // ---- Delete -----------------------------------------------------------------------------
             await DeleteAsync(provider, view, createdId, incrementFailures: () => failures++);
@@ -136,13 +155,145 @@ public static class WriteSelfTest
         return passed;
     }
 
+    /// <summary>
+    /// R16.5 — Create/Update/Delete on the host database (the shipped <c>northwind.db</c> after startup
+    /// has ensured <c>VistaMemos</c>). Also lists the view first, which is the read that returns 500
+    /// when the table is missing. Rows inserted here are deleted before the method returns.
+    /// </summary>
+    /// <param name="services">The built host's root service provider.</param>
+    /// <returns><see langword="true"/> when every operation passed; otherwise <see langword="false"/>.</returns>
+    [RequiresUnreferencedCode("Self-test drives the reflection write path (Register<TView> + reflection write mapper).")]
+    public static async Task<bool> RunAgainstHostAsync(IServiceProvider services)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+
+        using var scope = services.CreateScope();
+        var registry = scope.ServiceProvider.GetRequiredService<IViewRegistry>();
+        var view = registry.Get(ViewName);
+
+        Console.WriteLine();
+        Console.WriteLine("=== Vista Northwind write self-test (host database) ===");
+        if (view is null)
+        {
+            Console.WriteLine($"FAIL: view '{ViewName}' is not registered.");
+            Console.WriteLine("HOST WRITE SELF-TEST RESULT: FAIL");
+            return false;
+        }
+
+        Console.WriteLine($"View      : {view.Name}");
+        Console.WriteLine($"Route     : {view.Route}");
+        Console.WriteLine();
+
+        var failures = 0;
+        if (!await HostListAsync(services, view))
+        {
+            failures++;
+        }
+
+        var subject = "vista-selftest-" + Guid.NewGuid().ToString("N");
+        var editedSubject = subject + " (edited)";
+        const string body = "Memo created by the host write self-test.";
+        const string editedBody = "Body updated by the host write self-test.";
+
+        try
+        {
+            var memoId = await CreateAsync(
+                services,
+                view,
+                subject,
+                body,
+                incrementFailures: () => failures++);
+
+            if (memoId is int createdId)
+            {
+                await UpdateAsync(
+                    services,
+                    view,
+                    createdId,
+                    editedSubject,
+                    editedBody,
+                    incrementFailures: () => failures++);
+                await DeleteAsync(services, view, createdId, incrementFailures: () => failures++);
+            }
+            else
+            {
+                Console.WriteLine("[2] Update — SKIPPED: no created row to update.");
+                Console.WriteLine("    -> FAIL");
+                Console.WriteLine("[3] Delete — SKIPPED: no created row to delete.");
+                Console.WriteLine("    -> FAIL");
+                failures += 2;
+            }
+        }
+        finally
+        {
+            await DeleteSubjectsAsync(services, subject, editedSubject);
+        }
+
+        var passed = failures == 0;
+        Console.WriteLine();
+        Console.WriteLine($"Failed operations: {failures}");
+        Console.WriteLine($"HOST WRITE SELF-TEST RESULT: {(passed ? "PASS" : "FAIL")}");
+        return passed;
+    }
+
+    /// <summary>Lists <c>vWritableMemo</c> on the host database. A missing <c>VistaMemos</c> table fails this check.</summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.ListAsync over MemoRow.")]
+    private static async Task<bool> HostListAsync(IServiceProvider provider, ViewMetadata view)
+    {
+        Console.WriteLine("[0] List (host database)");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            var listed = await executor.ListAsync<MemoRow>(
+                view,
+                new ViewQueryRequest(null, Array.Empty<SortSpec>(), Page: 0, PageSize: 5),
+                new ViewScope(),
+                CancellationToken.None);
+            Console.WriteLine($"    Page items={listed.Page.Items.Count}  TotalRows={listed.Page.TotalRows}");
+            Console.WriteLine("    -> PASS");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Removes host-self-test rows so the sample file does not keep them. Best-effort.</summary>
+    private static async Task DeleteSubjectsAsync(IServiceProvider provider, string subject, string editedSubject)
+    {
+        try
+        {
+            using var scope = provider.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<NorthwindDbContext>();
+            var rows = await ctx.Memos
+                .Where(m => m.Subject == subject || m.Subject == editedSubject)
+                .ToListAsync();
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            ctx.Memos.RemoveRange(rows);
+            await ctx.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    cleanup warning: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     /// <summary>R16.5 — Create: insert a new memo through the write facet and verify it landed.</summary>
     [RequiresUnreferencedCode("Closes the generic IViewExecutor.CreateAsync over the typed write contract.")]
-    private static async Task<int?> CreateAsync(IServiceProvider provider, ViewMetadata view, Action incrementFailures)
+    private static async Task<int?> CreateAsync(
+        IServiceProvider provider,
+        ViewMetadata view,
+        string subject,
+        string body,
+        Action incrementFailures)
     {
-        const string subject = "Welcome";
-        const string body = "First memo created by the write self-test.";
-
         int newId;
         using (var scope = provider.CreateScope())
         {
@@ -179,11 +330,14 @@ public static class WriteSelfTest
 
     /// <summary>R16.5 — Update: change the memo's scalars through the write facet under its token.</summary>
     [RequiresUnreferencedCode("Closes the generic IViewExecutor.UpdateAsync over the typed write contract.")]
-    private static async Task UpdateAsync(IServiceProvider provider, ViewMetadata view, int memoId, Action incrementFailures)
+    private static async Task UpdateAsync(
+        IServiceProvider provider,
+        ViewMetadata view,
+        int memoId,
+        string subject,
+        string body,
+        Action incrementFailures)
     {
-        const string subject = "Welcome (edited)";
-        const string body = "Body updated by the write self-test.";
-
         // The If-Match token is the row's current RowVersion; a Guid renders invariantly, matching the
         // executor's FormatToken so the optimistic-concurrency pre-check succeeds.
         var ifMatch = await ReadTokenAsync(provider, memoId);

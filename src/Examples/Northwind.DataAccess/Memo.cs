@@ -4,9 +4,9 @@ namespace Northwind.DataAccess;
 
 /// <summary>
 /// A small, purpose-made writable table used to demonstrate the Vista write path (Create/Update/Delete)
-/// end to end. It is deliberately <b>not</b> part of the real Microsoft Northwind schema: the shipped
-/// <c>northwind.db</c> is a read-only sample, so the write self-test exercises this isolated table
-/// against its own database rather than mutating the sample data.
+/// end to end. It is deliberately <b>not</b> part of the real Microsoft Northwind schema. The example
+/// creates <c>VistaMemos</c> on startup when the shipped <c>northwind.db</c> does not already contain
+/// it, and leaves every Northwind table as shipped.
 /// </summary>
 /// <remarks>
 /// The entity carries the shape a single-source Style B <see cref="a2n.Vista.Authoring.View{TQuery, TCrud}"/>

@@ -61,6 +61,40 @@ public sealed class WriteEndpointExampleTests
 
     // ---- Happy paths ---------------------------------------------------------------------------------
 
+    /// <summary>
+    /// D154: a create whose table was dropped is a non-constraint <c>DbUpdateException</c>. The HTTP
+    /// response is 500 <c>write-persistence-failed</c> problem+json, not 409 <c>write-conflict</c>, and
+    /// the body does not repeat the provider's SQL or table name.
+    /// </summary>
+    [Test]
+    public async Task Create_When_Store_Table_Is_Missing_Returns_500_PersistenceFailed_Not_WriteConflict()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.DropPlainTable();
+
+        var response = await app.Client.PostAsync(
+            $"{PlainRoute}/create",
+            Json("{\"model\":{\"name\":\"missing-table\"}}"));
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType)
+            .IsEqualTo("application/problem+json");
+
+        using var doc = JsonDocument.Parse(body);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        await Assert.That(code).IsEqualTo(WriteErrorCodes.PersistenceFailed);
+        await Assert.That(doc.RootElement.GetProperty("status").GetInt32()).IsEqualTo(500);
+
+        foreach (var forbidden in new[]
+                 {
+                     "Plains", "PlainSource", "SQLite", "no such table", "Exception", "UNIQUE", "SELECT ",
+                 })
+        {
+            await Assert.That(body.Contains(forbidden, StringComparison.OrdinalIgnoreCase)).IsFalse();
+        }
+    }
+
     /// <summary>R1.1/R1.2/R10.1: a create returns 200 with a body carrying ONLY the new primary key.</summary>
     [Test]
     public async Task Create_HappyPath_Returns_200_With_PrimaryKey_Only()
@@ -469,6 +503,19 @@ public sealed class WriteEndpointExampleTests
         }
 
         public void SeedPlain(int id, string name) => Mutate(ctx => ctx.Plains.Add(new PlainSource { Id = id, Name = name }));
+
+        /// <summary>Drops the plain view's table so the next create fails with a non-constraint store error.</summary>
+        public void DropPlainTable()
+        {
+            using var scope = _host.Services.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<ExampleWriteContext>();
+            var table = ctx.Model.FindEntityType(typeof(PlainSource))?.GetTableName()
+                ?? throw new InvalidOperationException("PlainSource has no mapped table.");
+            // The identifier comes from the EF model for this fixture, not from a request.
+#pragma warning disable EF1003
+            ctx.Database.ExecuteSqlRaw("DROP TABLE \"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\";");
+#pragma warning restore EF1003
+        }
 
         public void SeedToken(int id, string name, int version) =>
             Mutate(ctx => ctx.Tokens.Add(new TokenSource { Id = id, Name = name, Version = version }));

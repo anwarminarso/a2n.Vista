@@ -805,8 +805,8 @@ public class EfViewExecutor : IViewExecutor
         dbContext.Add(entity);
 
         // Exactly one SaveChanges for the operation (Requirements R1.3, R11.1). A provider persistence
-        // failure (constraint or concurrency violation) is translated to a typed, leak-free Vista write
-        // exception and the implicit transaction leaves no partial row (Requirements R1.7, R9.4, R11.3).
+        // failure is translated to a typed, leak-free Vista write exception (concurrency, constraint, or
+        // any other store failure) and the implicit transaction leaves no partial row (R1.7, R11.3, D154).
         await SaveWriteChangesAsync(dbContext, cancellationToken).ConfigureAwait(false);
 
         // Read back the store-assigned PK from the tracked entity (Requirements R1.1, R1.2).
@@ -982,8 +982,9 @@ public class EfViewExecutor : IViewExecutor
         mapper(model, entity);
 
         // Exactly one SaveChanges for the operation on the tracked entity (R2.4, R11.1). A provider
-        // persistence failure (constraint or concurrency violation) is translated to a typed, leak-free
-        // Vista write exception; the implicit transaction leaves the row unchanged (R6.5, R9.4, R11.3).
+        // persistence failure is translated to a typed, leak-free Vista write exception (concurrency,
+        // constraint, or any other store failure); the implicit transaction leaves the row unchanged
+        // (R6.5, R11.3, D154).
         await SaveWriteChangesAsync(RequireDbContext(view, nameof(UpdateAsync)), cancellationToken).ConfigureAwait(false);
 
         // Publish the token the row carries AFTER the write (D146). A store-generated rowversion is refreshed
@@ -1059,8 +1060,9 @@ public class EfViewExecutor : IViewExecutor
         EnforceConcurrencyToken<TEntity>(facet, entity, concurrencyToken);
 
         // Remove the tracked entity and persist with exactly one SaveChanges (R3.4, R11.1). A provider
-        // persistence failure (constraint or concurrency violation) is translated to a typed, leak-free
-        // Vista write exception; the implicit transaction leaves the row unchanged (R3.8, R6.5, R11.3).
+        // persistence failure is translated to a typed, leak-free Vista write exception (concurrency,
+        // constraint, or any other store failure); the implicit transaction leaves the row unchanged
+        // (R3.8, R6.5, R11.3, D154).
         var deleteContext = RequireDbContext(view, nameof(DeleteAsync));
         deleteContext.Remove(entity);
         await SaveWriteChangesAsync(deleteContext, cancellationToken).ConfigureAwait(false);
@@ -1069,12 +1071,16 @@ public class EfViewExecutor : IViewExecutor
 
     /// <summary>
     /// Persists a single write operation through exactly one <c>SaveChanges</c> and translates a provider
-    /// persistence failure into a typed, leak-free Vista write exception (Decision Log D120):
+    /// persistence failure into a typed, leak-free Vista write exception (Decision Log D120, D154):
     /// a <see cref="DbUpdateConcurrencyException"/> — a genuine optimistic-concurrency violation detected
-    /// at save time — becomes a <see cref="VistaConcurrencyConflictException"/> (HTTP 409, rolled back,
-    /// Requirement R6.5); any other <see cref="DbUpdateException"/> — a database constraint violation such
-    /// as a unique-index, NOT NULL, or foreign-key breach — becomes a <see cref="VistaWriteConflictException"/>
-    /// (HTTP 409 write-conflict, Requirement R9.4).
+    /// at save time — becomes a <see cref="VistaConcurrencyConflictException"/> (HTTP 409
+    /// <c>write-conflict</c>, rolled back, Requirement R6.5, Decision Log D154); a
+    /// <see cref="DbUpdateException"/> that is a database constraint violation (unique index, NOT NULL,
+    /// foreign key, CHECK) becomes a <see cref="VistaConstraintViolationException"/> (HTTP 422
+    /// <c>write-constraint-violation</c>, not a conflict); every other <see cref="DbUpdateException"/> —
+    /// a missing table, a connection failure, or any non-constraint provider error — becomes a
+    /// <see cref="VistaPersistenceException"/> (HTTP 500 <c>write-persistence-failed</c>). A missing
+    /// relation is not a constraint and is not a 409.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1091,13 +1097,15 @@ public class EfViewExecutor : IViewExecutor
     /// </para>
     /// <para>
     /// <see cref="DbUpdateConcurrencyException"/> derives from <see cref="DbUpdateException"/>, so it is
-    /// caught first to keep the concurrency (R6.5) and constraint (R9.4) branches distinct.
+    /// caught first. Constraint detection then inspects the provider exception (Decision Log D154); it
+    /// does not treat the base <see cref="DbUpdateException"/> itself as a conflict.
     /// </para>
     /// </remarks>
     /// <param name="dbContext">The request-scoped context whose tracked changes are persisted.</param>
     /// <param name="cancellationToken">Token used to cancel the persistence round-trip.</param>
-    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5).</exception>
-    /// <exception cref="VistaWriteConflictException">A database constraint violation occurred (R9.4).</exception>
+    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5, D154).</exception>
+    /// <exception cref="VistaConstraintViolationException">A database constraint violation occurred (D154).</exception>
+    /// <exception cref="VistaPersistenceException">The save failed for some other provider reason (D154).</exception>
     private static async Task SaveWriteChangesAsync(DbContext dbContext, CancellationToken cancellationToken)
     {
         try
@@ -1111,12 +1119,20 @@ public class EfViewExecutor : IViewExecutor
             // as the inner exception only (server-side; never surfaced to clients — R9.6).
             throw new VistaConcurrencyConflictException(innerException: ex);
         }
+        catch (DbUpdateException ex) when (DbUpdateFailureClassifier.IsConstraintViolation(ex))
+        {
+            // Database constraint violation (unique index, NOT NULL, foreign key, CHECK). The implicit
+            // transaction rolled back, leaving no partial row (R1.7, R11.3). This is not a concurrency
+            // conflict: HTTP 422 write-constraint-violation, provider detail on the inner exception only
+            // (D154, R9.6).
+            throw new VistaConstraintViolationException(innerException: ex);
+        }
         catch (DbUpdateException ex)
         {
-            // Database constraint violation (unique index, NOT NULL, foreign key, CHECK, ...). The implicit
-            // transaction rolled back, leaving no partial row (R1.7, R11.3). Translate to a 409 write-conflict
-            // with a Vista-authored message; the provider detail stays on the inner exception only (R9.4, R9.6).
-            throw new VistaWriteConflictException(innerException: ex);
+            // Any other store failure (missing table, I/O, lock, corruption, an unrecognized provider
+            // error). This is not a conflict with the current row. Translate to a leak-free 500; the
+            // provider detail stays on the inner exception only (D154, spec 05 §9.2, R9.6).
+            throw new VistaPersistenceException(innerException: ex);
         }
     }
 

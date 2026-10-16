@@ -39,8 +39,8 @@ public class NorthwindDbContext : DbContext
 
     /// <summary>
     /// Purpose-made writable table used by the Vista write-path demo (see <see cref="Memo"/>). It is not
-    /// part of the real Northwind schema; the write self-test creates and exercises it in an isolated
-    /// database so the read-only sample data is never mutated.
+    /// part of the real Northwind schema. <see cref="NorthwindDemoSchema.EnsureWritableMemoTable"/>
+    /// creates it in the sample database when it is missing, without rewriting the Northwind tables.
     /// </summary>
     public virtual DbSet<Memo> Memos { get; set; }
 
