@@ -1,0 +1,29 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    End-to-end suite for the Northwind sample and the AG Grid showcase.
+
+    Kept out of src/a2n.Vista.slnx on purpose. `dotnet test src/a2n.Vista.slnx` stays the
+    library baseline (TUnit, no browser, no Kestrel). This project is net8.0 only because
+    both sample hosts pin net8.0. Run it with tests/e2e/run.sh.
+
+    Runner is TUnit (Decision Log D7), using the Microsoft.Playwright driver directly
+    rather than the NUnit/xUnit Playwright packages or a Node @playwright/test project.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+    <RootNamespace>a2n.Vista.E2E</RootNamespace>
+    <AssemblyName>a2n.Vista.E2E</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+    <PackageReference Include="Microsoft.Playwright" />
+  </ItemGroup>
+
+</Project>
