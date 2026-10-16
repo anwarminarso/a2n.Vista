@@ -333,7 +333,7 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 
 - **Update by-key is `AND`-ed with the trusted scope** (D85): a row outside the tenant → appears as `404` (not 403), not revealing the existence of a cross-tenant row.
 - PUT is a **full update** over the whitelist fields; whitelist fields absent from the `TCrud` payload follow DTO semantics (null/default) — partial update (PATCH per-field) is **out of v1.0** (§12 OQ).
-- Save failures are three outcomes (D158). A `DbUpdateConcurrencyException` is **409** `write-concurrency-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
+- Save failures are three outcomes (D158). A `DbUpdateConcurrencyException` is **409** `write-concurrency-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Core recognizes a constraint only from SQLSTATE class `23` or a host probe (`AddConstraintProbe`). The Northwind hosts register the SQLite probe (`SqliteErrorCode == 19`, then the message `constraint failed`). Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error, including a non-SQLite exception whose message says `constraint failed`) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
 
 ### 7.4 Delete — `DELETE {root}/{v}/{key}`
 

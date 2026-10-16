@@ -1,5 +1,7 @@
+using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Contracts;
 using a2n.Vista.EntityFrameworkCore.Execution;
@@ -120,6 +122,69 @@ public sealed class LayeringGuardTests
     }
 
     /// <summary>
+    /// Core, the EF library, and AspNetCore must not reference an EF provider or an ADO.NET provider.
+    /// The EF library may reference <c>Microsoft.EntityFrameworkCore</c> itself. SQLite classification
+    /// stays in the Northwind hosts, which are the projects that reference <c>Microsoft.Data.Sqlite</c>.
+    /// </summary>
+    [Test]
+    public async Task Vista_Libraries_Do_Not_Reference_Database_Provider_Packages()
+    {
+        var forbiddenAssemblies = new[]
+        {
+            "Microsoft.Data.Sqlite",
+            "Microsoft.Data.SqlClient",
+            "System.Data.SqlClient",
+            "Microsoft.EntityFrameworkCore.Sqlite",
+            "Microsoft.EntityFrameworkCore.SqlServer",
+            "Microsoft.EntityFrameworkCore.InMemory",
+            "Microsoft.EntityFrameworkCore.Cosmos",
+            "Npgsql",
+            "Npgsql.EntityFrameworkCore.PostgreSQL",
+            "MySqlConnector",
+        };
+        var forbiddenPackages = new[]
+        {
+            "Microsoft.Data.Sqlite",
+            "Microsoft.Data.SqlClient",
+            "System.Data.SqlClient",
+            "Microsoft.EntityFrameworkCore.Sqlite",
+            "Microsoft.EntityFrameworkCore.SqlServer",
+            "Microsoft.EntityFrameworkCore.InMemory",
+            "Microsoft.EntityFrameworkCore.Cosmos",
+            "Npgsql",
+            "MySqlConnector",
+            "Oracle.ManagedDataAccess",
+            "Oracle.EntityFrameworkCore",
+            "Pomelo.EntityFrameworkCore",
+        };
+
+        foreach (var assembly in new[] { CoreAssembly, EfAssembly, AspNetCoreAssembly })
+        {
+            var hit = ReferencedAssemblyNames(assembly)
+                .FirstOrDefault(name => forbiddenAssemblies.Contains(name, StringComparer.Ordinal));
+            await Assert.That(hit).IsNull();
+        }
+
+        foreach (var project in new[]
+        {
+            "src/a2n.Vista.Core/a2n.Vista.Core.csproj",
+            "src/a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj",
+            "src/a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj",
+        })
+        {
+            var text = File.ReadAllText(FindRepoFile(project));
+            foreach (Match match in PackageReferencePattern.Matches(text))
+            {
+                var package = match.Groups[1].Value;
+                var forbidden = forbiddenPackages.FirstOrDefault(name =>
+                    package.Equals(name, StringComparison.OrdinalIgnoreCase)
+                    || package.StartsWith(name + ".", StringComparison.OrdinalIgnoreCase));
+                await Assert.That(forbidden).IsNull();
+            }
+        }
+    }
+
+    /// <summary>
     /// Positive sanity: both adapters DO reference <c>a2n.Vista.Core</c>. This proves the layering meets
     /// in Core and that the "must not reference" assertions above are meaningful (the absence of EF/ASP.NET
     /// from Core is a real layering property, not an empty reference set).
@@ -134,6 +199,27 @@ public sealed class LayeringGuardTests
 
         await Assert.That(efReferencesCore).IsTrue();
         await Assert.That(aspNetCoreReferencesCore).IsTrue();
+    }
+
+    private static readonly Regex PackageReferencePattern = new(
+        "Include=\"([^\"]+)\"",
+        RegexOptions.CultureInvariant);
+
+    private static string FindRepoFile(string relativePath)
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var candidate = Path.Combine(dir.FullName, relativePath);
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+
+            dir = dir.Parent;
+        }
+
+        throw new FileNotFoundException($"Could not find {relativePath} by walking up from {AppContext.BaseDirectory}.");
     }
 
     /// <summary>

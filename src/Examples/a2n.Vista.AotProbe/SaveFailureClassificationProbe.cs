@@ -1,6 +1,7 @@
 using System;
 using System.Data.Common;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Examples;
 using Microsoft.Data.Sqlite;
 
 namespace a2n.Vista.AotProbe;
@@ -32,15 +33,23 @@ internal static class SaveFailureClassificationProbe
             throw new InvalidOperationException("The numeric probe must classify 2627 as a constraint.");
         }
 
+        if (DbUpdateFailureClassification.IsConstraintViolation(
+                new StateException(null, "UNIQUE constraint failed: Demo.Name")))
+        {
+            throw new InvalidOperationException("Core must not treat a non-SQLite message as a constraint.");
+        }
+
+        SqliteConstraintProbe.Register();
+
         if (!DbUpdateFailureClassification.IsConstraintViolation(new SqliteException("SQLITE_CONSTRAINT", 19)))
         {
-            throw new InvalidOperationException("SqliteErrorCode 19 must classify as a constraint.");
+            throw new InvalidOperationException("The host probe must classify SqliteErrorCode 19 as a constraint.");
         }
 
         if (!DbUpdateFailureClassification.IsConstraintViolation(
                 new SqliteException("CHECK constraint failed: Demo.Name", 1)))
         {
-            throw new InvalidOperationException("The SQLite message fallback must classify a constraint.");
+            throw new InvalidOperationException("The host probe message fallback must classify a SqliteException.");
         }
 
         if (DbUpdateFailureClassification.IsConstraintViolation(new SqliteException("no such table: VistaMemos", 1)))
@@ -53,7 +62,9 @@ internal static class SaveFailureClassificationProbe
 
     private sealed class StateException : DbException
     {
-        public StateException(string sqlState) => SqlState = sqlState;
+        public StateException(string? sqlState, string? message = null)
+            : base(message ?? string.Empty) =>
+            SqlState = sqlState;
 
         public override string? SqlState { get; }
     }

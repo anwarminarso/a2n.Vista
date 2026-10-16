@@ -1,5 +1,4 @@
 using System.Data.Common;
-using Microsoft.Data.Sqlite;
 
 namespace a2n.Vista.EntityFrameworkCore.Execution;
 
@@ -16,20 +15,20 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// <c>write-persistence-failed</c>. Neither is a concurrency conflict.
 /// </para>
 /// <para>
-/// Built-in rules are trim-safe. They read <see cref="DbException.SqlState"/> (SQLSTATE class
-/// <c>23</c> is an integrity-constraint violation: PostgreSQL, and drivers that surface SQLSTATE) and,
-/// for SQLite, <see cref="SqliteException.SqliteErrorCode"/> compared with <c>19</c>
-/// (<c>SQLITE_CONSTRAINT</c>). The provider message (<c>constraint failed</c>) is only a fallback when
-/// the code is something else. The check pattern-matches <see cref="SqliteException"/>, so it does not
-/// call <c>GetProperty</c> and a trimmer cannot strip the error-code property.
+/// The only built-in rule is trim-safe and reads <see cref="DbException.SqlState"/> (SQLSTATE class
+/// <c>23</c> is an integrity-constraint violation: PostgreSQL, and drivers that surface SQLSTATE).
+/// There is no provider package reference, no exception-type name match, and no message-text match.
+/// A message that happens to contain <c>constraint failed</c> is not a constraint. Anything this
+/// helper does not recognize is not a constraint, so the caller maps it to HTTP 500
+/// <c>write-persistence-failed</c>.
 /// </para>
 /// <para>
-/// A provider whose constraint signal is only a numeric code (SQL Server 2601/2627/547/515, MySQL
-/// 1062/1451/1452, and so on) and that does not set <see cref="DbException.SqlState"/> is classified
-/// by a host probe registered with <see cref="AddConstraintProbe"/>. The probe pattern-matches the
-/// provider's own exception type, which keeps the property access visible to the trimmer in the
-/// assembly that references that provider. Return <see langword="null"/> for an exception the probe
-/// does not recognize.
+/// A provider that does not set <see cref="DbException.SqlState"/> — SQLite's
+/// <c>SqliteErrorCode</c> 19, SQL Server 2601/2627/547/515, MySQL 1062/1451/1452 — is classified by a
+/// host probe registered with <see cref="AddConstraintProbe"/>. The probe pattern-matches the
+/// provider's own exception type in the assembly that references that provider, so the property access
+/// stays visible to the trimmer. The Northwind hosts register the SQLite probe there. Return
+/// <see langword="null"/> for an exception the probe does not recognize.
 /// </para>
 /// </remarks>
 public static class DbUpdateFailureClassification
@@ -93,18 +92,6 @@ public static class DbUpdateFailureClassification
         if (exception is DbException db && IsIntegritySqlState(db.SqlState))
         {
             return true;
-        }
-
-        // SQLite does not publish SQLSTATE. SQLITE_CONSTRAINT is 19, including extended codes whose
-        // primary byte is 19. The message is the fallback for a SqliteException that did not carry it.
-        if (exception is SqliteException sqlite)
-        {
-            if (sqlite.SqliteErrorCode == 19)
-            {
-                return true;
-            }
-
-            return sqlite.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
         }
 
         return false;

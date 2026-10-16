@@ -4,6 +4,7 @@ using System;
 using System.Data.Common;
 using System.Threading.Tasks;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Examples;
 using Microsoft.Data.Sqlite;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -12,10 +13,9 @@ using TUnit.Core;
 namespace a2n.Vista.Tests;
 
 /// <summary>
-/// D158: constraint classification is trim-safe. Built-in rules read <see cref="DbException.SqlState"/>
-/// and <see cref="SqliteException.SqliteErrorCode"/> (<c>19</c>, <c>SQLITE_CONSTRAINT</c>). The message
-/// text is only a fallback on a real <see cref="SqliteException"/>. A host probe pattern-matches its
-/// own exception type.
+/// D158: core classification is SQLSTATE class <c>23</c> plus host probes. A message that contains
+/// <c>constraint failed</c> is not a constraint unless a probe that has already matched the provider
+/// type says so. The Northwind probe is that check for <see cref="SqliteException"/>.
 /// </summary>
 public sealed class DbUpdateFailureClassificationTests
 {
@@ -33,8 +33,19 @@ public sealed class DbUpdateFailureClassificationTests
     }
 
     [Test]
-    public async Task Sqlite_Error_Code_19_Is_A_Constraint_And_The_Message_Is_Only_A_Fallback()
+    public async Task A_Non_Sqlite_DbException_Whose_Message_Says_Constraint_Failed_Is_Not_A_Constraint()
     {
+        SqliteConstraintProbe.Register();
+
+        var exception = new SqlStateException(null, "UNIQUE constraint failed: Demo.Name");
+        await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(exception)).IsFalse();
+    }
+
+    [Test]
+    public async Task Northwind_Sqlite_Probe_Uses_Error_Code_19_Then_The_Message()
+    {
+        SqliteConstraintProbe.Register();
+
         await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(
                 new SqliteException("SQLITE_CONSTRAINT", 19)))
             .IsTrue();
@@ -72,7 +83,9 @@ public sealed class DbUpdateFailureClassificationTests
 
     private sealed class SqlStateException : DbException
     {
-        public SqlStateException(string? sqlState) => SqlState = sqlState;
+        public SqlStateException(string? sqlState, string? message = null)
+            : base(message ?? string.Empty) =>
+            SqlState = sqlState;
 
         public override string? SqlState { get; }
     }

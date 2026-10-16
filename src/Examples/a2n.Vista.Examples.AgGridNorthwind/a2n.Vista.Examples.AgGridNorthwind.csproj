@@ -33,6 +33,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- SQLite constraint probe. The EF library does not reference Microsoft.Data.Sqlite. -->
+    <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Standalone EF model (entities + DbContext) for the Northwind sample database. -->
     <ProjectReference Include="..\Northwind.DataAccess\Northwind.DataAccess.csproj" />
 

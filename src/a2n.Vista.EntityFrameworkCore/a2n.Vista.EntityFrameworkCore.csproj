@@ -11,9 +11,6 @@
   <ItemGroup>
     <PackageReference Include="Microsoft.EntityFrameworkCore" />
     <PackageReference Include="Microsoft.Extensions.Hosting.Abstractions" />
-    <!-- SqliteException.SqliteErrorCode is a direct, trim-safe constraint signal (D158). Core is the
-         managed API only; the native SQLite bundle stays with hosts that actually open SQLite. -->
-    <PackageReference Include="Microsoft.Data.Sqlite.Core" />
   </ItemGroup>
 
   <ItemGroup>

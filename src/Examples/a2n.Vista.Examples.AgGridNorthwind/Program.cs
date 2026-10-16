@@ -4,6 +4,9 @@ using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Northwind.DataAccess;
 
+// SQLite constraints are a host concern. Core classifies only SQLSTATE class 23.
+a2n.Vista.Examples.SqliteConstraintProbe.Register();
+
 var builder = WebApplication.CreateBuilder(args);
 
 // src/Examples/DB/northwind.db is a read-only template (Microsoft Northwind plus VistaMemos). It is

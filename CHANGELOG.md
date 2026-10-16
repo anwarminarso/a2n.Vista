@@ -29,10 +29,11 @@ While the version is `0.x`, anything may change between releases.
   error, an unrecognized provider error — is HTTP 500 `write-persistence-failed`
   (`VistaPersistenceException`). The client message stays fixed and leak-free; the provider exception
   remains the inner exception for server logs. A missing `VistaMemos` table was the case that used to
-  come back as 409 `write-conflict`. SQLite constraint detection reads
-  `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`) on the real provider exception. The
-  message text `constraint failed` is only a fallback. The check is a direct type test, so it stays
-  trim/AOT safe.
+  come back as 409 `write-conflict`. Core classifies a constraint only from SQLSTATE class `23` or a
+  host probe registered with `AddConstraintProbe`. It does not reference a database provider, match an
+  exception type name, or treat the words `constraint failed` as a constraint. The Northwind hosts
+  register that probe: `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`), and only after
+  that type check the message `constraint failed`. Anything else is HTTP 500.
 - **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
   post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
   row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
@@ -51,9 +52,11 @@ While the version is `0.x`, anything may change between releases.
   `WriteErrorCode.WriteConflict`, `WriteErrorCodes.WriteConflict`, and `VistaWriteConflictException` are
   removed. They are not obsolete aliases. Clients that matched `write-conflict` as a constraint violation
   must match `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` is unchanged.
-  Constraint detection does not reflect over provider error-code properties. Built-in rules are SQLSTATE
-  class `23` and SQLite's `SqliteException` text. SQL Server and MySQL numeric codes are classified by a
-  host probe (`DbUpdateFailureClassification.AddConstraintProbe`). An unrecognized provider is HTTP 500.
+  Constraint detection does not reflect over provider error-code properties. The only built-in rule is
+  SQLSTATE class `23`. SQLite, SQL Server, and MySQL are classified by a host probe
+  (`DbUpdateFailureClassification.AddConstraintProbe`). The Northwind probe is
+  `SqliteException.SqliteErrorCode == 19`, then the message `constraint failed`. An unrecognized
+  provider error is HTTP 500.
 
 ### Added
 - `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`

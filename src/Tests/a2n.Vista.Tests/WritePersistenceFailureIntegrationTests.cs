@@ -10,6 +10,7 @@ using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Diagnostics;
 using a2n.Vista.Authoring;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Examples;
 using a2n.Vista.Filter;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
@@ -55,6 +56,13 @@ namespace a2n.Vista.Tests;
     Justification = "Tests drive the reflection-based write path (Register<TView> + reflection write mapper) by design; trimming is not used for tests.")]
 public sealed class WritePersistenceFailureIntegrationTests
 {
+    static WritePersistenceFailureIntegrationTests()
+    {
+        // The EF library does not reference SQLite. These tests are a host: they register the same
+        // probe the Northwind samples register, then a real UNIQUE/FK failure is 422.
+        SqliteConstraintProbe.Register();
+    }
+
     private const string ConstraintViewName = "write-constraint-atomicity";
     private const string ForeignKeyViewName = "write-foreign-key-constraint";
     private const string ConcurrencyViewName = "write-savechanges-concurrency";
@@ -86,6 +94,12 @@ public sealed class WritePersistenceFailureIntegrationTests
         await Assert.That(violation.Code).IsEqualTo(WriteErrorCode.ConstraintViolation);
         await Assert.That(violation.Code.ToWireCode()).IsEqualTo(WriteErrorCodes.ConstraintViolation);
         await Assert.That(violation.Code.ToWireCode()).IsNotEqualTo("write-conflict");
+
+        var sqlite = FindSqliteException(violation);
+        await Assert.That(sqlite).IsNotNull();
+        await Assert.That(sqlite!.SqliteErrorCode).IsEqualTo(19);
+        // Observed on this provider: DbException.ErrorCode is -2147467259 (HResult 0x80004005, E_FAIL),
+        // not 19. Classification does not read ErrorCode.
 
         // ...with a fixed, Vista-authored message that leaks no SQL/schema/connection/table detail (R9.6).
         await AssertMessageIsLeakFree(violation.Message);
@@ -273,6 +287,19 @@ public sealed class WritePersistenceFailureIntegrationTests
     // ---- Shared helpers ------------------------------------------------------------------------------
 
     /// <summary>Invokes <paramref name="action"/> and returns the thrown exception, or fails the test.</summary>
+    private static SqliteException? FindSqliteException(Exception exception)
+    {
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            if (current is SqliteException sqlite)
+            {
+                return sqlite;
+            }
+        }
+
+        return null;
+    }
+
     private static async Task<Exception?> CaptureAsync(Func<Task> action)
     {
         try

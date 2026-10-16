@@ -19,6 +19,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Same SQLite probe the Northwind hosts compile. Internal, so it does not clash with the host copy. -->
+    <Compile Include="..\..\Examples\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
     <PackageReference Include="TUnit" />
     <!-- Property-based testing (CsCheck): generated/RUC behavioral parity (Property 1, task 7.6). -->
