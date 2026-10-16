@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Informational HTTP smoke. Not part of src/a2n.Vista.slnx and not part of the required
+    Playwright project: that assembly's session hook issues GET /, which would warm the host
+    before the burst. This is a smoke only. It is not a regression proof of the EF Core lazy
+    relational-model race (dotnet/efcore#39214, issue #13). See StartupBurstSmokeTests.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <TargetFrameworks></TargetFrameworks>
+    <RootNamespace>a2n.Vista.E2E</RootNamespace>
+    <AssemblyName>a2n.Vista.E2E.StartupBurst</AssemblyName>
+    <OutputType>Exe</OutputType>
+    <IsTestProject>true</IsTestProject>
+    <IsPackable>false</IsPackable>
+    <Nullable>enable</Nullable>
+    <!-- This folder also holds the Playwright suite. Compile only the smoke.
+         Output paths are isolated in tests/e2e/Directory.Build.props, which is early
+         enough for NuGet. Setting them here is too late (MSB3539). -->
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Compile Include="StartupBurstSmokeTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="TUnit" />
+  </ItemGroup>
+
+</Project>

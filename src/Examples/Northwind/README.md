@@ -12,9 +12,10 @@ A small ASP.NET Core host that serves the Northwind views, including the writabl
 2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877  northwind.db
 ```
 
-Building this project runs `ExtractNorthwindDatabase`, which unzips the file to the gitignored
+Building this project runs `ExtractNorthwindDatabase`, which extracts the file to the gitignored
 `src/Examples/DB/northwind.db` and fails if the zip is missing or either hash does not match. It does
-not create an empty database. The same target is what `tests/e2e/run.sh` and CI use. The template is
+not create an empty database. The same target is what `tests/e2e/run.sh`, `tests/e2e/run-startup-burst.sh`,
+and CI use. The template is
 not committed and is never opened for writing.
 
 On startup the host checks the template against the pin and exits if the file is missing or the hash

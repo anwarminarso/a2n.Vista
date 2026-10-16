@@ -9,6 +9,7 @@ This folder holds independent verification of the repository's claimed status. T
 | [vista-e2e-2026-10-16.md](./vista-e2e-2026-10-16.md) | `qa/vista-e2e` (parent `7fad632`, then merged with `develop`) | Counts from the first green run of that suite, plus the library `dotnet test` baseline taken on the same tree |
 | [vista-tanstack-smoke-2026-10-16.md](./vista-tanstack-smoke-2026-10-16.md) | `9e3fc24` (`develop`, PR #10) | TanStack showcase smoke: paging, sort, global filter, column hide, unknown sort |
 | [vista-aggrid-e2e-flake-2026-10-16.md](./vista-aggrid-e2e-flake-2026-10-16.md) | `e8563d9` (`develop`) | Flaky AG Grid cell read (issue #20, CI run 38882214341) and the retrying Playwright assertions that replace it |
+| [vista-startup-burst-2026-10-16.md](./vista-startup-burst-2026-10-16.md) | `9e3fc24` (`develop`) | Informational cold-start HTTP smoke on net9 and net10 Northwind hosts. Not a regression proof of the EF lazy relational-model race |
 
 Trimmed logs for the baseline live in [vista-baseline-2026-10-16/](./vista-baseline-2026-10-16/).
 
@@ -36,3 +37,9 @@ bash tests/e2e/run.sh
 ```
 
 Do not commit `northwind.db` (it is gitignored) or anything under `bin/`, `obj/`, or `TestResults/`.
+
+The startup-burst smoke is a different command. It is informational and is not a regression proof of the EF lazy relational-model race:
+
+```bash
+bash tests/e2e/run-startup-burst.sh
+```

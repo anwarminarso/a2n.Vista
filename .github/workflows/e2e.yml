@@ -29,6 +29,32 @@ jobs:
             9.0.x
             10.0.x
 
-      # run.sh calls ExtractNorthwindDatabase, the same hashed unzip the sample build uses.
+      # run.sh calls ExtractNorthwindDatabase, the same target the sample build uses.
       - name: Run e2e
         run: bash tests/e2e/run.sh
+
+  # Informational only. continue-on-error keeps a red smoke from failing the check.
+  # This job does not prove dotnet/efcore#39214 (Vista issue #13) is fixed: the race is
+  # rare, and a single 32-request wave is not a regression test. Deterministic evidence
+  # for the warmup is the unit-test harness, not this HTTP smoke.
+  startup-burst:
+    name: Startup burst smoke (informational, not required)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      # run-startup-burst.sh calls ExtractNorthwindDatabase. The host copies the template
+      # into a per-process temp directory and the smoke deletes that directory on dispose.
+      - name: Run startup-burst smoke
+        run: bash tests/e2e/run-startup-burst.sh

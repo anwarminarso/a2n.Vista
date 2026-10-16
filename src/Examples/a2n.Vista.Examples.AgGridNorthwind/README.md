@@ -26,7 +26,7 @@ undocumented steps.
 `src/Examples/DB/Northwind.sha256` pins the SHA-256 of that zip
 (`78fe424288a3b07d54db7a9130b04fa29e14029dd8dfea2f842f2e4112b65bf9`) and of the extracted
 `northwind.db` (`2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877`). Building this
-project runs `ExtractNorthwindDatabase`, which unzips the file to the gitignored
+project runs `ExtractNorthwindDatabase`, which extracts the file to the gitignored
 `src/Examples/DB/northwind.db` and fails if the zip is missing or either hash does not match. It does
 not create an empty database. The template is not committed and is never opened for writing.
 

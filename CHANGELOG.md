@@ -29,7 +29,8 @@ While the version is `0.x`, anything may change between releases.
   VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/Northwind SQLite.zip` stays
   the shipped database (11,096,792 bytes). `src/Examples/DB/Northwind.sha256` pins the SHA-256 of that
   zip and of the extracted `northwind.db`. `ExtractNorthwindDatabase` is the only extraction path: the
-  sample build, `tests/e2e/run.sh`, `RepoPaths.EnsureDatabase`, and CI all run that target. A missing zip
+  sample build, `tests/e2e/run.sh`, `tests/e2e/run-startup-burst.sh`, `RepoPaths.EnsureDatabase`, and CI
+  all run that target. A missing zip
   or a hash mismatch fails the build with the expected and actual hashes. The target does not create an
   empty database and does not call `EnsureCreated`. The extracted file is a read-only template and is not
   committed. On startup each Northwind host refuses to start when that template is missing or its hash is

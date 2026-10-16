@@ -143,12 +143,18 @@ async function load() {
 function headerLabel(header, id) {
     return typeof header === 'string' ? header : id;
 }
-function cellText(columnId, value) {
-    if (value === null || value === undefined) {
-        return '';
-    }
+/**
+ * Text for one body cell.
+ *
+ * Discontinued is a bool on the wire. Yes is only boolean `true`. Text `"1"` / `"true"` and numeric
+ * `1` stay No, so a projection that leaks the stored flag fails the page instead of being painted over.
+ */
+export function cellText(columnId, value) {
     if (columnId === 'Discontinued') {
         return value === true ? 'Yes' : 'No';
+    }
+    if (value === null || value === undefined) {
+        return '';
     }
     if (columnId === 'UnitPrice' && typeof value === 'number') {
         return priceFormat.format(value);
@@ -278,5 +284,8 @@ function bootstrap() {
     render();
     void load();
 }
-bootstrap();
+// The page script boots the table. Unit tests import {@link cellText} from Node, where there is no document.
+if (typeof document !== 'undefined') {
+    bootstrap();
+}
 //# sourceMappingURL=tanStackTable.js.map
