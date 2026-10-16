@@ -1,33 +1,81 @@
 <Project>
   <!--
-    Northwind sample hosts set ExtractNorthwindDatabase=true. The Microsoft database is shipped as
-    src/Examples/DB/Northwind SQLite.zip and is never committed as northwind.db. This target extracts
-    it to the gitignored template path. Inputs/Outputs skip the work when the extracted file is
-    already newer than the zip, so local builds, CI, and the sample self-test share one path.
+    Northwind sample hosts set ExtractNorthwindDatabase=true. This is the only extraction of
+    src/Examples/DB/Northwind SQLite.zip. The zip and the extracted northwind.db are pinned in
+    src/Examples/DB/Northwind.sha256 (sha256sum lines: 64 hex digits, two spaces, file name).
+    A missing zip or a hash mismatch fails the build. Nothing here creates an empty database.
   -->
   <PropertyGroup>
-    <_NorthwindDbDirectory>$(MSBuildThisFileDirectory)DB/</_NorthwindDbDirectory>
-    <NorthwindSqliteZip>$(_NorthwindDbDirectory)Northwind SQLite.zip</NorthwindSqliteZip>
-    <NorthwindSqliteDatabase>$(_NorthwindDbDirectory)northwind.db</NorthwindSqliteDatabase>
+    <_NorthwindDbDirectory Condition="'$(_NorthwindDbDirectory)' == ''">$(MSBuildThisFileDirectory)DB/</_NorthwindDbDirectory>
+    <NorthwindSqliteZip Condition="'$(NorthwindSqliteZip)' == ''">$(_NorthwindDbDirectory)Northwind SQLite.zip</NorthwindSqliteZip>
+    <NorthwindSqliteDatabase Condition="'$(NorthwindSqliteDatabase)' == ''">$(_NorthwindDbDirectory)northwind.db</NorthwindSqliteDatabase>
+    <NorthwindChecksumFile Condition="'$(NorthwindChecksumFile)' == ''">$(_NorthwindDbDirectory)Northwind.sha256</NorthwindChecksumFile>
   </PropertyGroup>
 
   <Target Name="ExtractNorthwindDatabase"
           BeforeTargets="BeforeBuild"
-          Condition="'$(ExtractNorthwindDatabase)' == 'true'"
-          Inputs="$(NorthwindSqliteZip)"
-          Outputs="$(NorthwindSqliteDatabase)">
+          Condition="'$(ExtractNorthwindDatabase)' == 'true'">
     <Error Condition="!Exists('$(NorthwindSqliteZip)')"
-           Text="Northwind database zip not found: $(NorthwindSqliteZip). The samples ship src/Examples/DB/Northwind SQLite.zip and extract it to the gitignored northwind.db. Restore the zip from git." />
-    <Message Importance="high" Text="Extracting $(NorthwindSqliteZip) to $(NorthwindSqliteDatabase)" />
-    <!-- Re-extract only when this target runs (missing or older than the zip). One Unzip, no script. -->
-    <Delete Files="$(NorthwindSqliteDatabase)" Condition="Exists('$(NorthwindSqliteDatabase)')" />
+           Text="Northwind database zip not found: $(NorthwindSqliteZip). The samples ship src/Examples/DB/Northwind SQLite.zip and extract it to the gitignored northwind.db. Restore the zip from git. This build does not create an empty database." />
+    <Error Condition="!Exists('$(NorthwindChecksumFile)')"
+           Text="Northwind checksum file not found: $(NorthwindChecksumFile). Expected SHA-256 pins for 'Northwind SQLite.zip' and 'northwind.db'." />
+
+    <ReadLinesFromFile File="$(NorthwindChecksumFile)">
+      <Output TaskParameter="Lines" ItemName="_NorthwindChecksumLine" />
+    </ReadLinesFromFile>
+    <ItemGroup>
+      <_NorthwindChecksumEntry Include="@(_NorthwindChecksumLine)"
+                               Condition="'%(Identity)' != '' and !$([System.String]::Copy('%(Identity)').StartsWith('#'))">
+        <Hash>$([System.String]::Copy('%(Identity)').Substring(0, 64).ToLowerInvariant())</Hash>
+        <PinnedName>$([System.String]::Copy('%(Identity)').Substring(66).Trim())</PinnedName>
+      </_NorthwindChecksumEntry>
+    </ItemGroup>
+    <PropertyGroup>
+      <_ExpectedZipHash>@(_NorthwindChecksumEntry->WithMetadataValue('PinnedName', 'Northwind SQLite.zip')->'%(Hash)')</_ExpectedZipHash>
+      <_ExpectedDbHash>@(_NorthwindChecksumEntry->WithMetadataValue('PinnedName', 'northwind.db')->'%(Hash)')</_ExpectedDbHash>
+    </PropertyGroup>
+    <Error Condition="'$(_ExpectedZipHash)' == '' or '$(_ExpectedDbHash)' == ''"
+           Text="Northwind checksum file $(NorthwindChecksumFile) must pin both 'Northwind SQLite.zip' and 'northwind.db' as sha256sum lines (64 hex digits, two spaces, file name)." />
+
+    <GetFileHash Files="$(NorthwindSqliteZip)" Algorithm="SHA256">
+      <Output TaskParameter="Items" ItemName="_NorthwindZipHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_ActualZipHash>$([System.String]::Copy('%(_NorthwindZipHash.FileHash)').ToLowerInvariant())</_ActualZipHash>
+    </PropertyGroup>
+    <Error Condition="'$(_ActualZipHash)' != '$(_ExpectedZipHash)'"
+           Text="Northwind zip hash mismatch: $(NorthwindSqliteZip). Expected $(_ExpectedZipHash), actual $(_ActualZipHash). Refusing to extract. An empty database is not a fallback." />
+
+    <GetFileHash Files="$(NorthwindSqliteDatabase)" Algorithm="SHA256" Condition="Exists('$(NorthwindSqliteDatabase)')">
+      <Output TaskParameter="Items" ItemName="_NorthwindExistingDbHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_ActualExistingDbHash Condition="'@(_NorthwindExistingDbHash)' != ''">$([System.String]::Copy('%(_NorthwindExistingDbHash.FileHash)').ToLowerInvariant())</_ActualExistingDbHash>
+      <_NorthwindDatabaseMatches Condition="'$(_ActualExistingDbHash)' == '$(_ExpectedDbHash)'">true</_NorthwindDatabaseMatches>
+    </PropertyGroup>
+
+    <Message Importance="high"
+             Condition="'$(_NorthwindDatabaseMatches)' == 'true'"
+             Text="Northwind database $(NorthwindSqliteDatabase) matches the pinned SHA-256. Skipping extract." />
+
+    <Delete Files="$(NorthwindSqliteDatabase)"
+            Condition="'$(_NorthwindDatabaseMatches)' != 'true' and Exists('$(NorthwindSqliteDatabase)')" />
     <Unzip SourceFiles="$(NorthwindSqliteZip)"
-           DestinationFolder="$(_NorthwindDbDirectory)"
-           SkipUnchangedFiles="true" />
-    <Error Condition="!Exists('$(NorthwindSqliteDatabase)')"
-           Text="Extracting $(NorthwindSqliteZip) did not produce $(NorthwindSqliteDatabase). The zip must contain northwind.db at its root." />
-    <!-- Zip members keep their archived timestamp, which is older than the zip. Touch the extract
-         so the next build sees Outputs newer than Inputs and skips this target. -->
-    <Touch Files="$(NorthwindSqliteDatabase)" />
+           DestinationFolder="$([System.IO.Path]::GetDirectoryName('$(NorthwindSqliteDatabase)'))"
+           SkipUnchangedFiles="false"
+           Condition="'$(_NorthwindDatabaseMatches)' != 'true'" />
+    <Error Condition="'$(_NorthwindDatabaseMatches)' != 'true' and !Exists('$(NorthwindSqliteDatabase)')"
+           Text="Extracting $(NorthwindSqliteZip) did not produce $(NorthwindSqliteDatabase). The zip must contain northwind.db at its root. This build does not create an empty database." />
+
+    <GetFileHash Files="$(NorthwindSqliteDatabase)" Algorithm="SHA256" Condition="'$(_NorthwindDatabaseMatches)' != 'true'">
+      <Output TaskParameter="Items" ItemName="_NorthwindExtractedDbHash" />
+    </GetFileHash>
+    <PropertyGroup>
+      <_ActualDbHash Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.String]::Copy('%(_NorthwindExtractedDbHash.FileHash)').ToLowerInvariant())</_ActualDbHash>
+    </PropertyGroup>
+    <Delete Files="$(NorthwindSqliteDatabase)"
+            Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_ActualDbHash)' != '$(_ExpectedDbHash)'" />
+    <Error Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_ActualDbHash)' != '$(_ExpectedDbHash)'"
+           Text="Northwind database hash mismatch after extracting $(NorthwindSqliteZip). Expected $(_ExpectedDbHash), actual $(_ActualDbHash). The extracted file was deleted. This build does not fall back to an empty database." />
   </Target>
 </Project>

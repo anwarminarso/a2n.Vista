@@ -21,6 +21,8 @@
   <ItemGroup>
     <!-- Same SQLite probe the Northwind hosts compile. Internal, so it does not clash with the host copy. -->
     <Compile Include="..\..\Examples\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <!-- VistaMemos DDL. Internal, compiled into the hosts the same way. One statement, no Split. -->
+    <Compile Include="..\..\Examples\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
   </ItemGroup>
 
   <ItemGroup>
@@ -44,6 +46,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Working-copy and pinned-template tests. The sample model is not a Vista package. -->
+    <ProjectReference Include="..\..\Examples\Northwind.DataAccess\Northwind.DataAccess.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />
@@ -55,6 +59,7 @@
       register AddVistaAdapter<AgGridAdapter>() and exercise the POST {route}/aggrid endpoint end to end.
     -->
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.TanStackTable\a2n.Vista.Adapters.TanStackTable.csproj" />
     <!--
       End-to-end generator consumer (Spec source-generator, Task 6.1, R6.4): referencing this sample
       loads its [ModuleInitializer]-driven accessor registration so GeneratorEndToEndTests can assert

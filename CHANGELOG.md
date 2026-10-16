@@ -8,15 +8,34 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
+### Added
+- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D154–D157). The third
+  real grid adapter. `POST {route}/tanstack` binds TanStack Table's manual state — `pagination`,
+  `sorting`, `columnFilters`, `globalFilter`, `columnVisibility` — into Vista's query
+  (absolute offset, sort, Filter, Search, `SelectFields`) and returns `{ rows, rowCount, pageCount }`.
+  `columnVisibility` / `SelectFields` only hides a column in the table UI. Hidden fields are still sent
+  to the client; it is not an access-control mechanism. Core-only, source-generated JSON, same host glue
+  as DataTables and AG Grid. The Northwind showcase gains a TanStack Table page next to the AG Grid and
+  DataTables pages. NuGet publishing of the adapter package is deferred.
+- `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`
+  (`write-constraint-violation`) and `VistaConstraintViolationException`.
+- `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
+  and `VistaPersistenceException`.
+- `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
+
 ### Fixed
 - **Northwind `vWritableMemo` works against a per-run copy of the extracted database.** The Microsoft
   sample had no `VistaMemos` table, so a live list/update/delete returned 500 (`no such table:
   VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/Northwind SQLite.zip` stays
-  the shipped database. The sample build extracts it, with the built-in `Unzip` task, to the gitignored
-  `northwind.db` and skips that work when the extract is already up to date. That file is a read-only
-  template and is not committed. On startup each Northwind host hashes it, copies it into a per-run
-  folder (under the temp directory, or under `NORTHWIND_WORKING_DIRECTORY`), and runs one
-  `CREATE TABLE IF NOT EXISTS VistaMemos` against the copy only. Memo create/update/delete and the
+  the shipped database (11,096,792 bytes). `src/Examples/DB/Northwind.sha256` pins the SHA-256 of that
+  zip and of the extracted `northwind.db`. `ExtractNorthwindDatabase` is the only extraction path: the
+  sample build, `tests/e2e/run.sh`, `RepoPaths.EnsureDatabase`, and CI all run that target. A missing zip
+  or a hash mismatch fails the build with the expected and actual hashes. The target does not create an
+  empty database and does not call `EnsureCreated`. The extracted file is a read-only template and is not
+  committed. On startup each Northwind host refuses to start when that template is missing or its hash is
+  not the pin, then copies it into a per-run directory whose name is a GUID (under the temp directory, or
+  under `NORTHWIND_WORKING_DIRECTORY`) and runs one `CREATE TABLE IF NOT EXISTS VistaMemos` against the
+  copy only. The copy is deleted on shutdown. Memo create/update/delete and the
   self-tests write only to the copy, which is deleted when the process stops. The host self-test
   asserts the connection is that copy, that the copy's `sqlite_master` contains `VistaMemos`, that a
   stale `If-Match` is `write-concurrency-conflict`, and that the extracted template's SHA-256 is
@@ -58,13 +77,6 @@ While the version is `0.x`, anything may change between releases.
   (`DbUpdateFailureClassification.AddConstraintProbe`). The Northwind probe is
   `SqliteException.SqliteErrorCode == 19`, then the message `constraint failed`. An unrecognized
   provider error is HTTP 500.
-
-### Added
-- `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`
-  (`write-constraint-violation`) and `VistaConstraintViolationException`.
-- `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
-  and `VistaPersistenceException`.
-- `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
 
 ## [0.0.4] - 2026-08-11
 

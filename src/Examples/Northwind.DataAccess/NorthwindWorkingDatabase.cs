@@ -37,7 +37,9 @@ public static class NorthwindWorkingDatabase
         if (!File.Exists(fullTemplate))
         {
             throw new FileNotFoundException(
-                "The Northwind template database was not found. It is the read-only file shipped at src/Examples/DB/northwind.db.",
+                "The Northwind template database was not found at " + fullTemplate + ". " +
+                "ExtractNorthwindDatabase produces the gitignored northwind.db from Northwind SQLite.zip. " +
+                "An empty database is not a fallback.",
                 fullTemplate);
         }
 
@@ -59,6 +61,116 @@ public static class NorthwindWorkingDatabase
     {
         using var stream = File.OpenRead(path);
         return Convert.ToHexString(SHA256.HashData(stream));
+    }
+
+    /// <summary>File name of the extracted template, as pinned in <c>Northwind.sha256</c>.</summary>
+    public const string DatabasePinName = "northwind.db";
+
+    /// <summary>
+    /// Reads the SHA-256 pin for <paramref name="entryName"/> from a sha256sum file.
+    /// </summary>
+    /// <param name="checksumPath">Path to <c>Northwind.sha256</c>.</param>
+    /// <param name="entryName"><see cref="DatabasePinName"/> or <c>Northwind SQLite.zip</c>.</param>
+    /// <returns>The 64 hex digits, as written in the file.</returns>
+    public static string ReadPinnedHash(string checksumPath, string entryName)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(checksumPath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(entryName);
+        foreach (var raw in File.ReadLines(checksumPath))
+        {
+            var line = raw.Trim();
+            if (line.Length == 0 || line[0] == '#')
+            {
+                continue;
+            }
+
+            // sha256sum: 64 hex digits, two spaces, then the file name (which may contain spaces).
+            if (line.Length < 66 || line[64] != ' ' || line[65] != ' ')
+            {
+                continue;
+            }
+
+            var name = line[66..].Trim();
+            if (!string.Equals(name, entryName, StringComparison.Ordinal))
+            {
+                continue;
+            }
+
+            var hash = line[..64];
+            if (!IsSha256Hex(hash))
+            {
+                throw new InvalidOperationException(
+                    $"Northwind checksum file {checksumPath} has a pin for {entryName} that is not 64 hex digits.");
+            }
+
+            return hash;
+        }
+
+        throw new InvalidOperationException(
+            $"Northwind checksum file {checksumPath} has no SHA-256 pin for {entryName}.");
+    }
+
+    /// <summary>
+    /// Refuses to continue when the extracted template is missing or its SHA-256 is not the
+    /// <see cref="DatabasePinName"/> pin. Hosts call this before <see cref="CreateCopy"/> and exit
+    /// when it throws. It does not create a database.
+    /// </summary>
+    /// <param name="templatePath">The extracted <c>northwind.db</c>.</param>
+    /// <param name="checksumPath"><c>Northwind.sha256</c> beside the zip.</param>
+    /// <returns>The template hash, uppercase hex, which matches the pin.</returns>
+    public static string RequirePinnedTemplate(string templatePath, string checksumPath)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(templatePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(checksumPath);
+        var fullTemplate = Path.GetFullPath(templatePath);
+        if (!File.Exists(fullTemplate))
+        {
+            throw new FileNotFoundException(
+                "Northwind template database was not found at " + fullTemplate + ". " +
+                "Building a sample host runs ExtractNorthwindDatabase, which extracts src/Examples/DB/Northwind SQLite.zip " +
+                "to the gitignored northwind.db and checks Northwind.sha256. " +
+                "Refusing to start. An empty database is not a fallback.",
+                fullTemplate);
+        }
+
+        var fullChecksum = Path.GetFullPath(checksumPath);
+        if (!File.Exists(fullChecksum))
+        {
+            throw new FileNotFoundException(
+                "Northwind checksum file was not found at " + fullChecksum + ". Refusing to start.",
+                fullChecksum);
+        }
+
+        var expected = ReadPinnedHash(fullChecksum, DatabasePinName);
+        var actual = Sha256(fullTemplate);
+        if (!string.Equals(actual, expected, StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                "Northwind template hash mismatch for " + fullTemplate + ". Expected " + expected +
+                ", actual " + actual + ". Refusing to start. The file is not the pinned extract of Northwind SQLite.zip. " +
+                "An empty database is not a fallback.");
+        }
+
+        return actual;
+    }
+
+    private static bool IsSha256Hex(string hash)
+    {
+        if (hash.Length != 64)
+        {
+            return false;
+        }
+
+        foreach (var ch in hash)
+        {
+            var hex = (ch is >= '0' and <= '9') || (ch is >= 'a' and <= 'f') || (ch is >= 'A' and <= 'F');
+            if (!hex)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

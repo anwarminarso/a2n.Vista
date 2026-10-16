@@ -50,6 +50,7 @@
     <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.TanStackTable\a2n.Vista.Adapters.TanStackTable.csproj" />
 
     <!--
       Reference the Phase 3 source generator as an ANALYZER only (no runtime assembly dependency) — the

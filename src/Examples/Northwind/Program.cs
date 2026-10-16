@@ -9,28 +9,31 @@ a2n.Vista.Examples.SqliteConstraintProbe.Register();
 
 var builder = WebApplication.CreateBuilder(args);
 
-// The build extracts src/Examples/DB/Northwind SQLite.zip to the gitignored northwind.db template.
-// That file is read-only. Hash it, copy it, then create VistaMemos on the copy only.
+// The build extracts src/Examples/DB/Northwind SQLite.zip to the gitignored northwind.db template
+// and checks src/Examples/DB/Northwind.sha256. A missing or mismatched template refuses to start.
+// That file is read-only. Copy it, then create VistaMemos on the copy only.
 const string DbRelativePath = "../DB/northwind.db";
+const string ChecksumRelativePath = "../DB/Northwind.sha256";
 var templatePath = Path.GetFullPath(DbRelativePath);
-
-if (!File.Exists(templatePath))
+string templateHash;
+try
 {
+    templateHash = NorthwindWorkingDatabase.RequirePinnedTemplate(
+        templatePath,
+        Path.GetFullPath(ChecksumRelativePath));
+}
+catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException)
+{
+    Console.Error.WriteLine(ex.Message);
     Console.Error.WriteLine(
-        $"""
-        Northwind template database not found at: {templatePath}
-
-        Building this project extracts src/Examples/DB/Northwind SQLite.zip to that path
-        (gitignored). The zip is in the repository. Run from the project directory so this
-        relative path resolves:
+        """
+        Run from the project directory so the relative path resolves:
 
           dotnet run --project src/Examples/Northwind
         """);
     Environment.ExitCode = 1;
     return;
 }
-
-var templateHash = NorthwindWorkingDatabase.Sha256(templatePath);
 var working = NorthwindWorkingDatabase.CreateCopy(templatePath);
 a2n.Vista.Examples.NorthwindMemoTable.EnsureOnCopy(templatePath, working.DatabasePath);
 var workingConnectionString = new SqliteConnectionStringBuilder { DataSource = working.DatabasePath }.ToString();
