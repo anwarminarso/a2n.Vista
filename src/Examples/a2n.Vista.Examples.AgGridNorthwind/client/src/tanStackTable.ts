@@ -33,10 +33,10 @@ interface ProductRow {
   unitPrice?: number | null;
   unitsInStock?: number | null;
   /**
-   * Northwind stores `Products.Discontinued` as text `"0"` / `"1"`. The list response leaves that
-   * text in place; boolean and numeric forms are accepted by the cell renderer as well.
+   * Bool. The showcase view projects `Products.Discontinued == "1"` so the wire value is boolean,
+   * which is what filter and sort compare.
    */
-  discontinued?: string | boolean | number | null;
+  discontinued?: boolean;
   categoryName?: string;
   supplierName?: string;
 }
@@ -205,9 +205,8 @@ function headerLabel(header: string | unknown, id: string): string {
 /**
  * Text for one body cell.
  *
- * `Products.Discontinued` arrives as the text `"0"` / `"1"` (and the adapter does not coerce it).
- * Yes is boolean `true`, numeric `1`, the text `"1"`, or the text `"true"` in any case. Every other
- * value, including `"0"` and boolean `false`, is No. Other columns still render blank for null.
+ * Discontinued is a bool on the wire (`true` is Yes). Numeric `1` and the text `"1"` / `"true"` are
+ * only a defensive fallback for a row that still carries the stored flag.
  */
 export function cellText(columnId: string, value: unknown): string {
   if (columnId === 'Discontinued') {

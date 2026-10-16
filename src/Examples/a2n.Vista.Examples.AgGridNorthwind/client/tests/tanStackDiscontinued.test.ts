@@ -2,20 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import { cellText } from '../src/tanStackTable.js';
 
-/**
- * Northwind products whose `Products.Discontinued` column is the text `"1"`.
- * The showcase must render those cells as Yes (Alice Mutton, Chef Anton's Gumbo Mix).
- */
-const DISCONTINUED_AS_TEXT = [
-  { productName: 'Alice Mutton', discontinued: '1' },
-  { productName: "Chef Anton's Gumbo Mix", discontinued: '1' },
-] as const;
-
 describe('TanStack Discontinued cell', () => {
-  it('renders Yes for Alice Mutton and Chef Anton\'s Gumbo Mix when the flag is the text "1"', () => {
-    for (const product of DISCONTINUED_AS_TEXT) {
-      expect(cellText('Discontinued', product.discontinued)).toBe('Yes');
-    }
+  it('renders Yes for boolean true (Alice Mutton) and No for boolean false (Chai)', () => {
+    expect(cellText('Discontinued', true)).toBe('Yes');
+    expect(cellText('Discontinued', false)).toBe('No');
   });
 
   it.each([

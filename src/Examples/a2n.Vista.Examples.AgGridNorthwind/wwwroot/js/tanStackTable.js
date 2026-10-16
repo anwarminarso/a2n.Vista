@@ -146,9 +146,8 @@ function headerLabel(header, id) {
 /**
  * Text for one body cell.
  *
- * `Products.Discontinued` arrives as the text `"0"` / `"1"` (and the adapter does not coerce it).
- * Yes is boolean `true`, numeric `1`, the text `"1"`, or the text `"true"` in any case. Every other
- * value, including `"0"` and boolean `false`, is No. Other columns still render blank for null.
+ * Discontinued is a bool on the wire (`true` is Yes). Numeric `1` and the text `"1"` / `"true"` are
+ * only a defensive fallback for a row that still carries the stored flag.
  */
 export function cellText(columnId, value) {
     if (columnId === 'Discontinued') {
