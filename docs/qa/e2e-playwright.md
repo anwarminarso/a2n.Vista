@@ -81,3 +81,13 @@ Chromium is launched with `--no-sandbox` and `--disable-dev-shm-usage` so the sa
 ## CI
 
 `.github/workflows/e2e.yml` runs `bash tests/e2e/run.sh` on pull requests into `develop`, and on `workflow_dispatch`. It does not modify `.github/workflows/ci.yml`. The library matrix in `ci.yml` already runs on push and pull_request to `main` and `develop` (PR #7); this job adds the browser suite. The job timeout is 20 minutes. It needs outbound network access for NuGet, the Playwright browser download, and the grid CDNs.
+
+## Startup burst smoke (informational)
+
+`tests/e2e/run-startup-burst.sh` is a separate HTTP smoke. It is not part of `run.sh` and it does not install Chromium. The required Playwright job does not run it.
+
+It builds the Northwind sample for `net9.0` and `net10.0` (`-p:VistaHostFramework`, so the default solution build stays `net8.0`), starts each host with no HTTP warmup, and sends 32 concurrent list and read requests. The assertion is that none of them return 500.
+
+This is a smoke only. It is not a regression proof of the EF Core lazy relational-model race ([dotnet/efcore#39214](https://github.com/dotnet/efcore/issues/39214), Vista issue #13). That race is rare. A green wave does not show it is gone. Deterministic evidence for the warmup is the unit-test harness on [PR #12](https://github.com/anwarminarso/a2n.Vista/pull/12) (`RelationalModelWarmup.WarmAll` and `Concurrent_EnsureCreated_After_Warmup_Completes`), which is not merged here. A library host warmup is not in this tree.
+
+The workflow runs the script as its own job, `Startup burst smoke (informational, not required)`, with `continue-on-error: true`. A failure there does not fail the required Playwright check. Counts from the 2026-10-16 run are in [vista-startup-burst-2026-10-16.md](./vista-startup-burst-2026-10-16.md).

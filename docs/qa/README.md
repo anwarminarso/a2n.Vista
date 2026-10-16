@@ -7,6 +7,7 @@ This folder holds independent verification of the repository's claimed status. T
 | [vista-baseline-2026-10-16.md](./vista-baseline-2026-10-16.md) | `7fad632` (`develop`, same commit as `main` on that day) | .NET 8/9/10 Debug build, `dotnet test` on `src/a2n.Vista.slnx`, Northwind and AG Grid showcase self-tests, HTTP probes of the running samples, and a claimed-vs-verified feature matrix |
 | [e2e-playwright.md](./e2e-playwright.md) | — | How to run the Playwright suite, what it covers, and the skipped `vWritableMemo` round trip |
 | [vista-e2e-2026-10-16.md](./vista-e2e-2026-10-16.md) | `qa/vista-e2e` (parent `7fad632`, then merged with `develop`) | Counts from the first green run of that suite, plus the library `dotnet test` baseline taken on the same tree |
+| [vista-startup-burst-2026-10-16.md](./vista-startup-burst-2026-10-16.md) | `9e3fc24` (`develop`) | Informational cold-start HTTP smoke on net9 and net10 Northwind hosts. Not a regression proof of the EF lazy relational-model race |
 
 Trimmed logs for the baseline live in [vista-baseline-2026-10-16/](./vista-baseline-2026-10-16/).
 
@@ -32,3 +33,9 @@ bash tests/e2e/run.sh
 ```
 
 Do not commit `northwind.db` (it is gitignored) or anything under `bin/`, `obj/`, or `TestResults/`.
+
+The startup-burst smoke is a different command. It is informational and is not a regression proof of the EF lazy relational-model race:
+
+```bash
+bash tests/e2e/run-startup-burst.sh
+```
