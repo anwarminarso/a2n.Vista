@@ -1,0 +1,53 @@
+===== Northwind =====
+warn: a2n.Vista.AspNetCore.Hosting.VistaStartupValidator[0]
+      No IViewAuthorizer registered. All Vista views are publicly accessible in the 'Development' environment. Register one via AddVistaEndpoints(b => b.UseAuthorizer<T>()) to gate access.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:52899
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /workspace/src/Examples/Northwind
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52899/ - - -
+info: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[2]
+      Sending file. Request path: '/index.html'. Physical path: '/workspace/src/Examples/Northwind/wwwroot/index.html'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 GET http://127.0.0.1:52899/index.html - 200 5825 text/html 37.3380ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52899/ - - -
+info: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[2]
+      Sending file. Request path: '/index.html'. Physical path: '/workspace/src/Examples/Northwind/wwwroot/index.html'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 GET http://127.0.0.1:52899/index.html - 200 5825 text/html 1.3769ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52899/api/showcase/views - - -
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+
+===== AgGridNorthwind =====
+warn: a2n.Vista.AspNetCore.Hosting.VistaStartupValidator[0]
+      No IViewAuthorizer registered. All Vista views are publicly accessible in the 'Development' environment. Register one via AddVistaEndpoints(b => b.UseAuthorizer<T>()) to gate access.
+info: Microsoft.Hosting.Lifetime[14]
+      Now listening on: http://127.0.0.1:52999
+info: Microsoft.Hosting.Lifetime[0]
+      Application started. Press Ctrl+C to shut down.
+info: Microsoft.Hosting.Lifetime[0]
+      Hosting environment: Development
+info: Microsoft.Hosting.Lifetime[0]
+      Content root path: /workspace/src/Examples/a2n.Vista.Examples.AgGridNorthwind
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52999/ - - -
+info: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[2]
+      Sending file. Request path: '/index.html'. Physical path: '/workspace/src/Examples/a2n.Vista.Examples.AgGridNorthwind/wwwroot/index.html'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 GET http://127.0.0.1:52999/index.html - 200 4357 text/html 63.0007ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52999/ - - -
+info: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[2]
+      Sending file. Request path: '/index.html'. Physical path: '/workspace/src/Examples/a2n.Vista.Examples.AgGridNorthwind/wwwroot/index.html'
+info: Microsoft.AspNetCore.Hosting.Diagnostics[2]
+      Request finished HTTP/1.1 GET http://127.0.0.1:52999/index.html - 200 4357 text/html 1.4814ms
+info: Microsoft.AspNetCore.Hosting.Diagnostics[1]
+      Request starting HTTP/1.1 GET http://127.0.0.1:52999/view-browser.html - - -
+info: Microsoft.AspNetCore.StaticFiles.StaticFileMiddleware[2]
