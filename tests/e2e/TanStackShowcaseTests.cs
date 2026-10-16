@@ -21,11 +21,10 @@ public sealed class TanStackShowcaseTests
         cancellationToken.ThrowIfCancellationRequested();
         await using var scope = await OpenAsync("/tanstack.html");
         var page = scope.Page;
+        var product = FirstProduct(page);
         await WaitForGridAsync(page);
-
-        var first = await FirstProductAsync(page);
-        await Assert.That(first).IsEqualTo("Alice Mutton");
-        await Assert.That(await page.Locator("#grid-body tr").CountAsync()).IsEqualTo(10);
+        await Assertions.Expect(product).ToHaveTextAsync("Alice Mutton");
+        await Assertions.Expect(page.Locator("#grid-body tr")).ToHaveCountAsync(10);
         await ExpectStatusAsync(page, "Showing 1–10 of 77 (page 1 of 8)");
         await ShotAsync(page, "01-paging-initial.png");
 
@@ -33,22 +32,22 @@ public sealed class TanStackShowcaseTests
         await page.Locator("#page-next").ClickAsync();
         await next;
         await ExpectStatusAsync(page, "Showing 11–20 of 77 (page 2 of 8)");
-        var secondPage = await FirstProductAsync(page);
-        await Assert.That(secondPage).IsNotEqualTo(first);
+        await Assertions.Expect(product).ToHaveTextAsync("Chocolade");
         await ShotAsync(page, "02-paging-next.png");
 
         var prev = WaitForTanStackAsync(page, "\"pageIndex\":0");
         await page.Locator("#page-prev").ClickAsync();
         await prev;
         await ExpectStatusAsync(page, "Showing 1–10 of 77 (page 1 of 8)");
-        await Assert.That(await FirstProductAsync(page)).IsEqualTo("Alice Mutton");
+        await Assertions.Expect(product).ToHaveTextAsync("Alice Mutton");
         await ShotAsync(page, "03-paging-prev.png");
 
         var sized = WaitForTanStackAsync(page, "\"pageSize\":20");
         await page.Locator("#page-size").SelectOptionAsync("20");
         await sized;
         await ExpectStatusAsync(page, "Showing 1–20 of 77 (page 1 of 4)");
-        await Assert.That(await page.Locator("#grid-body tr").CountAsync()).IsEqualTo(20);
+        await Assertions.Expect(page.Locator("#grid-body tr")).ToHaveCountAsync(20);
+        await Assertions.Expect(FirstProduct(page)).ToHaveTextAsync("Alice Mutton");
         await ShotAsync(page, "04-paging-page-size-20.png");
     }
 
@@ -62,17 +61,14 @@ public sealed class TanStackShowcaseTests
 
         var productHeader = page.Locator("#grid-head th").First;
         await Assertions.Expect(productHeader).ToHaveAttributeAsync("aria-sort", "ascending");
-        await Assert.That(await FirstProductAsync(page)).IsEqualTo("Alice Mutton");
+        await Assertions.Expect(FirstProduct(page)).ToHaveTextAsync("Alice Mutton");
         await ShotAsync(page, "05-sort-ascending.png");
 
         var descending = WaitForTanStackAsync(page, "\"desc\":true");
         await productHeader.Locator("button.sort-button").ClickAsync();
         await descending;
         await Assertions.Expect(page.Locator("#grid-head th").First).ToHaveAttributeAsync("aria-sort", "descending");
-        var name = await FirstProductAsync(page);
-        await Assert.That(name).IsNotEqualTo("Alice Mutton");
-        await Assert.That(string.Compare(name, "Alice Mutton", StringComparison.OrdinalIgnoreCase)).IsGreaterThan(0);
-        Console.WriteLine("TANSTACK_SORT_DESC_FIRST=" + name);
+        await Assertions.Expect(FirstProduct(page)).ToHaveTextAsync("Zaanse koeken");
         await ShotAsync(page, "06-sort-descending.png");
     }
 
@@ -107,13 +103,10 @@ public sealed class TanStackShowcaseTests
         await Assert.That(names.Contains("Chef Anton's Cajun Seasoning")).IsTrue();
         await Assert.That(names.Contains("Chef Anton's Gumbo Mix")).IsTrue();
 
-        var visible = await page.Locator("#grid-body tr").AllInnerTextsAsync();
-        await Assert.That(visible.Count).IsEqualTo(names.Length);
-        foreach (var text in visible)
-        {
-            await Assert.That(text.Contains("anton", StringComparison.OrdinalIgnoreCase)).IsTrue();
-            await Assert.That(text.Contains("Alice Mutton", StringComparison.Ordinal)).IsFalse();
-        }
+        var visible = page.Locator("#grid-body tr");
+        await Assertions.Expect(visible).ToHaveCountAsync(names.Length);
+        await Assertions.Expect(visible.Filter(new() { HasNotText = "Anton" })).ToHaveCountAsync(0);
+        await Assertions.Expect(visible.Filter(new() { HasText = "Alice Mutton" })).ToHaveCountAsync(0);
 
         await ShotAsync(page, "07-filter-anton.png");
     }
@@ -143,9 +136,8 @@ public sealed class TanStackShowcaseTests
         await Assert.That(keys).Contains("supplierName");
         await Assert.That(string.IsNullOrWhiteSpace(supplier)).IsFalse();
 
-        var headers = await page.Locator("#grid-head button").AllInnerTextsAsync();
-        await Assert.That(headers.Any(header => header.Contains("Supplier", StringComparison.Ordinal))).IsFalse();
-        await Assert.That(await page.Locator("#grid-body tr").First.Locator("td").CountAsync()).IsEqualTo(5);
+        await Assertions.Expect(page.Locator("#grid-head button").Filter(new() { HasText = "Supplier" })).ToHaveCountAsync(0);
+        await Assertions.Expect(page.Locator("#grid-body tr").First.Locator("td")).ToHaveCountAsync(5);
         await ShotAsync(page, "08-column-supplier-hidden.png");
     }
 
@@ -174,7 +166,11 @@ public sealed class TanStackShowcaseTests
         });
         var page = await context.NewPageAsync();
         page.SetDefaultTimeout(45_000);
+        var pending = page.WaitForResponseAsync(response =>
+            response.Url.Contains("/tanstack", StringComparison.Ordinal)
+            && response.Request.Method == "POST");
         await page.GotoAsync(new Uri(SampleSession.Showcase, path).AbsoluteUri, new() { WaitUntil = WaitUntilState.DOMContentLoaded });
+        await EnsureSuccessAsync(await pending);
         return new BrowserPage(context, page);
     }
 
@@ -187,15 +183,38 @@ public sealed class TanStackShowcaseTests
     private static Task ExpectStatusAsync(IPage page, string text) =>
         Assertions.Expect(page.Locator("#status-line")).ToHaveTextAsync(text);
 
-    private static async Task<string> FirstProductAsync(IPage page) =>
-        (await page.Locator("#grid-body tr").First.Locator("td").First.InnerTextAsync()).Trim();
+    private static ILocator FirstProduct(IPage page) =>
+        page.Locator("#grid-body tr").First.Locator("td").First;
 
-    private static Task<IResponse> WaitForTanStackAsync(IPage page, string bodyFragment) =>
-        page.WaitForResponseAsync(response =>
-            response.Url.Contains("/tanstack", StringComparison.Ordinal)
-            && response.Request.Method == "POST"
-            && response.Ok
-            && (response.Request.PostData ?? string.Empty).Contains(bodyFragment, StringComparison.Ordinal));
+    /// <summary>
+    /// Waits for the TanStack POST whose body contains <paramref name="bodyFragment"/>.
+    /// A non-2xx response fails here instead of being skipped until the wait times out.
+    /// </summary>
+    private static async Task<IResponse> WaitForTanStackAsync(IPage page, string bodyFragment)
+    {
+        var response = await page.WaitForResponseAsync(candidate =>
+            candidate.Url.Contains("/tanstack", StringComparison.Ordinal)
+            && candidate.Request.Method == "POST"
+            && (candidate.Request.PostData ?? string.Empty).Contains(bodyFragment, StringComparison.Ordinal));
+        await EnsureSuccessAsync(response);
+        return response;
+    }
+
+    private static async Task EnsureSuccessAsync(IResponse response)
+    {
+        if (response.Status is >= 200 and < 300)
+        {
+            return;
+        }
+
+        var body = await response.TextAsync();
+        if (body.Length > 500)
+        {
+            body = body[..500];
+        }
+
+        throw new InvalidOperationException($"POST {response.Url} returned {response.Status}: {body}");
+    }
 
     private static async Task ShotAsync(IPage page, string fileName)
     {
