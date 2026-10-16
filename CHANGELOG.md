@@ -8,12 +8,14 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D154–D157). The third
+- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D155–D158). The third
   real grid adapter. `POST {route}/tanstack` binds TanStack Table's manual state — `pagination`,
   `sorting`, `columnFilters`, `globalFilter`, `columnVisibility` — into Vista's query
   (absolute offset, sort, Filter, Search, `SelectFields`) and returns `{ rows, rowCount, pageCount }`.
-  Core-only, source-generated JSON, same host glue as DataTables and AG Grid. The Northwind showcase
-  gains a TanStack Table page next to the AG Grid and DataTables pages.
+  `columnVisibility` / `SelectFields` only hides a column in the table UI. Hidden fields are still sent
+  to the client; it is not an access-control mechanism. Core-only, source-generated JSON, same host glue
+  as DataTables and AG Grid. The Northwind showcase gains a TanStack Table page next to the AG Grid and
+  DataTables pages.
 
 ## [0.0.4] - 2026-08-11
 

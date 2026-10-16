@@ -26,8 +26,9 @@ public sealed class TanStackTableRequest
 
     /// <summary>
     /// Column visibility (<c>columnId → visible</c>). <see langword="null"/> or empty means every column
-    /// is visible. A <see langword="false"/> entry hides that column. Keys the view does not declare are
-    /// presentation-only columns and are ignored.
+    /// is visible. A <see langword="false"/> entry hides that column in the table UI only — the field is
+    /// still sent to the client. This is not an access-control mechanism. Keys the view does not declare
+    /// are presentation-only columns and are ignored.
     /// </summary>
     public Dictionary<string, bool>? ColumnVisibility { get; set; }
 }

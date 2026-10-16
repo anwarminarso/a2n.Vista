@@ -378,9 +378,10 @@ public static class SelfTest
     }
 
     /// <summary>
-    /// D154–D157 — TanStack Table round-trip. One server-side request carries pagination, multi-sort,
+    /// D155–D158 — TanStack Table round-trip. One server-side request carries pagination, multi-sort,
     /// a global filter (Search), a <c>{ min }</c> column filter (Filter), and column visibility
-    /// (<c>SelectFields</c>). The page matches the view-browser check: search "ch" AND UnitPrice &gt;= 20.
+    /// (<c>SelectFields</c>). Visibility is a display hint: the row payload still includes the hidden
+    /// field. The page matches the view-browser check: search "ch" AND UnitPrice &gt;= 20.
     /// </summary>
     [RequiresUnreferencedCode("Reflection over the runtime row type.")]
     private static async Task<bool> TanStackRoundTripCheckAsync(

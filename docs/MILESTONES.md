@@ -1,17 +1,17 @@
 # a2n.Vista — Milestones & Roadmap Tracker
 
 > Status: **LIVING DOCUMENT** — update as milestones land.
-> Last updated: 2026-10-16 (`tanstack-table-adapter` **LANDED**: D154–D157 — the **third** real Pillar 2
+> Last updated: 2026-10-16 (`tanstack-table-adapter` **LANDED**: D155–D158 — the **third** real Pillar 2
 > grid adapter, `a2n.Vista.Adapters.TanStackTable` (Core-only, D48). `TanStackTableAdapter` binds TanStack's
 > manual table state — `pagination`, `sorting`, `columnFilters`, `globalFilter`, `columnVisibility` — and
-> maps it through the existing `IViewAdapter` contract with **no** Core/EF/AspNetCore type added. **D154** —
-> `RouteSuffix="tanstack"` → `POST {route}/tanstack`, source-gen `TanStackJsonContext` (camelCase). **D155** —
+> maps it through the existing `IViewAdapter` contract with **no** Core/EF/AspNetCore type added. **D155** —
+> `RouteSuffix="tanstack"` → `POST {route}/tanstack`, source-gen `TanStackJsonContext` (camelCase). **D156** —
 > column filters: a string is `Contains`, a number or boolean is `Equals`, `null` is `IsNull`, an array is
 > `In`, `{min,max}` is a range, `{op,value}` names the operator; unknown shapes throw `AdapterBindException`.
-> **D156** — `pageIndex * pageSize` is an absolute `Offset` (D144); every sort id is kept (D150); the global
-> filter is the `Search` channel; `columnVisibility: false` sets `SelectFields` (the executor still returns
-> the full projection; the table hides the column itself); response `{rows, rowCount, pageCount}` with
-> `rowCount = RecordsFiltered`. **D157** — a fourth page on the existing Northwind showcase
+> **D157** — `pageIndex * pageSize` is an absolute `Offset` (D144); every sort id is kept (D150); the global
+> filter is the `Search` channel; `columnVisibility: false` sets `SelectFields` (UI hide only — hidden
+> fields are still sent to the client, not an access-control mechanism); response `{rows, rowCount, pageCount}` with
+> `rowCount = RecordsFiltered`. **D158** — a fourth page on the existing Northwind showcase
 > (`wwwroot/tanstack.html`, `@tanstack/table-core` v8) plus a self-test round-trip. Six scaffolds remain
 > (MudBlazor next). See §2.
 > Prior: 2026-07-14 (`northwind-sample-showcase` **LANDED**: D137–D140 — a three-page Northwind
@@ -188,13 +188,13 @@ generator (M17, D131/D132)** has landed — a framework-agnostic typed client ge
 OpenAPI document. The **CI + NuGet publish workflows (M19)** have landed (`.github/workflows/ci.yml` +
 `publish.yml`, the latter using NuGet Trusted Publishing / OIDC). The **AG Grid adapter (M16, D133–D136)**
 has now landed too — the second real Pillar 2 grid adapter (`a2n.Vista.Adapters.AgGrid`) plus an AG Grid +
-TypeScript Northwind sample. The **TanStack Table adapter (D154–D157)** has landed as the third:
+TypeScript Northwind sample. The **TanStack Table adapter (D155–D158)** has landed as the third:
 `a2n.Vista.Adapters.TanStackTable` plus a fourth page on that same showcase. The heavy remaining work is
 now the rest of the ecosystem: the other six grid adapters (MudBlazor next), observability (M14), and
 versioning (M15).
 
 > **Adapter reality check (from the source tree):** of the ten projects under `src/Adapters/`, only
-> **DataTables.NET**, **AG Grid** (M16, D133–D136), **TanStack Table** (D154–D157), and the **Npgsql dialect**
+> **DataTables.NET**, **AG Grid** (M16, D133–D136), **TanStack Table** (D155–D158), and the **Npgsql dialect**
 > contain real implementations. The other six (`MudBlazor`, `OData`, `GraphQL`, `PrimeNG`, `Syncfusion`,
 > `Telerik`) are empty scaffolds — `.csproj` + an `AssemblyMarker.cs` only. The `a2n.Vista.Client.TypeScript` generator
 > **is now a real implementation** (M17, D131/D132 — the full acquire→parse→resolve→model→emit→write
@@ -234,7 +234,7 @@ versioning (M15).
 
 | **Samples** | Northwind sample showcase — the `a2n.Vista.Examples.AgGridNorthwind` host became a **three-page showcase** behind a shared nav, at DynData "Table Browser" read-surface parity on the landed Vista contracts, purely additive at the sample/example layer (no Core/EF/AspNetCore/adapter contract, route, envelope, or error change). **D137:** the single `AgGridNorthwind` host serves all three pages and registers `DataTablesAdapter` + `QueryBuilderSchemaAdapter` + `AgGridAdapter` + the OpenAPI emitter, keeping `AllowAnonymousAccess()` (D94); the standalone `Northwind` host stays the separate DataTables-only single-view sample. **D138:** an additive read-only catalog endpoint `GET /api/showcase/views` — a pure `ShowcaseCatalog.Project(IViewRegistry)` → `ViewCatalogEntry(Name, Route, Title)` (`[]` on empty), secure-by-default, inside the host auth pipeline (no HTTP "list all views" existed before). **D139:** static HTML + TypeScript compiled by `tsc` (no bundler, emit to `wwwroot/js`), a `tsc --noEmit` gate, and fast-check property tests for the pure transforms (`columns.ts` metadata→columns, `search.ts` min-length gate). **D140:** a third read-only view `vOrder` so `vProductCategory`/`vOrderDetail`/`vOrder` span string/numeric/date/FK/composite-key. Pages: **Simple Wiring** (AG Grid infinite row model → `POST {route}/aggrid`, `?q=`), **View Browser** (DataTables.NET + jQuery-QueryBuilder — view selection, columns from `GET {route}/metadata`, server-side paging + min-length global search + single/multi sort + a `GET {route}/querybuilder`-driven advanced filter through `POST {route}/datatable`, dispose-on-switch, placeholder ⇒ no request, RFC 7807 ⇒ visible error + rows unchanged), and **Custom Renderer** (≥2 consumer-owned community `cellRenderer`s, presentation-only). The old standalone `AgGridSelfTest` was removed; the host self-test gained a view-browser round-trip (paging + global search + multi-sort + `jsonQB` in one request). | `northwind-sample-showcase` | D137, D138, D139, D140 |
 
-| **TanStack** | TanStack Table adapter — the **third** real Pillar 2 grid adapter, `a2n.Vista.Adapters.TanStackTable` (Core-only). **D154:** `TanStackTableAdapter`, `Id`/`RouteSuffix` = `"tanstack"` → `POST {route}/tanstack`, source-gen camelCase `TanStackJsonContext`. **D155:** column-filter table (string/number/bool/null/array/`{min,max}`/`{op,value}`). **D156:** absolute offset paging, verbatim sort ids, global filter as `Search`, `columnVisibility` → `SelectFields`, `{rows, rowCount, pageCount}`. **D157:** a fourth showcase page (`tanstack.html`, `@tanstack/table-core` 8.21.3) and a host self-test round-trip. The standalone `Northwind` host is unchanged. | — | D154, D155, D156, D157 |
+| **TanStack** | TanStack Table adapter — the **third** real Pillar 2 grid adapter, `a2n.Vista.Adapters.TanStackTable` (Core-only). **D155:** `TanStackTableAdapter`, `Id`/`RouteSuffix` = `"tanstack"` → `POST {route}/tanstack`, source-gen camelCase `TanStackJsonContext`. **D156:** column-filter table (string/number/bool/null/array/`{min,max}`/`{op,value}`). **D157:** absolute offset paging, verbatim sort ids, global filter as `Search`, `columnVisibility` → `SelectFields`, `{rows, rowCount, pageCount}`. **D158:** a fourth showcase page (`tanstack.html`, `@tanstack/table-core` 8.21.3) and a host self-test round-trip. The standalone `Northwind` host is unchanged. | — | D155, D156, D157, D158 |
 
 **Verified at the Northwind sample showcase (D137–D140, 2026-07-14):** solution build green on net8/9/10,
 **516 tests passing per TFM (net8) / 517 per TFM (net9/net10)** in `a2n.Vista.Tests` (+1 — the
@@ -380,7 +380,7 @@ List/Detail path).
   D119/D120; **M18** OpenAPI landed with D127/D128.)
 
 ### v1.x — Ecosystem
-- Done early: the **TanStack Table** adapter (D154–D157). Remaining **M16** adapters (Telerik, Syncfusion,
+- Done early: the **TanStack Table** adapter (D155–D158). Remaining **M16** adapters (Telerik, Syncfusion,
   PrimeNG, OData, GraphQL), bulk ops, audit log, soft delete, SignalR live updates.
 
 ---
@@ -535,7 +535,7 @@ by design (D96/D130); the write side of the same view still binds AOT-clean.
 
 **Next up — the parallelizable v1.0 workstreams (M9, M17, and M19 are now complete):** **M14**
 observability, **M15** versioning, and **MudBlazor**. AG Grid (M16, D133–D136) and TanStack Table
-(D154–D157) have landed; six adapter scaffolds under `src/Adapters/` are still empty. **M17** (the TypeScript client generator, D131/D132)
+(D155–D158) have landed; six adapter scaffolds under `src/Adapters/` are still empty. **M17** (the TypeScript client generator, D131/D132)
 has **landed** — a framework-agnostic typed client generated from the emitted OpenAPI document (M18),
 building on the AOT-clean surface, the serialization seam (M9-P4), the generated per-view contexts (M9-P5),
 and the Style A coverage (M9-P6).

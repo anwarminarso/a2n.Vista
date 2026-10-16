@@ -8,7 +8,7 @@ namespace a2n.Vista.Adapters.TanStackTable;
 
 /// <summary>
 /// Parses TanStack <c>columnFilters</c> (<c>{ id, value }</c> in array order) into a neutral
-/// <see cref="FilterNode"/> for the structured-filter channel (D155). Every leaf is built for the
+/// <see cref="FilterNode"/> for the structured-filter channel (D156). Every leaf is built for the
 /// <c>Filter</c> origin; the engine enforces the whitelist. <c>value</c> is polymorphic — a scalar, a
 /// faceted array, a <c>{ min, max }</c> range, or <c>{ op, value }</c> — so the branching lives here
 /// rather than in the source-generated JSON context. A shape the table cannot have produced is rejected

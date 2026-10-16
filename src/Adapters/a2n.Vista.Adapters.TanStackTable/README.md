@@ -13,10 +13,14 @@ TanStack Table does not define an HTTP protocol. A manual table already holds th
 - **Sorting** — every `{ id, desc }` entry becomes a `SortSpec`, in order. An unknown `id` is not dropped; the engine returns `400`.
 - **Column filters** — the `Filter` channel. A string is `contains`, a number or boolean is `equals`, `null` is `isNull`, an array is `in` (a faceted selection; an empty array is no filter). `{ min, max }` is a range (`between`, or one bound when the other is absent). `{ op, value }` names the operator (`gte`, `includesString`, `inNumberRange`, …).
 - **Global filter** — the `Search` channel: `contains` over the view's searchable string fields, same as the other grids. A non-string `globalFilter` is a bind failure.
-- **Column visibility** — `false` on a view field name omits that field from `SelectFields`. Keys that are not view fields (an actions column) are ignored. The executor still returns the full projection today; the table hides the column from its own `columnVisibility` state.
+- **Column visibility** — presentation only. `false` on a view field name is recorded on `SelectFields`, and the table hides that column. **This is not an access-control mechanism.** Hidden fields are still sent to the client in `rows`. Keys that are not view fields (an actions column) are ignored.
 - **Response** — `{ rows, rowCount, pageCount }`. `rows` is the page (pass it as `data`). `rowCount` is the filtered total. `pageCount` is `ceil(rowCount / pageSize)`.
 
 Core-only (no EF/ASP.NET reference); reuses the same host glue as the other adapters. Register with `AddVistaAdapter<TanStackTableAdapter>()`.
+
+## Column visibility is not access control
+
+`columnVisibility` only changes which columns the table draws. A field mapped to `false` is still present on every row in the response. `SelectFields` records the caller's display choice; the list executor does not apply it, and applying it later would still be a projection hint, not authorization. To keep a value off the client, mask the field or leave it out of the view.
 
 ## Column `id` is the field name, not the JSON name
 

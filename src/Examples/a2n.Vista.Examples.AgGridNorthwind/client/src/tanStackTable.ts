@@ -24,8 +24,8 @@ import {
  *
  * The table is manual on every server-owned stage: pagination, sorting, and filtering are held as
  * TanStack state and posted to `POST /api/views/vProductCategory/tanstack`. Column visibility is the
- * same state slice — the table hides the column, and the request carries it so the adapter can map
- * it onto `SelectFields`.
+ * same state slice — the table hides the column, and the request carries it so the adapter can record
+ * it on `SelectFields`. Hiding a column does not remove the field from the response.
  */
 
 interface ProductRow {
