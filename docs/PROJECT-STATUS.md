@@ -1,7 +1,26 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
+> Last updated: 2026-10-16 (**TanStack Table adapter — the third real grid adapter; D154–D157**).
+> `a2n.Vista.Adapters.TanStackTable` was a one-file scaffold (`AssemblyMarker` + `IsPackable=false`). It is
+> now a Core-only `ViewAdapter<TanStackTableRequest, TanStackTableResponse>` with `Id`/`RouteSuffix` =
+> `"tanstack"`, exposed at `POST {route}/tanstack` through the existing AspNetCore glue. TanStack Table has
+> no wire protocol of its own; the adapter binds the manual-table state slices that are identical in v8 and
+> v9 (`pagination`, `sorting`, `columnFilters`, `globalFilter`, `columnVisibility`). **D154** is the surface
+> and the source-gen `TanStackJsonContext` (camelCase, matching `VistaJson.Options`). **D155** is the column
+> filter table (string → `Contains`, number/bool → `Equals`, `null` → `IsNull`, array → `In`, `{min,max}`
+> range, `{op,value}` named operators; a two-element array is always `In` because a pair is ambiguous with a
+> faceted set). **D156** maps paging to an absolute `Offset` (`pageIndex * pageSize`, D144; non-positive
+> `pageSize` passed through), keeps every sort id (D150), sends the global filter down the `Search` channel,
+> and maps `columnVisibility: false` onto `SelectFields` (unknown keys skipped; the executor does not consume
+> `SelectFields` yet, so the table still hides the column from its own state). The response is
+> `{rows, rowCount, pageCount}` with `rowCount = RecordsFiltered`. **D157** adds a fourth page to the
+> Northwind showcase (`wwwroot/tanstack.html`, `@tanstack/table-core` 8.21.3) and a self-test round-trip.
+> `publish.yml` now packs the adapter. No Core/EF/AspNetCore type changed. Verified Release
+> `dotnet test src/a2n.Vista.slnx`: **596 tests (net8) / 597 (net9, net10)** in `a2n.Vista.Tests`
+> (+41, 0 failed / 0 skipped), **115** generator tests, **143** TypeScript-client tests, per TFM.
+> See §2.30.
+> Prior: 2026-08-11 (**release correction — the D151 + D152 work re-ships as v0.0.4; v0.0.3 as
 > published is void**). The `v0.0.3` tag was created on the **0.0.2 release commit**, and `publish.yml`
 > builds whatever the tag points at while taking the package version from the tag name
 > (`-p:Version=<tag without the leading v>`), so the packages on nuget.org labelled `0.0.3` are 0.0.2 code:
@@ -1146,11 +1165,11 @@ package-content change). No decision numbers — pure operational tooling.
     `user:` input is the `NUGET_USER` secret (the nuget.org **account/profile name**, not an email). No
     long-lived API key is stored. The registered Trusted Publishing policy's **Workflow File** must be
     `publish.yml` (GitHub Actions only runs `.yml`/`.yaml`).
-  - **Scope — 8 implemented libraries:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
+  - **Scope — 9 implemented libraries:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
     `.OpenApi`, `.EntityFrameworkCore.Npgsql`, `.Adapters.DataTablesNet`, `.Adapters.AgGrid`,
-    `.Client.TypeScript` (the last ships as a `dotnet tool`, command `vista-ts`).
+    `.Adapters.TanStackTable` (D154), `.Client.TypeScript` (the last ships as a `dotnet tool`, command `vista-ts`).
     **Excluded:** the empty scaffolds (`a2n.Vista.Newtonsoft` + the MudBlazor/OData/GraphQL/PrimeNG/
-    Syncfusion/TanStackTable/Telerik adapter shells — `AssemblyMarker.cs` only), and
+    Syncfusion/Telerik adapter shells — `AssemblyMarker.cs` only), and
     **`a2n.Vista.SourceGenerators`** — not shipped standalone; it is **bundled into `a2n.Vista.Core`**
     (packed under `analyzers/dotnet/cs`) so consumers get the generator transitively.
 
@@ -1640,6 +1659,71 @@ a deny, so a transient data-loading failure becomes a `403`; and it depends on t
   paging metadata either. Plus a generator test pinning that the split overload is recognized and covered
   identically to the combined one.
 
+### 2.30 TanStack Table adapter (landed 2026-10-16; D154–D157)
+
+The third real grid adapter. TanStack Table (React, Vue, Solid, vanilla `table-core`) is headless: it has
+no HTTP protocol, and its manual mode already holds the state a server grid needs. Those slices —
+`PaginationState`, `SortingState`, `ColumnFiltersState`, `globalFilter`, `columnVisibility` — are the same
+object shapes in v8 and v9, so the wire is the state itself. The package was a scaffold
+(`AssemblyMarker.cs`, `IsPackable=false`); `IsPackable` is now the repo default and `publish.yml` packs it.
+
+- **D154 — surface.** `TanStackTableAdapter : ViewAdapter<TanStackTableRequest, TanStackTableResponse>`,
+  `Id`/`RouteSuffix` = `"tanstack"`, three pure steps, `a2n.Vista.Core` only. `BindRequest` requires a JSON
+  body and deserializes it with `TanStackJsonContext` (`PropertyNameCaseInsensitive` +
+  `JsonKnownNamingPolicy.CamelCase` — without the naming policy the context serializes PascalCase, which
+  disagrees with `VistaJson.Options`). Omitted `pagination` becomes `{pageIndex: 0, pageSize: 10}`.
+  `pageIndex < 0`, a global filter over 1024 characters, a missing filter `value`, invalid JSON, or a null
+  body throw `AdapterBindException` (400 `adapter-bind-failed`).
+- **D155 — column filters.** `TanStackColumnFilterParser.Parse` AND-s one leaf per entry, in order, and
+  returns null when nothing remains. Scalars: string → `Contains` (blank skipped), number → `Equals` with
+  the **raw JSON text** (the engine's `Convert.ChangeType` does the coercion), boolean → `Equals`, JSON
+  `null` → `IsNull`. An array is always `In` (empty skipped); a nested array or object inside it throws —
+  a two-tuple is a faceted set, not a range, because the two are ambiguous. A `{min, max}` object is
+  `Between`, or `Gte`/`Lte` for one side, or no leaf when both are absent; a non-scalar bound throws. A
+  `{op, value}` object names the operator (short names and TanStack's built-in filter-fn names:
+  `includesString`, `inNumberRange`, `arrIncludes`, `greaterThanOrEqualTo`, …). `between` / `inNumberRange`
+  / `inDateRange` require both bounds. An explicit op whose value is blank, an unknown op, an unexpected
+  member, or a value that carries both `op` and `min`/`max` throws. Property names are case-insensitive.
+- **D156 — the other channels and the response.** `Offset = checked(pageIndex * pageSize)`, `Page = 0`
+  (D144: a later page-size clamp must not move the window). The product overflowing `int` is a bind
+  failure. A non-positive `pageSize` is passed through so the engine rejects unbounded paging. Every
+  `sorting` entry is a `SortSpec` (`id` verbatim, `desc` as given); a null `id` becomes `""`, which the
+  engine still rejects — nothing is dropped (D150, the same posture as an AG Grid `sortModel`).
+  `globalFilter` builds the `Search` channel exactly as the AG Grid quick filter does: `Contains` on each
+  `IsSearchable` string field, a single leaf when there is one, `FilterOr` otherwise, null when the text is
+  blank or the view has no such field. `columnVisibility` is the one channel that *does* skip unknown keys:
+  the map declares UI columns, so an `actions: false` entry is not a field the engine should 400 on, and a
+  mis-cased field name simply fails to hide that field. Any real field mapped to `false` produces
+  `SelectFields` in field-declaration order; a null, empty, or all-visible map leaves it null. The list
+  executor does not read `SelectFields` today (only the record and the adapters set it), which the adapter
+  README states; the showcase still hides the column through TanStack's own state. `Scope` is null.
+  `ToResponse` returns `{rows, rowCount = RecordsFiltered, pageCount}` where `pageCount` is
+  `ceil(rowCount / pageSize)` (0 when the size or the count is non-positive).
+- **D157 — showcase.** The page lives on `a2n.Vista.Examples.AgGridNorthwind`, not the standalone
+  `Northwind` host (D137 keeps that one DataTables-only). `Program.cs` adds
+  `AddVistaAdapter<TanStackTableAdapter>()`. `wwwroot/tanstack.html` plus `client/src/tanStackTable.ts`
+  use `createTable` from `@tanstack/table-core@8.21.3` (v9's `constructTable` pulls in `@tanstack/store`;
+  the state slices do not differ, so the sample stays on v8). Columns set `id` to the PascalCase view field
+  and `accessorKey` to the camelCase JSON name. `vistaTanStackQuery.ts` is the thin fetch helper
+  (`tanStackEndpoint`, `buildTanStackTableRequest` copies the caller's arrays, `fetchTanStackTablePage`).
+  State is owned outside the table; one debounced commit (250 ms) folds the global filter and the column
+  filters into a single request and resets `pageIndex`. The host self-test's TanStack check posts
+  `pageSize` 5, sorts `CategoryName` then `ProductName`, filters `UnitPrice` with `{min: 20}`, searches
+  `"ch"`, hides `Discontinued`, and expects the same eight-row oracle the view-browser check uses (first
+  two names `Chef Anton's Cajun Seasoning` and `Chef Anton's Gumbo Mix`, `pageCount` 2, `SelectFields`
+  omitting `Discontinued`).
+- **Verified (2026-10-16, Release).** `dotnet test src/a2n.Vista.slnx` — **596** (`net8.0`) / **597**
+  (`net9.0`, `net10.0`) in `a2n.Vista.Tests` (+41 over the v0.0.4 baseline, 0 failed / 0 skipped), **115**
+  generator tests and **143** TypeScript-client tests on each TFM (2,564 total, 0 failed). The showcase
+  client Vitest suite is 18 tests (5 of them the TanStack request helper).
+- **Tests.** `TanStackAdapterTests` covers identity, bind failures, the camelCase round-trip (offset,
+  sort kept including an unknown id, filter tree, search, visibility), paging overflow, non-positive page
+  size, filter shapes, channels, `pageCount`, and a 100-iteration CsCheck determinism sample.
+  `TanStackEndpointIntegrationTests` is a `TestServer` over 25 SQLite widgets: one `POST .../tanstack`
+  route, paging + lexicographic sort, global filter, `op: gte`, and `400 filter-unknown-field` for an
+  unknown sort id and an unknown filter id, plus `adapter-bind-failed` for `op: regex`. The client helper
+  has a Vitest suite. The adapter assembly references Core and not AspNetCore.
+
 ---
 
 ## 3. Documentation map (authoritative)
@@ -1854,7 +1938,11 @@ These record where the code intentionally differs from the early spec sketches. 
 | D151 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.6, `05` §6.1 | **Landed (2026-08-11).** `IViewAuthorizer.ShapeQueryAsync(ViewAuthContext, IViewScope, CancellationToken)` is the shaping member the pipeline calls, added as a **default interface implementation** forwarding to `ShapeQuery` (source- and binary-additive: every existing authorizer compiles and behaves identically, and a synchronous decision still allocates nothing). `ViewRequestExecutor.AuthorizeAndShapeAsync` awaits it with `HttpContext.RequestAborted`. Rationale: an I/O-backed server-trusted scope previously had no door — `GetAwaiter().GetResult()` inside the query factory parked a thread-pool thread per request and had no token, so a client abort cancelled nothing. **Placement is part of the decision:** shaping stays *outside* `GateAsync`'s fail-closed catch, so a scope-loading fault propagates as a 500 instead of being reported as a 403 — the defect in the documented workaround (loading scope data from `IsAllowedAsync`, whose every throw is a deny). Extends D43/D46. Only useful for Style A together with D152. See §2.29. |
 | D152 | issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4) / `01` §5.5 + §5.6, `02` §4.1 | **Landed (2026-08-11).** Style A source/projection split: `IViewTemplateBuilder.AddView<TSource, TRow>(name, source, projection)` retains the source query and the projection separately (the shape Style B always had), carried on `TemplateViewDefinition.SourceProjection` as a closed `TemplateSourceProjection<TDbContext>` hierarchy, and `ViewExecutionPlan.FromTemplateDefinition` turns it into a `SplitViewExecutionPlan<TSource, TRow>` — so authored `WithRowFilter<TSource>` **and** the per-request scope are AND-ed pre-projection and pushed down to SQL. `TSource`/`TRow` are recovered through a double-dispatch `ITemplateSourceProjectionVisitor<TDbContext, TResult>` so the type arguments close at compile time (no `MakeGenericType` over a possibly-anonymous row type). Closes the "FLAGGED Core follow-up" documented on `ProjectedViewExecutionPlan` **without retiring it**: the combined `AddView<TRow>` overload is unchanged and still fails closed on a populated scope (D141), so the limitation is now a property of one authoring choice. Side effects: a `WithRowFilter<TOther>` mismatched with the source query fails at registration rather than per request, and `StyleAShapeGenerator` reads `TRow` as the **last** `AddView` type argument so a split view keeps its generated export accessors / `JsonTypeInfo`. Issue #4 part 3 (an async query-factory overload) is **declined** — it would push `async` through `IViewExecutionPlan.CreateScopedQueryable`, `ICompiledViewExecutionPlan`, and every generated plan. See §2.29. |
 | D153 | release pipeline (`.github/workflows/publish.yml`) / §2.19 | **Landed (2026-08-11).** The release guard: a `guard` job resolves the publish version once (release tag or `workflow_dispatch` input, leading `v` stripped), exposes it as a job output consumed by `publish`, and **refuses to publish unless the tagged tree's `<Version>` agrees** — exact match, with a prerelease/build-metadata tag additionally accepted against its own release core (`v1.2.3-rc.1` vs `1.2.3`) so a **core** mismatch always fails. Both `test` and `publish` `needs: guard`, so a mis-tag fails in seconds rather than after the three-TFM matrix. Rationale: the version comes from the tag and the build comes from whatever the tag points at, so a tag on the wrong commit yields a valid package with the wrong contents — `v0.0.3` on the 0.0.2 release commit put 0.0.2 code on nuget.org as `0.0.3`, and an immutable version could only be superseded by 0.0.4. No existing gate related a version to its contents (the test job ran the tagged commit's own suites; the metadata check reads license/symbols). Side effect: `<Version>` in `Directory.Build.props` stops being decoration and becomes the tree's release assertion. Carries a small hardening — the tag name reaches bash via the environment instead of a `${{ }}` interpolation inside `run:`. CI-only: no package, source, wire, route, or envelope change. See §2.19. |
-| **D154+** | **next free** | Use for new decisions. D153 (the release guard) was the last landed change. |
+| D154 | TanStack Table adapter | **Landed (2026-10-16).** The adapter surface: `TanStackTableAdapter : ViewAdapter<TanStackTableRequest, TanStackTableResponse>` (Core-only, D48), `Id="tanstack"` + `RouteSuffix="tanstack"` → `POST {route}/tanstack` through the existing glue. Request POCOs deserialize through a source-gen `TanStackJsonContext` whose `PropertyNamingPolicy` is camelCase (the context's own serialize must match `VistaJson.Options`; source-gen defaults are PascalCase). Omitted pagination is `{pageIndex: 0, pageSize: 10}`. A missing body, invalid JSON, `pageIndex < 0`, a global filter longer than 1024 characters, or a column filter with no `value` is `AdapterBindException` → 400 `adapter-bind-failed`. See §2.30. |
+| D155 | TanStack Table adapter | **Landed (2026-10-16).** Column filters → the `Filter` channel, in `TanStackColumnFilterParser`, AND-ed in array order. A string is `Contains` (blank skipped), a number is `Equals` with the raw JSON text (so the engine coerces), a boolean is `Equals`, `null` is `IsNull`, an array is `In` (empty skipped; a nested object or array throws). `{min, max}` is `Between` when both bounds are present, `Gte`/`Lte` when one is, and no leaf when both are absent. `{op, value}` names the operator (`contains`/`includesString`, `notContains`, `startsWith`, `endsWith`, `equals`/`eq`, `notEquals`/`neq`, `gt`/`gte`/`lt`/`lte` and their long names, `between`/`inNumberRange`/`inDateRange`, `in`/`arrIncludes*`, `isNull`/`blank`/`empty`, `notNull`/`notBlank`/`notEmpty`). An array is always `In` — a two-element array is a faceted set, not a range. An explicit op with a blank value, an unknown op, an unexpected property, or both `op` and `min`/`max` throws. See §2.30. |
+| D156 | TanStack Table adapter | **Landed (2026-10-16).** Paging, sort, search, visibility, and the response. `Offset = pageIndex * pageSize` and `Page = 0` (D144); overflow throws `AdapterBindException`; a non-positive `pageSize` is passed through so the engine rejects unbounded paging. Every `sorting` entry becomes a `SortSpec` with its `id` verbatim (D150) — an unknown id is a 400, not a dropped sort. `globalFilter` is the `Search` channel: a `FilterOr` of `Contains` over `IsSearchable` string fields (a single leaf when there is one). `columnVisibility` with any `false` entry whose key equals a view field name (ordinal) sets `SelectFields` to the remaining fields; unknown keys (an actions column) are skipped, and a mis-cased key does not hide the field and does not 400. `null`, empty, or all-visible visibility leaves `SelectFields` null. The executor does not consume `SelectFields` today; the mapping is still recorded so a later projection trim has a source, and the client hides the column from TanStack state. Response `{rows = Rows, rowCount = RecordsFiltered, pageCount = ceil(rowCount / pageSize)}` (`pageCount` is 0 when `pageSize <= 0` or `rowCount <= 0`). `Scope` stays null. See §2.30. |
+| D157 | TanStack Table adapter / Northwind showcase | **Landed (2026-10-16).** Sample composition on the existing `a2n.Vista.Examples.AgGridNorthwind` host (the standalone `Northwind` host stays DataTables-only, D137). `Program.cs` registers `AddVistaAdapter<TanStackTableAdapter>()`. A fourth static page `wwwroot/tanstack.html` drives `@tanstack/table-core` **8.21.3** (`createTable`, manual pagination/sorting/filtering) over `vProductCategory` at `POST /api/views/vProductCategory/tanstack`. Column `id` is the PascalCase field name; `accessorKey` is the camelCase JSON name. A thin `vistaTanStackQuery.ts` builds the request and reads `{rows, rowCount, pageCount}`. The host self-test gained a TanStack round-trip (paging + global search + multi-sort + a price range + `Discontinued` hidden). See §2.30. |
+| **D158+** | **next free** | Use for new decisions. D157 (the TanStack showcase page) was the last landed change. |
 
 Observability-doc-local: `10-operations-and-observability.md` also lists D100/D102 (D102 = observability
 names are an operational contract).

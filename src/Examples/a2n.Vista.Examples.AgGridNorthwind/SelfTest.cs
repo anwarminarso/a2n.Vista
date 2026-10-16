@@ -5,6 +5,7 @@ using System.Globalization;
 using System.Reflection;
 using a2n.Vista.Adapters;
 using a2n.Vista.Adapters.DataTablesNet;
+using a2n.Vista.Adapters.TanStackTable;
 using a2n.Vista.Contracts;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
@@ -79,6 +80,7 @@ public static class SelfTest
 
         allPassed &= await DataTablesRoundTripCheckAsync(view, executor, viewScope);
         allPassed &= await DataTablesViewBrowserRoundTripCheckAsync(view, executor, viewScope);
+        allPassed &= await TanStackRoundTripCheckAsync(view, executor, viewScope);
 
         Console.WriteLine();
         Console.WriteLine(allPassed ? "RESULT: PASS" : "RESULT: FAIL");
@@ -367,6 +369,78 @@ public static class SelfTest
             response.RecordsFiltered == 8 &&
             response.Data.Count == 5 &&
             multiSorted &&
+            names.Count >= 2 &&
+            names[0] == "Chef Anton's Cajun Seasoning" &&
+            names[1] == "Chef Anton's Gumbo Mix";
+
+        Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+        return ok;
+    }
+
+    /// <summary>
+    /// D154–D157 — TanStack Table round-trip. One server-side request carries pagination, multi-sort,
+    /// a global filter (Search), a <c>{ min }</c> column filter (Filter), and column visibility
+    /// (<c>SelectFields</c>). The page matches the view-browser check: search "ch" AND UnitPrice &gt;= 20.
+    /// </summary>
+    [RequiresUnreferencedCode("Reflection over the runtime row type.")]
+    private static async Task<bool> TanStackRoundTripCheckAsync(
+        ViewMetadata view, IViewExecutor executor, IViewScope scope)
+    {
+        var adapter = new TanStackTableAdapter();
+        const string json = """
+            {
+              "pagination": { "pageIndex": 0, "pageSize": 5 },
+              "sorting": [
+                { "id": "CategoryName", "desc": false },
+                { "id": "ProductName", "desc": false }
+              ],
+              "columnFilters": [ { "id": "UnitPrice", "value": { "min": 20 } } ],
+              "globalFilter": "ch",
+              "columnVisibility": { "Discontinued": false }
+            }
+            """;
+
+        var raw = new AdapterRequest(view.Name, new Dictionary<string, IReadOnlyList<string>>(), json);
+        var bound = adapter.BindRequest(raw);
+        var request = adapter.ToQuery(bound, view);
+
+        var listResult = await InvokeListAsync(view, executor, request, scope);
+        var page = Prop(listResult, "Page")!;
+        var rows = ToObjectList(Prop(page, "Items")!);
+        var adapterResult = new AdapterListResult(
+            rows!,
+            (long)Prop(page, "TotalRows")!,
+            (long)Prop(listResult, "TotalRowsUnfiltered")!);
+
+        var response = adapter.ToResponse(adapterResult, bound, view);
+        var categories = response.Rows.Select(r => (string)Prop(r!, "CategoryName")!).ToList();
+        var names = response.Rows.Select(r => (string)Prop(r!, "ProductName")!).ToList();
+
+        Console.WriteLine("[7] TanStack round-trip (pageSize 5 + globalFilter 'ch' + sort CategoryName,ProductName + UnitPrice min 20)");
+        Console.WriteLine($"    rowCount={response.RowCount}  pageCount={response.PageCount}  rows={response.Rows.Count}");
+        Console.WriteLine($"    Page rows: {string.Join(", ", names.Zip(categories, (n, c) => $"{c}/{n}"))}");
+
+        var multiSorted = true;
+        for (var i = 1; i < response.Rows.Count; i++)
+        {
+            var catCmp = string.CompareOrdinal(categories[i - 1], categories[i]);
+            if (catCmp > 0 || (catCmp == 0 && string.CompareOrdinal(names[i - 1], names[i]) > 0))
+            {
+                multiSorted = false;
+                break;
+            }
+        }
+
+        var hidden = request.SelectFields is not null
+            && !request.SelectFields.Contains("Discontinued")
+            && request.SelectFields.Contains("ProductName");
+
+        var ok =
+            response.RowCount == 8 &&
+            response.PageCount == 2 &&
+            response.Rows.Count == 5 &&
+            multiSorted &&
+            hidden &&
             names.Count >= 2 &&
             names[0] == "Chef Anton's Cajun Seasoning" &&
             names[1] == "Chef Anton's Gumbo Mix";
