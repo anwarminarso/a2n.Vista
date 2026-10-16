@@ -6,8 +6,10 @@ using TUnit.Core;
 namespace a2n.Vista.E2E;
 
 /// <summary>
-/// Real Chromium against the showcase TanStack page (<c>/tanstack.html</c>) and one direct
-/// <c>POST /api/views/vProductCategory/tanstack</c> for an unknown sort id.
+/// Real Chromium against the showcase TanStack page (<c>/tanstack.html</c>) and direct
+/// <c>POST /api/views/vProductCategory/tanstack</c> checks.
+/// The showcase projection maps the stored text flag with <c>p.Discontinued == "1"</c>, so that
+/// column is a bool on the wire and in the grid.
 /// Screenshots are written only when <c>VISTA_E2E_SCREENSHOT_DIR</c> is set.
 /// </summary>
 [Timeout(120_000)]
@@ -156,6 +158,122 @@ public sealed class TanStackShowcaseTests
         using var json = response.Json();
         await Assert.That(json.RootElement.GetProperty("code").GetString()).IsEqualTo("filter-unknown-field");
         await Assert.That(json.RootElement.GetProperty("field").GetString()).IsEqualTo("notAField");
+    }
+
+    [Test]
+    public async Task Alice_Mutton_Shows_Yes_And_An_Active_Product_Shows_No(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        await using var scope = await OpenAsync("/tanstack.html");
+        var page = scope.Page;
+        await WaitForGridAsync(page);
+
+        await AssertDiscontinuedCellAsync(page, "Alice Mutton", "Yes");
+        await AssertDiscontinuedCellAsync(page, "Chai", "No");
+    }
+
+    [Test]
+    public async Task Discontinued_Filter_And_Sort_Use_A_Bool(CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+
+        var listed = await SampleSession.Http.PostJsonAsync(
+            SampleSession.Showcase,
+            Route,
+            """
+            {
+              "pagination": { "pageIndex": 0, "pageSize": 10 },
+              "sorting": [{ "id": "ProductName", "desc": false }],
+              "columnFilters": [],
+              "globalFilter": "",
+              "columnVisibility": {}
+            }
+            """);
+        await Assert.That(listed.Status).IsEqualTo(200);
+        using (var json = listed.Json())
+        {
+            var rows = json.RootElement.GetProperty("rows");
+            await Assert.That(Flag(rows, "Alice Mutton")).IsEqualTo(JsonValueKind.True);
+            await Assert.That(Flag(rows, "Chai")).IsEqualTo(JsonValueKind.False);
+        }
+
+        var filtered = await SampleSession.Http.PostJsonAsync(
+            SampleSession.Showcase,
+            Route,
+            """
+            {
+              "pagination": { "pageIndex": 0, "pageSize": 20 },
+              "sorting": [{ "id": "ProductName", "desc": false }],
+              "columnFilters": [{ "id": "Discontinued", "value": { "op": "equals", "value": true } }],
+              "globalFilter": "",
+              "columnVisibility": {}
+            }
+            """);
+        await Assert.That(filtered.Status).IsEqualTo(200);
+        using (var json = filtered.Json())
+        {
+            var rows = json.RootElement.GetProperty("rows");
+            await Assert.That(rows.GetArrayLength()).IsGreaterThan(0);
+            var names = new List<string>();
+            foreach (var row in rows.EnumerateArray())
+            {
+                await Assert.That(row.GetProperty("discontinued").ValueKind).IsEqualTo(JsonValueKind.True);
+                names.Add(row.GetProperty("productName").GetString()!);
+            }
+
+            await Assert.That(names).Contains("Alice Mutton");
+            await Assert.That(names.Contains("Chai")).IsFalse();
+        }
+
+        var sorted = await SampleSession.Http.PostJsonAsync(
+            SampleSession.Showcase,
+            Route,
+            """
+            {
+              "pagination": { "pageIndex": 0, "pageSize": 5 },
+              "sorting": [{ "id": "Discontinued", "desc": false }],
+              "columnFilters": [],
+              "globalFilter": "",
+              "columnVisibility": {}
+            }
+            """);
+        await Assert.That(sorted.Status).IsEqualTo(200);
+        using (var json = sorted.Json())
+        {
+            var rows = json.RootElement.GetProperty("rows");
+            await Assert.That(rows.GetArrayLength()).IsEqualTo(5);
+            foreach (var row in rows.EnumerateArray())
+            {
+                await Assert.That(row.GetProperty("discontinued").ValueKind).IsEqualTo(JsonValueKind.False);
+            }
+        }
+    }
+
+    private static JsonValueKind Flag(JsonElement rows, string productName)
+    {
+        foreach (var row in rows.EnumerateArray())
+        {
+            if (row.GetProperty("productName").GetString() == productName)
+            {
+                return row.GetProperty("discontinued").ValueKind;
+            }
+        }
+
+        throw new InvalidOperationException($"'{productName}' was not on the first page.");
+    }
+
+    private static async Task AssertDiscontinuedCellAsync(IPage page, string productName, string expected)
+    {
+        // Column index comes from the header element, not a text snapshot of the header row.
+        // The cell text is a retrying assertion so a late paint is not observed as empty.
+        var header = page.Locator("#grid-head th").Filter(new() { HasText = "Discontinued" });
+        await Assertions.Expect(header).ToBeVisibleAsync();
+        var index = await header.EvaluateAsync<int>("th => th.cellIndex");
+        var cell = page.Locator("#grid-body tr")
+            .Filter(new() { HasText = productName })
+            .Locator("td")
+            .Nth(index);
+        await Assertions.Expect(cell).ToHaveTextAsync(expected);
     }
 
     private static async Task<BrowserPage> OpenAsync(string path)
