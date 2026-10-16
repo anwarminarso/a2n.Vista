@@ -22,6 +22,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- The startup-burst smoke is a separate project in this folder. It must not run
+         inside this assembly: E2ESessionHooks warms both hosts with GET /. -->
+    <Compile Remove="StartupBurstSmokeTests.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="TUnit" />
     <PackageReference Include="Microsoft.Playwright" />
   </ItemGroup>
