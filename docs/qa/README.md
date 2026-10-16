@@ -15,10 +15,10 @@ From a clean tree, with the .NET 8, 9, and 10 SDKs on `PATH`:
 ```bash
 dotnet build src/a2n.Vista.slnx
 dotnet test src/a2n.Vista.slnx
-# extract src/Examples/DB/"Northwind SQLite.zip" to src/Examples/DB/northwind.db first
+# src/Examples/DB/northwind.db is the committed read-only template; hosts copy it
 cd src/Examples/Northwind && dotnet run -- selftest
 ```
 
 `global.json` selects the Microsoft.Testing.Platform runner, so `dotnet test` executes the TUnit suites. Per-TFM counts come from each suite's TUnit HTML report under `TestResults/`, because the solution-level summary prints only the grand total.
 
-Do not commit `northwind.db` (it is gitignored) or anything under `bin/` and `obj/`.
+`src/Examples/DB/northwind.db` is the tracked template. Do not commit anything under `bin/` and `obj/`.

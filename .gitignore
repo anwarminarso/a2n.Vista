@@ -64,7 +64,9 @@ pnpm-debug.log*
 .kiro/
 .playwright-mcp/
 
+# Local Northwind files. The shipped read-only template is tracked.
 northwind.db
+!src/Examples/DB/northwind.db
 
 ## Brand / design scratch (out-of-project, agent-generated)
 brand/

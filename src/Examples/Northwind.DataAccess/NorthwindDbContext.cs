@@ -39,8 +39,8 @@ public class NorthwindDbContext : DbContext
 
     /// <summary>
     /// Purpose-made writable table used by the Vista write-path demo (see <see cref="Memo"/>). It is not
-    /// part of the real Northwind schema. <see cref="NorthwindDemoSchema.EnsureWritableMemoTable"/>
-    /// creates it in the sample database when it is missing, without rewriting the Northwind tables.
+    /// part of the real Northwind schema. The shipped template already contains it; hosts copy that
+    /// template and do not create the table at startup.
     /// </summary>
     public virtual DbSet<Memo> Memos { get; set; }
 

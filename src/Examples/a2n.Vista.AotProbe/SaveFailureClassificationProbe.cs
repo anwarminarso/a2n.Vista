@@ -1,6 +1,7 @@
 using System;
 using System.Data.Common;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using Microsoft.Data.Sqlite;
 
 namespace a2n.Vista.AotProbe;
 
@@ -29,6 +30,22 @@ internal static class SaveFailureClassificationProbe
         if (!DbUpdateFailureClassification.IsConstraintViolation(new NumberedException(2627)))
         {
             throw new InvalidOperationException("The numeric probe must classify 2627 as a constraint.");
+        }
+
+        if (!DbUpdateFailureClassification.IsConstraintViolation(new SqliteException("SQLITE_CONSTRAINT", 19)))
+        {
+            throw new InvalidOperationException("SqliteErrorCode 19 must classify as a constraint.");
+        }
+
+        if (!DbUpdateFailureClassification.IsConstraintViolation(
+                new SqliteException("CHECK constraint failed: Demo.Name", 1)))
+        {
+            throw new InvalidOperationException("The SQLite message fallback must classify a constraint.");
+        }
+
+        if (DbUpdateFailureClassification.IsConstraintViolation(new SqliteException("no such table: VistaMemos", 1)))
+        {
+            throw new InvalidOperationException("A missing table must not classify as a constraint.");
         }
 
         Console.WriteLine("AOT probe: save-failure classification exercised.");

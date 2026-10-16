@@ -20,17 +20,20 @@ under the landed routing model (`/api/views/{viewName}`), and each also exposes 
 Follow these steps in order. They are sufficient to build and run the whole showcase with no additional,
 undocumented steps.
 
-### 1. Extract the Northwind database
+### 1. The Northwind database is a read-only template
 
-The Northwind SQLite database is shipped **zipped** and must be extracted before the first run. The host
-never recreates or seeds it, so the extracted file is the single source of truth.
+`src/Examples/DB/northwind.db` is committed in the repository. It is the Microsoft Northwind sample plus
+the `VistaMemos` table (`MemoID`, `Subject`, `Body`, `RowVersion`) that `vWritableMemo` writes. The host
+does not extract a zip, does not run DDL, and does not open that file for writing.
 
-1. Open the folder next to the project: `src/Examples/DB`.
-2. Extract `Northwind SQLite.zip` into that folder.
-3. Ensure the extracted file is named `northwind.db` (rename it if needed).
+On startup the host copies the template into a per-run folder under the temp directory and points SQLite
+at the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy. The copy is deleted
+when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different parent folder; each run
+still gets its own subdirectory.
 
-The result must be `src/Examples/DB/northwind.db`. If it is missing, the host prints this same extraction
-guidance and exits with a non-zero code instead of running.
+If `northwind.db` is missing, the host exits with a non-zero code and tells you to restore the file from
+git. Do not replace it with a fresh extract of `Northwind SQLite.zip` — that archive has no `VistaMemos`
+table.
 
 ### 2. Build the TypeScript client
 
@@ -63,7 +66,7 @@ npm test           # vitest run — the fast-check property suites for columns.t
 From the repository root:
 
 ```sh
-dotnet run --project src/Examples/Northwind
+dotnet run --project src/Examples/a2n.Vista.Examples.AgGridNorthwind
 ```
 
 or, from the project folder:
@@ -78,7 +81,7 @@ Simple Wiring page); the shared navigation links the other two pages.
 ### 4. Self-test (optional but recommended)
 
 A guarded end-to-end round-trip verifies the read, write, OpenAPI, and view-browser paths against the
-shipped read-only database, without a browser:
+per-run working copy, without a browser. It also checks that the template's SHA-256 is unchanged:
 
 ```sh
 dotnet run -- selftest
@@ -112,8 +115,8 @@ startup in a non-Development environment (Decision Log D94); calling `AllowAnony
 open posture a deliberate, documented choice for a public read-only demo.
 
 Only explicitly-registered views are browsable (secure-by-default): the view catalog and the selector
-enumerate exactly the three registered views, never arbitrary database tables. All three views are
-read-only (List + Detail; no write facet), and the host never seeds or mutates the shipped database.
+enumerate the registered views, never arbitrary database tables. Reads use the working copy of the
+shipped database. `vWritableMemo` writes to that same copy. The template file is never mutated.
 
 **A real application does not run open.** Gate access by registering an authorizer via
 `UseAuthorizer<T>()` instead of `AllowAnonymousAccess()`, so every view request is authorized inside the

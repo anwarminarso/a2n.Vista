@@ -1,4 +1,5 @@
 using System.Data.Common;
+using Microsoft.Data.Sqlite;
 
 namespace a2n.Vista.EntityFrameworkCore.Execution;
 
@@ -16,10 +17,11 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// </para>
 /// <para>
 /// Built-in rules are trim-safe. They read <see cref="DbException.SqlState"/> (SQLSTATE class
-/// <c>23</c> is an integrity-constraint violation: PostgreSQL, and drivers that surface SQLSTATE) and
-/// SQLite's stable message on <c>Microsoft.Data.Sqlite.SqliteException</c> ("UNIQUE/FOREIGN KEY/NOT
-/// NULL/CHECK constraint failed"). They do not call <c>GetProperty</c>, so a trimmer cannot strip a
-/// provider error-code property and silently turn a constraint into a 500.
+/// <c>23</c> is an integrity-constraint violation: PostgreSQL, and drivers that surface SQLSTATE) and,
+/// for SQLite, <see cref="SqliteException.SqliteErrorCode"/> compared with <c>19</c>
+/// (<c>SQLITE_CONSTRAINT</c>). The provider message (<c>constraint failed</c>) is only a fallback when
+/// the code is something else. The check pattern-matches <see cref="SqliteException"/>, so it does not
+/// call <c>GetProperty</c> and a trimmer cannot strip the error-code property.
 /// </para>
 /// <para>
 /// A provider whose constraint signal is only a numeric code (SQL Server 2601/2627/547/515, MySQL
@@ -93,12 +95,19 @@ public static class DbUpdateFailureClassification
             return true;
         }
 
-        // SQLite does not publish SQLSTATE. The provider's English text is stable and does not
-        // require reading SqliteErrorCode, which a trimmer can remove.
-        var fullName = exception.GetType().FullName;
-        return fullName is not null
-            && string.Equals(fullName, "Microsoft.Data.Sqlite.SqliteException", StringComparison.Ordinal)
-            && exception.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
+        // SQLite does not publish SQLSTATE. SQLITE_CONSTRAINT is 19, including extended codes whose
+        // primary byte is 19. The message is the fallback for a SqliteException that did not carry it.
+        if (exception is SqliteException sqlite)
+        {
+            if (sqlite.SqliteErrorCode == 19)
+            {
+                return true;
+            }
+
+            return sqlite.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
+        }
+
+        return false;
     }
 
     private static bool IsIntegritySqlState(string? sqlState) =>

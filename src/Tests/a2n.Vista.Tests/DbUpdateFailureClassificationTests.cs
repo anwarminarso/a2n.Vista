@@ -4,6 +4,7 @@ using System;
 using System.Data.Common;
 using System.Threading.Tasks;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using Microsoft.Data.Sqlite;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
 using TUnit.Core;
@@ -12,8 +13,9 @@ namespace a2n.Vista.Tests;
 
 /// <summary>
 /// D158: constraint classification is trim-safe. Built-in rules read <see cref="DbException.SqlState"/>
-/// and the SQLite exception's type name plus message. They do not reflect over a provider error-code
-/// property. A host probe pattern-matches its own exception type.
+/// and <see cref="SqliteException.SqliteErrorCode"/> (<c>19</c>, <c>SQLITE_CONSTRAINT</c>). The message
+/// text is only a fallback on a real <see cref="SqliteException"/>. A host probe pattern-matches its
+/// own exception type.
 /// </summary>
 public sealed class DbUpdateFailureClassificationTests
 {
@@ -27,6 +29,20 @@ public sealed class DbUpdateFailureClassificationTests
         await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(new SqlStateException("42P01")))
             .IsFalse();
         await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(new SqlStateException(null)))
+            .IsFalse();
+    }
+
+    [Test]
+    public async Task Sqlite_Error_Code_19_Is_A_Constraint_And_The_Message_Is_Only_A_Fallback()
+    {
+        await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(
+                new SqliteException("SQLITE_CONSTRAINT", 19)))
+            .IsTrue();
+        await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(
+                new SqliteException("CHECK constraint failed: Demo.Name", 1)))
+            .IsTrue();
+        await Assert.That(DbUpdateFailureClassification.IsConstraintViolation(
+                new SqliteException("no such table: VistaMemos", 1)))
             .IsFalse();
     }
 

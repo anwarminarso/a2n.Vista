@@ -9,13 +9,18 @@ While the version is `0.x`, anything may change between releases.
 ## [Unreleased]
 
 ### Fixed
-- **Northwind `vWritableMemo` works against the shipped database.** The Microsoft `northwind.db` has no
-  `VistaMemos` table, so a live list/update/delete returned 500 (`no such table: VistaMemos`) and create
-  returned 409 `write-conflict`. Both Northwind hosts now create only that demo table on startup
-  (`NorthwindDemoSchema.EnsureWritableMemoTable`). Northwind tables are not recreated or reseeded. The
-  host self-test asserts the connection is the `northwind.db` file, that `sqlite_master` contains
-  `VistaMemos`, and that a stale `If-Match` is `write-concurrency-conflict`. The isolated self-test still
-  runs Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
+- **Northwind `vWritableMemo` works against a working copy of the shipped database.** The Microsoft
+  sample had no `VistaMemos` table, so a live list/update/delete returned 500 (`no such table:
+  VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/northwind.db` is now a
+  read-only template that already contains `VistaMemos` (`MemoID`, `Subject`, `Body`, `RowVersion`).
+  Hosts do not run DDL at startup and do not open that file for writing. On startup each Northwind host
+  copies the template into a per-run folder (under the temp directory, or under
+  `NORTHWIND_WORKING_DIRECTORY` when that variable is set) and points SQLite at the copy. Memo
+  create/update/delete and the self-tests write only to the copy, which is deleted when the process
+  stops. The host self-test asserts the connection is that copy, that the copy's `sqlite_master`
+  contains `VistaMemos`, that a stale `If-Match` is `write-concurrency-conflict`, and that the
+  template's SHA-256 is unchanged after the write round trip. The isolated self-test still runs
+  Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
 - **Save failures are three distinct outcomes** (Decision Log D158). A genuine concurrency failure
   (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
   `VistaConcurrencyConflictException`) is HTTP 409 `write-concurrency-conflict`. A unique, foreign-key,
@@ -24,7 +29,10 @@ While the version is `0.x`, anything may change between releases.
   error, an unrecognized provider error — is HTTP 500 `write-persistence-failed`
   (`VistaPersistenceException`). The client message stays fixed and leak-free; the provider exception
   remains the inner exception for server logs. A missing `VistaMemos` table was the case that used to
-  come back as 409 `write-conflict`.
+  come back as 409 `write-conflict`. SQLite constraint detection reads
+  `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`) on the real provider exception. The
+  message text `constraint failed` is only a fallback. The check is a direct type test, so it stays
+  trim/AOT safe.
 - **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
   post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
   row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A

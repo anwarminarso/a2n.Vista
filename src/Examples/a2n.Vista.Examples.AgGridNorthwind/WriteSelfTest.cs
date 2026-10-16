@@ -34,10 +34,9 @@ namespace a2n.Vista.Examples.AgGridNorthwind;
 /// </para>
 /// <para>
 /// <see cref="RunAgainstHostAsync"/> repeats Create/Update/Delete through the host's own
-/// <see cref="NorthwindDbContext"/>, the database <c>dotnet run</c> serves. Startup creates
-/// <c>VistaMemos</c> there when the Microsoft sample does not already contain it
-/// (<see cref="NorthwindDemoSchema.EnsureWritableMemoTable"/>). The host pass deletes the memo it
-/// inserted, so Northwind's own tables stay untouched.
+/// <see cref="NorthwindDbContext"/>, which is a per-run copy of the read-only <c>northwind.db</c>
+/// template. The copy already contains <c>VistaMemos</c>. The host pass deletes the memo it inserted.
+/// The template's SHA-256 must be unchanged, and the connection must not be the template file.
 /// </para>
 /// <para>
 /// The concurrency token (<see cref="Memo.RowVersion"/>) is a <see cref="Guid"/>; the executor renders it
@@ -158,16 +157,24 @@ public static class WriteSelfTest
     }
 
     /// <summary>
-    /// R16.5 — Create/Update/Delete on the host database (the shipped <c>northwind.db</c> after startup
-    /// has ensured <c>VistaMemos</c>). Also lists the view first, which is the read that returns 500
-    /// when the table is missing. Rows inserted here are deleted before the method returns.
+    /// R16.5 — Create/Update/Delete on the host's working copy of <c>northwind.db</c>. Also lists the
+    /// view first, which is the read that returns 500 when <c>VistaMemos</c> is missing. Rows inserted
+    /// here are deleted before the method returns. The template file's hash must match
+    /// <paramref name="templateHash"/> afterwards.
     /// </summary>
     /// <param name="services">The built host's root service provider.</param>
+    /// <param name="templatePath">Absolute path of the read-only template. It must not be the connection.</param>
+    /// <param name="templateHash">SHA-256 of the template taken before the host opened a database.</param>
     /// <returns><see langword="true"/> when every operation passed; otherwise <see langword="false"/>.</returns>
     [RequiresUnreferencedCode("Self-test drives the reflection write path (Register<TView> + reflection write mapper).")]
-    public static async Task<bool> RunAgainstHostAsync(IServiceProvider services)
+    public static async Task<bool> RunAgainstHostAsync(
+        IServiceProvider services,
+        string templatePath,
+        string templateHash)
     {
         ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(templatePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(templateHash);
 
         using var scope = services.CreateScope();
         var registry = scope.ServiceProvider.GetRequiredService<IViewRegistry>();
@@ -186,7 +193,7 @@ public static class WriteSelfTest
         Console.WriteLine($"Route     : {view.Route}");
         Console.WriteLine();
 
-        if (!await AssertHostFileDatabaseAsync(scope.ServiceProvider))
+        if (!await AssertHostFileDatabaseAsync(scope.ServiceProvider, templatePath))
         {
             Console.WriteLine("HOST WRITE SELF-TEST RESULT: FAIL");
             return false;
@@ -247,6 +254,19 @@ public static class WriteSelfTest
             await DeleteSubjectsAsync(services, subject, editedSubject);
         }
 
+        var hashAfter = NorthwindWorkingDatabase.Sha256(templatePath);
+        if (!string.Equals(hashAfter, templateHash, StringComparison.Ordinal))
+        {
+            Console.WriteLine("FAIL: template northwind.db hash changed during the write round trip.");
+            Console.WriteLine($"    before: {templateHash}");
+            Console.WriteLine($"    after : {hashAfter}");
+            failures++;
+        }
+        else
+        {
+            Console.WriteLine("    template hash unchanged after write round trip -> PASS");
+        }
+
         var passed = failures == 0;
         Console.WriteLine();
         Console.WriteLine($"Failed operations: {failures}");
@@ -255,18 +275,23 @@ public static class WriteSelfTest
     }
 
     /// <summary>
-    /// The host self-test must run against the shipped <c>northwind.db</c> file, and that file must
-    /// already contain <c>VistaMemos</c> (startup creation, not an in-memory <c>EnsureCreated</c>).
+    /// The host self-test must run against the working copy, not the read-only template, and that
+    /// copy's <c>sqlite_master</c> must already contain <c>VistaMemos</c>.
     /// </summary>
-    private static async Task<bool> AssertHostFileDatabaseAsync(IServiceProvider provider)
+    private static async Task<bool> AssertHostFileDatabaseAsync(IServiceProvider provider, string templatePath)
     {
         var ctx = provider.GetRequiredService<NorthwindDbContext>();
         var connectionString = ctx.Database.GetConnectionString() ?? string.Empty;
-        Console.WriteLine($"DataSource : {connectionString}");
+        var dataSource = new SqliteConnectionStringBuilder(connectionString).DataSource;
+        var workingPath = Path.GetFullPath(dataSource);
+        var templateFullPath = Path.GetFullPath(templatePath);
+        Console.WriteLine($"DataSource : {workingPath}");
+        Console.WriteLine($"Template   : {templateFullPath}");
         if (connectionString.Contains(":memory:", StringComparison.OrdinalIgnoreCase)
-            || !connectionString.Contains("northwind.db", StringComparison.OrdinalIgnoreCase))
+            || string.Equals(workingPath, templateFullPath, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(workingPath))
         {
-            Console.WriteLine("FAIL: host database is not the northwind.db file.");
+            Console.WriteLine("FAIL: host database is not a working copy of northwind.db.");
             return false;
         }
 
