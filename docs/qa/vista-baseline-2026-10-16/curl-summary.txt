@@ -1,0 +1,293 @@
+HTTP probe of the two running sample hosts. Bodies trimmed to 400 characters; binary exports recorded by size and content type only. Stack traces from the developer exception page are omitted.
+
+Northwind host: http://127.0.0.1:52899  (ASPNETCORE_ENVIRONMENT=Development, --no-launch-profile)
+AG Grid showcase host: http://127.0.0.1:52999
+
+## ag-aggrid
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 403
+preview:
+{"rowData":[{"productId":17,"productName":"Alice Mutton","unitPrice":39,"unitsInStock":0,"discontinued":"1","categoryId":6,"categoryName":"Meat/Poultry","supplierId":7,"supplierName":"Pavlova, Ltd."},{"productId":3,"productName":"Aniseed Syrup","unitPrice":10,"unitsInStock":13,"discontinued":"0","categoryId":2,"categoryName":"Condiments","supplierId":1,"supplierName":"Exotic Liquids"}],"rowCount":
+
+## ag-catalog
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 321
+preview:
+[{"name":"vProductCategory","route":"/api/views/vProductCategory","title":"Product Category"},{"name":"vOrderDetail","route":"/api/views/vOrderDetail","title":"Order Detail"},{"name":"vOrder","route":"/api/views/vOrder","title":"Order"},{"name":"vWritableMemo","route":"/api/views/vWritableMemo","title":"Writable Memo"}]
+
+## ag-custom-renderer
+status: HTTP/1.1 200 OK
+content-type: text/html
+bytes: 5111
+preview:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · Custom cell renderers (Northwind)</title>
+
+  <!-- AG Grid community CSS themes (CDN). The grid uses the "quartz" theme via the class on the grid
+       container below. Community styles only — no Enterprise stylesheet (R5.4). -->
+  <link
+    r
+
+## ag-datatable
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 447
+preview:
+{"draw":1,"recordsTotal":77,"recordsFiltered":77,"data":[{"productId":17,"productName":"Alice Mutton","unitPrice":39,"unitsInStock":0,"discontinued":"1","categoryId":6,"categoryName":"Meat/Poultry","supplierId":7,"supplierName":"Pavlova, Ltd."},{"productId":3,"productName":"Aniseed Syrup","unitPrice":10,"unitsInStock":13,"discontinued":"0","categoryId":2,"categoryName":"Condiments","supplierId":1,
+
+## ag-detail-composite
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 105
+preview:
+{"orderId":10248,"productId":11,"productName":"Queso Cabrales","unitPrice":14,"quantity":12,"discount":0}
+
+## ag-export-csv
+status: HTTP/1.1 200 OK
+content-type: text/csv
+bytes: 10867
+preview:
+﻿Order Id,Order Date,Required Date,Shipped Date,Freight,Ship Name,Ship City,Ship Country
+10248,07/04/2016 00:00:00,08/01/2016 00:00:00,07/16/2016 00:00:00,16.75,Vins et alcools Chevalier,Reims,France
+10249,07/05/2016 00:00:00,08/16/2016 00:00:00,07/10/2016 00:00:00,22.25,Toms Spezialitäten,Münster,Germany
+10250,07/08/2016 00:00:00,08/05/2016 00:00:00,07/12/2016 00:00:00,25,Hanari Carnes,Rio de 
+
+## ag-index
+status: HTTP/1.1 200 OK
+content-type: text/html
+bytes: 4357
+preview:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · Simple Wiring (Northwind showcase)</title>
+
+  <!-- AG Grid community CSS themes (loaded from CDN). The grid uses the "quartz" theme via the class on
+       the grid container below. -->
+  <link
+    rel="stylesheet"
+    href="https://cdn.jsdeli
+
+## ag-list
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 479
+preview:
+{"page":{"items":[{"productId":17,"productName":"Alice Mutton","unitPrice":39,"unitsInStock":0,"discontinued":"1","categoryId":6,"categoryName":"Meat/Poultry","supplierId":7,"supplierName":"Pavlova, Ltd."},{"productId":3,"productName":"Aniseed Syrup","unitPrice":10,"unitsInStock":13,"discontinued":"0","categoryId":2,"categoryName":"Condiments","supplierId":1,"supplierName":"Exotic Liquids"}],"tota
+
+## ag-memo-create
+status: HTTP/1.1 409 Conflict
+content-type: application/problem+json
+bytes: 186
+preview:
+{"type":"urn:a2n.vista:error:write-conflict","title":"Write conflict","status":409,"detail":"The write conflicts with a database constraint and was not applied.","code":"write-conflict"}
+
+## ag-metadata-order
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 2062
+preview:
+{"name":"vOrder","route":"/api/views/vOrder","isReadOnly":true,"keyFields":["OrderId"],"maxPageSize":100,"maxExportRows":100000,"fields":[{"name":"OrderId","label":"Order Id","clrType":"Int32","isFilterable":true,"isSortable":true,"isSearchable":false,"isScopable":false,"isHidden":false,"isPrimaryKey":true,"allowedOperators":"Equals, NotEquals, GreaterThan, LessThan, In, Range, IsNull"},{"name":"O
+
+## ag-openapi
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 23450
+preview:
+{"openapi":"3.0.4","info":{"title":"a2n.Vista API","version":"0.0.4"},"paths":{"/api/views/vOrder/detail":{"post":{"operationId":"vOrder_detail","summary":"Detail vOrder","tags":["vOrder"],"requestBody":{"description":"The row key: a scalar or a field-name to value object for a composite key.","required":true,"content":{"application/json":{"schema":{"$ref":"#/components/schemas/VistaDetailRequestB
+
+## ag-querybuilder-order
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 2523
+preview:
+{"viewName":"vOrder","metaData":[{"FieldName":"OrderId","FieldLabel":"Order Id","FieldType":"integer","IsSearchable":false,"IsOrderable":true,"IsPrimaryKey":true},{"FieldName":"OrderDate","FieldLabel":"Order Date","FieldType":"date","IsSearchable":false,"IsOrderable":true,"IsPrimaryKey":false},{"FieldName":"RequiredDate","FieldLabel":"Required Date","FieldType":"date","IsSearchable":false,"IsOrder
+
+## ag-unknown-sort
+status: HTTP/1.1 400 Bad Request
+content-type: application/problem+json
+bytes: 212
+preview:
+{"type":"urn:a2n.vista:error:filter-unknown-field","title":"Invalid filter","status":400,"detail":"Sort field 'notAField' does not exist in the view projection.","code":"filter-unknown-field","field":"notAField"}
+
+## ag-view-browser
+status: HTTP/1.1 200 OK
+content-type: text/html
+bytes: 7051
+preview:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · View Browser (Northwind)</title>
+
+  <!-- jQuery DataTables (default styling) -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css" />
+  <!-- jQuery-QueryBuilder (default theme) -->
+  <link rel="
+
+## nw-aggrid-absent
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+
+
+## nw-catalog-absent
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+
+
+## nw-datatable
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 447
+preview:
+{"draw":1,"recordsTotal":77,"recordsFiltered":77,"data":[{"productId":17,"productName":"Alice Mutton","unitPrice":39,"unitsInStock":0,"discontinued":"1","categoryId":6,"categoryName":"Meat/Poultry","supplierId":7,"supplierName":"Pavlova, Ltd."},{"productId":3,"productName":"Aniseed Syrup","unitPrice":10,"unitsInStock":13,"discontinued":"0","categoryId":2,"categoryName":"Condiments","supplierId":1,
+
+## nw-detail-missing
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+
+
+## nw-detail
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 177
+preview:
+{"productId":1,"productName":"Chai","unitPrice":18,"unitsInStock":39,"discontinued":"0","categoryId":1,"categoryName":"Beverages","supplierId":1,"supplierName":"Exotic Liquids"}
+
+## nw-export-csv
+status: HTTP/1.1 200 OK
+content-type: text/csv
+bytes: 4686
+preview:
+﻿Product Name,Unit Price,Units In Stock,Discontinued,Category Name,Supplier Name
+Alice Mutton,39,0,1,Meat/Poultry,"Pavlova, Ltd."
+Aniseed Syrup,10,13,0,Condiments,Exotic Liquids
+Boston Crab Meat,18.4,123,0,Seafood,New England Seafood Cannery
+Camembert Pierrot,34,19,0,Dairy Products,Gai pâturage
+Carnarvon Tigers,62.5,42,0,Seafood,"Pavlova, Ltd."
+Chai,18,39,0,Beverages,Exotic Liquids
+Chang,19
+
+## nw-export-xlsx
+status: HTTP/1.1 200 OK
+content-type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+bytes: 5467
+preview:
+<binary 5467 bytes>
+
+## nw-index
+status: HTTP/1.1 200 OK
+content-type: text/html
+bytes: 5825
+preview:
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · DataTables adapter demo (Northwind)</title>
+
+  <!-- jQuery DataTables (default styling) -->
+  <link rel="stylesheet" href="https://cdn.datatables.net/2.1.8/css/dataTables.dataTables.min.css" />
+  <!-- jQuery-QueryBuilder (default theme) -->
+  
+
+## nw-list
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 479
+preview:
+{"page":{"items":[{"productId":17,"productName":"Alice Mutton","unitPrice":39,"unitsInStock":0,"discontinued":"1","categoryId":6,"categoryName":"Meat/Poultry","supplierId":7,"supplierName":"Pavlova, Ltd."},{"productId":3,"productName":"Aniseed Syrup","unitPrice":10,"unitsInStock":13,"discontinued":"0","categoryId":2,"categoryName":"Condiments","supplierId":1,"supplierName":"Exotic Liquids"}],"tota
+
+## nw-memo-bulk
+status: HTTP/1.1 400 Bad Request
+content-type: application/problem+json
+bytes: 217
+preview:
+{"type":"urn:a2n.vista:error:write-bulk-not-enabled","title":"Bulk writes not enabled","status":400,"detail":"Bulk writes are not enabled; submit a single entity rather than an array.","code":"write-bulk-not-enabled"}
+
+## nw-memo-create
+status: HTTP/1.1 409 Conflict
+content-type: application/problem+json
+bytes: 186
+preview:
+{"type":"urn:a2n.vista:error:write-conflict","title":"Write conflict","status":409,"detail":"The write conflicts with a database constraint and was not applied.","code":"write-conflict"}
+
+## nw-memo-delete
+status: HTTP/1.1 500 Internal Server Error
+content-type: text/plain; charset=utf-8
+bytes: 3707
+preview:
+Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: VistaMemos'.  [developer exception page; stack omitted]
+
+## nw-memo-list
+status: HTTP/1.1 500 Internal Server Error
+content-type: text/plain; charset=utf-8
+bytes: 3904
+preview:
+Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: VistaMemos'.  [developer exception page; stack omitted]
+
+## nw-memo-update
+status: HTTP/1.1 500 Internal Server Error
+content-type: text/plain; charset=utf-8
+bytes: 4285
+preview:
+Microsoft.Data.Sqlite.SqliteException (0x80004005): SQLite Error 1: 'no such table: VistaMemos'.  [developer exception page; stack omitted]
+
+## nw-metadata
+status: HTTP/1.1 200 OK
+content-type: application/json; charset=utf-8
+bytes: 1537
+preview:
+{"name":"vProductCategory","route":"/api/views/vProductCategory","isReadOnly":true,"keyFields":["ProductId"],"maxPageSize":100,"maxExportRows":100000,"fields":[{"name":"ProductName","label":"Product Name","clrType":"String","isFilterable":true,"isSortable":true,"isSearchable":true,"isScopable":false,"isHidden":false,"isPrimaryKey":false,"allowedOperators":"In, Text"},{"name":"UnitPrice","label":"U
+
+## nw-openapi
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 18962
+preview:
+{"openapi":"3.0.4","info":{"title":"a2n.Vista API","version":"0.0.4"},"paths":{"/api/views/vOrderDetail/detail":{"post":{"operationId":"vOrderDetail_detail","summary":"Detail vOrderDetail","tags":["vOrderDetail"],"requestBody":{"description":"The row key: a scalar or a field-name to value object for a composite key.","required":true,"content":{"application/json":{"schema":{"$ref":"#/components/sch
+
+## nw-querybuilder
+status: HTTP/1.1 200 OK
+content-type: application/json
+bytes: 2128
+preview:
+{"viewName":"vProductCategory","metaData":[{"FieldName":"ProductName","FieldLabel":"Product Name","FieldType":"string","IsSearchable":true,"IsOrderable":true,"IsPrimaryKey":false},{"FieldName":"UnitPrice","FieldLabel":"Unit Price","FieldType":"double","IsSearchable":false,"IsOrderable":true,"IsPrimaryKey":false},{"FieldName":"UnitsInStock","FieldLabel":"Units In Stock","FieldType":"integer","IsSea
+
+## nw-readonly-create
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+
+
+## nw-readonly-delete
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+
+
+## nw-readonly-update
+status: HTTP/1.1 404 Not Found
+content-type: 
+bytes: 0
+preview:
+

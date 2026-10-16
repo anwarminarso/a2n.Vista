@@ -1,0 +1,15 @@
+date: 2026-10-16
+host: Ubuntu 24.04.5 LTS (Noble), linux 6.12.94+ x86_64
+git: 7fad6321a38688751dcf6f8b5b30ece3fd1c6b3f
+     release: prepare 0.0.4 and gate the release on tag/version agreement (D153)
+     base branch at measurement: develop (same commit as main)
+sdks:
+  8.0.426
+  9.0.319
+  10.0.402  (dotnet --version)
+runtimes:
+  Microsoft.NETCore.App 8.0.32 / 9.0.21 / 10.0.13
+  Microsoft.AspNetCore.App 8.0.32 / 9.0.21 / 10.0.13
+install: official dotnet-install.sh into $HOME/.dotnet (channels 8.0, 9.0, 10.0)
+tunit: 1.56.0.0 (from the HTML report metadata)
+configuration: Debug (user-requested `dotnet build` / `dotnet test` defaults)

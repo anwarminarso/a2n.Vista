@@ -1,0 +1,76 @@
+command: cd src/Examples/Northwind && dotnet run --framework net8.0 -c Debug -- selftest
+SQL command dumps removed; assertion lines kept.
+
+Using launch settings from /workspace/src/Examples/Northwind/Properties/launchSettings.json...
+=== Vista Northwind self-test ===
+View      : vProductCategory
+Route     : /api/views/vProductCategory
+IsReadOnly: True
+RowType   : <>f__AnonymousType0`9
+Fields    : ProductId (hidden), ProductName, UnitPrice, UnitsInStock, Discontinued, CategoryId (hidden), CategoryName, SupplierId (hidden), SupplierName
+
+[1] Paging (no filter, sort ProductName asc, page 0, size 3)
+    TotalRows(filtered)=77  TotalRowsUnfiltered=77  PageIndex=0  PageSize=3  TotalPages=26  Items=3
+    Page items: Alice Mutton, Aniseed Syrup, Boston Crab Meat
+    -> PASS
+[2] Filter + search (UnitPrice>=20 AND ProductName Contains 'a', sort ProductName asc)
+    recordsTotal(unfiltered)=77  recordsFiltered=31  Items=10
+    Matched: Alice Mutton, Camembert Pierrot, Carnarvon Tigers, Chef Anton's Cajun Seasoning, Chef Anton's Gumbo Mix, Côte de Blaye, Gnocchi di nonna Alice, Grandma's Boysenberry Spread, Gravad lax, Gudbrandsdalsost
+    -> PASS
+[3] Detail by ProductId=1 (hidden PK, resolved by convention)
+    Row: ProductId=1  ProductName=Chai  CategoryName=Beverages
+    -> PASS
+[4] Composite Detail by (OrderId=10248, ProductId=11) — KeyFields=[OrderId, ProductId]
+    Row: OrderId=10248  ProductId=11  -> PASS
+[5] DataTables round-trip (sort + jsonQB UnitPrice>=20 + externalFilter CategoryId=1)
+    draw=7  recordsTotal=12  recordsFiltered=2  data=2
+    -> PASS
+
+RESULT: PASS
+
+=== Vista Northwind write self-test ===
+View      : vWritableMemo
+Route     : /api/views/vWritableMemo
+IsReadOnly: False
+KeyFields : [MemoId]
+CrudType  : MemoWriteModel
+WriteMapper: GENERATED (source generator)
+ViewInvoker: GENERATED (source generator)
+
+[1] Create (Subject='Welcome')
+    New MemoId = 1
+    -> PASS
+[2] Update (MemoId=1, If-Match=539e36be-2667-4ba9-a873-87370fd0ece0)
+    Updated=True  Subject='Welcome (edited)'
+    -> PASS
+[3] Delete (MemoId=1, If-Match=539e36be-2667-4ba9-a873-87370fd0ece0)
+    Deleted=True  RowStillExists=False
+    -> PASS
+
+Failed operations: 0
+WRITE SELF-TEST RESULT: PASS
+
+=== Vista Northwind OpenAPI self-test ===
+warn: a2n.Vista.AspNetCore.Hosting.VistaStartupValidator[0]
+      No IViewAuthorizer registered. All Vista views are publicly accessible in the 'Development' environment. Register one via AddVistaEndpoints(b => b.UseAuthorizer<T>()) to gate access.
+warn: a2n.Vista.AspNetCore.Hosting.VistaStartupValidator[0]
+      No IViewAuthorizer registered. All Vista views are publicly accessible in the 'Development' environment. Register one via AddVistaEndpoints(b => b.UseAuthorizer<T>()) to gate access.
+Serve     : GET /openapi/v1.json
+Views     : vProductCategory, vOrderDetail, vWritableMemo (writable)
+
+[1] Serve + validity (GET /openapi/v1.json)
+    Status=200 OK  Content-Type=application/json  Bytes=18962
+    openapi=3.0.4  paths=15  danglingRefs=0
+    -> PASS
+[2] Endpoint parity (document operations == live View_Operation_Set)
+    Expected operations=15  Document operations=15
+    Missing=0  Phantom=0
+    -> PASS
+[3] Additive coexistence (existing endpoint unchanged by the emitter)
+    GET /api/views/vProductCategory/metadata
+    with-emitter   : 200  Content-Type=application/json  Bytes=1537
+    without-emitter: 200  Content-Type=application/json  Bytes=1537
+    -> PASS (byte-for-byte identical)
+
+OPENAPI SELF-TEST RESULT: PASS
+NORTHWIND_EXIT:0
