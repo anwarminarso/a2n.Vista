@@ -156,7 +156,7 @@ public sealed class HttpSurfaceR3Tests
 
     // ---- Fixtures -----------------------------------------------------------------------------------
 
-    private sealed class R3Source
+    internal sealed class R3Source
     {
         public int Id { get; set; }
 
@@ -175,7 +175,7 @@ public sealed class HttpSurfaceR3Tests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class R3Context : DbContext
+    internal sealed class R3Context : DbContext
     {
         public R3Context(DbContextOptions<R3Context> options)
             : base(options)

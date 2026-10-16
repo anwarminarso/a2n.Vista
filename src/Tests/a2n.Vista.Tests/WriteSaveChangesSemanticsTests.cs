@@ -163,7 +163,7 @@ public sealed class WriteSaveChangesSemanticsTests
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     /// <summary>EF source entity the writable Style B view projects from (single-source, Id-keyed).</summary>
-    private sealed class WriteSource
+    internal sealed class WriteSource
     {
         public int Id { get; set; }
 
@@ -185,7 +185,7 @@ public sealed class WriteSaveChangesSemanticsTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class WriteContext : DbContext
+    internal sealed class WriteContext : DbContext
     {
         public WriteContext(DbContextOptions<WriteContext> options)
             : base(options)

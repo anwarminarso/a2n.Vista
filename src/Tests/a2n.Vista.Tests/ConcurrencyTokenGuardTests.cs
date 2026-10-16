@@ -118,7 +118,7 @@ public sealed class ConcurrencyTokenGuardTests
 
     // ---- Fixtures ----------------------------------------------------------------------------------
 
-    private sealed class TokenSourceEntity
+    internal sealed class TokenSourceEntity
     {
         public int Id { get; set; }
 
@@ -164,7 +164,7 @@ public sealed class ConcurrencyTokenGuardTests
     /// so one type configured two ways by a constructor flag would silently reuse whichever model was built
     /// first — and the guard would then be tested against the wrong model.
     /// </remarks>
-    private sealed class BackedTokenContext : DbContext
+    internal sealed class BackedTokenContext : DbContext
     {
         public BackedTokenContext(DbContextOptions<BackedTokenContext> options)
             : base(options)
@@ -182,7 +182,7 @@ public sealed class ConcurrencyTokenGuardTests
     }
 
     /// <summary>The EF context whose model deliberately does <b>not</b> back the declared token.</summary>
-    private sealed class UnbackedTokenContext : DbContext
+    internal sealed class UnbackedTokenContext : DbContext
     {
         public UnbackedTokenContext(DbContextOptions<UnbackedTokenContext> options)
             : base(options)

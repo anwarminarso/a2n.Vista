@@ -168,7 +168,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     // ---- Constraint fixtures -------------------------------------------------------------------------
 
     /// <summary>EF source entity with a UNIQUE index on <see cref="Name"/> to force a constraint breach.</summary>
-    private sealed class UniqueSource
+    internal sealed class UniqueSource
     {
         public int Id { get; set; }
 
@@ -190,7 +190,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>EF context that gives <see cref="UniqueSource.Name"/> a unique index.</summary>
-    private sealed class UniqueContext : DbContext
+    internal sealed class UniqueContext : DbContext
     {
         public UniqueContext(DbContextOptions<UniqueContext> options)
             : base(options)
@@ -296,7 +296,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     // ---- Concurrency fixtures ------------------------------------------------------------------------
 
     /// <summary>EF source entity with a string optimistic-concurrency token.</summary>
-    private sealed class TokenSource
+    internal sealed class TokenSource
     {
         public int Id { get; set; }
 
@@ -322,7 +322,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>EF context that marks <see cref="TokenSource.Token"/> as a concurrency token.</summary>
-    private sealed class TokenContext : DbContext
+    internal sealed class TokenContext : DbContext
     {
         public TokenContext(DbContextOptions<TokenContext> options)
             : base(options)

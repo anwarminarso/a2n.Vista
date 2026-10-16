@@ -119,7 +119,7 @@ public sealed class WriteEndpointAuthorizationExampleTests
 
     // ---- Fixtures ------------------------------------------------------------------------------------
 
-    private sealed class AuthSource
+    internal sealed class AuthSource
     {
         public int Id { get; set; }
 
@@ -138,7 +138,7 @@ public sealed class WriteEndpointAuthorizationExampleTests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class AuthContext : DbContext
+    internal sealed class AuthContext : DbContext
     {
         public AuthContext(DbContextOptions<AuthContext> options)
             : base(options)

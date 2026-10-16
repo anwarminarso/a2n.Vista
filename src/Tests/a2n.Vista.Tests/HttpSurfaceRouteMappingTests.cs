@@ -121,7 +121,7 @@ public sealed class HttpSurfaceRouteMappingTests
 
     // ---- Fixtures ------------------------------------------------------------------------------------
 
-    private sealed class RouteMapSource
+    internal sealed class RouteMapSource
     {
         public int Id { get; set; }
 
@@ -141,7 +141,7 @@ public sealed class HttpSurfaceRouteMappingTests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class RouteMapContext : DbContext
+    internal sealed class RouteMapContext : DbContext
     {
         public RouteMapContext(DbContextOptions<RouteMapContext> options)
             : base(options)
