@@ -38,17 +38,10 @@ namespace a2n.Vista.Tests;
 /// suppressed at the class level, matching the sibling write-path tests.
 /// </remarks>
 /// <remarks>
-/// CsCheck runs sample iterations in parallel, and every iteration calls
-/// <c>Database.EnsureCreated</c> on a fresh in-memory
-/// <see cref="CompositeKeyContext"/>. EF Core 9 and 10 build the relational model lazily on that first
-/// use, and <c>GetRelationalModel</c> can throw <c>ModelNotFinalized</c> when two threads take the first
-/// step together (dotnet/efcore#39214, present in the pinned 9.0.6 and 10.0.0 packages). EF Core 8
-/// finalizes the relational model during context initialization, which is why the same seed passed on
-/// net8. The Sqlite connection is not part of the service-provider cache key
-/// (<c>SqliteOptionsExtension.ExtensionInfo.ShouldUseSameServiceProvider</c> is true for every SQLite
-/// extension), so one single-threaded <c>EnsureCreated</c> publishes the shared runtime model and later
-/// parallel calls take the fast path. That warmup is not a weakening of the property: the generated keys
-/// and both map orders are still asserted.
+/// CsCheck runs each iteration on a worker thread, and every iteration calls <c>EnsureCreated</c> on a
+/// fresh <see cref="CompositeKeyContext"/>. That first touch is serialized by
+/// <see cref="RelationalModelWarmup"/> before any test method runs. The property itself is unchanged:
+/// 100 iterations, both map orders, same deleted row.
 /// </remarks>
 [SuppressMessage(
     "Trimming",
@@ -58,12 +51,6 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
 {
     /// <summary>Minimum generated cases required for the property (design Testing Strategy).</summary>
     private const int Iterations = 100;
-
-    /// <summary>Serializes the first relational-model build. See <see cref="WarmRelationalModel"/>.</summary>
-    private static readonly object RelationalModelGate = new();
-
-    /// <summary>Set once <see cref="WarmRelationalModel"/> has published the shared relational model.</summary>
-    private static volatile bool _relationalModelReady;
 
     private const string ViewName = "composite-key-order-independence";
 
@@ -124,10 +111,6 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
                 $"expected the canonical composite key [{string.Join(", ", CanonicalOrder)}].");
         }
 
-        // Publish the shared relational model before CsCheck's worker threads call EnsureCreated.
-        // See the class remarks and WarmRelationalModel.
-        WarmRelationalModel();
-
         Gen.Select(genRows, Gen.Int[0, int.MaxValue], Gen.Int[0, Permutations.Length - 1]).Sample(
             data =>
             {
@@ -141,9 +124,8 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
     /// The exact sample CI run 38877351961 reported for seed <c>9CKbg4_346s7</c>
     /// (0 shrinks): five rows, target selector 388739900, permutation index 1
     /// (<c>A, C, B</c>). CsCheck threw from <c>EnsureCreated</c> before either delete ran, so this
-    /// case never demonstrated a wrong row. Replaying it here locks both halves: the reported input
-    /// deletes the same row in both map orders, and a concurrent <c>EnsureCreated</c> burst after the
-    /// warmup does not throw <c>ModelNotFinalized</c>.
+    /// input never demonstrated a wrong row. Replaying it checks that this key map still deletes the
+    /// same row in both field orders.
     /// </summary>
     [Test]
     public void Reported_Seed_9CKbg4_346s7_Deletes_The_Same_Row_For_Both_Key_Orders()
@@ -157,8 +139,6 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
         var view = viewRegistry.Get(ViewName)
             ?? throw new InvalidOperationException($"View '{ViewName}' was not registered.");
 
-        WarmRelationalModel();
-
         RowSeed[] rows =
         {
             new(9, "b5", 19, "p5"),
@@ -169,9 +149,21 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
         };
 
         AssertOrderIndependentDelete(provider, planRegistry, view, rows, targetSeed: 388739900, permIndex: 1);
+    }
 
-        // The CI failure was a first-touch race, not this input. After the warmup, the same
-        // EnsureCreated the sample performs must succeed on many threads at once.
+    /// <summary>
+    /// Checks that concurrent <c>EnsureCreated</c> on <see cref="CompositeKeyContext"/> completes after
+    /// <see cref="RelationalModelWarmup"/> has already finalized that context's relational model.
+    /// </summary>
+    /// <remarks>
+    /// This is a check of the post-warmup path only. It is not a regression test that the
+    /// <c>GetRelationalModel</c> race is closed: that race was not reproduced locally (the failing
+    /// trace is CI run 38877351961). A burst that passes after warmup does not prove a burst before
+    /// warmup would have thrown.
+    /// </remarks>
+    [Test]
+    public void Concurrent_EnsureCreated_After_Warmup_Completes()
+    {
         Exception? failure = null;
         var burst = new Thread[32];
         var gate = new Barrier(burst.Length);
@@ -200,8 +192,7 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
         if (failure is not null)
         {
             throw new Exception(
-                "Concurrent EnsureCreated threw after the relational model was warmed. " +
-                "The CI failure (GetRelationalModel / ModelNotFinalized) is still reachable.",
+                "Concurrent EnsureCreated threw after RelationalModelWarmup had already run.",
                 failure);
         }
     }
@@ -272,30 +263,6 @@ public sealed class CompositeKeyOrderIndependencePropertyTests
                 $"Shuffled-order delete (order [{string.Join(", ", shuffledOrder)}]) removed a different " +
                 $"row than the canonical order: remaining [{FormatKeys(remainingShuffled)}] vs " +
                 $"[{FormatKeys(remainingCanonical)}].");
-        }
-    }
-
-    /// <summary>
-    /// Single-threaded first <c>EnsureCreated</c> for <see cref="CompositeKeyContext"/>. Safe to call
-    /// from tests that TUnit runs in parallel with each other: only the first caller builds the
-    /// relational model, and every later caller waits for that build to finish.
-    /// </summary>
-    private static void WarmRelationalModel()
-    {
-        if (_relationalModelReady)
-        {
-            return;
-        }
-
-        lock (RelationalModelGate)
-        {
-            if (_relationalModelReady)
-            {
-                return;
-            }
-
-            EnsureCreatedOnFreshDatabase();
-            _relationalModelReady = true;
         }
     }
 
