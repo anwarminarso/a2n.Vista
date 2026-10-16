@@ -37,29 +37,23 @@ public enum WriteErrorCode
 
     /// <summary>
     /// The supplied <c>If-Match</c> token did not match the stored row's current token, or
-    /// <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c> (R6.3, R6.5, D154).
-    /// HTTP 409. This is the only conflict outcome of a failed save; the wire code is
-    /// <c>write-conflict</c>.
+    /// <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c> (R6.3, R6.5, D158).
+    /// HTTP 409. The wire code stays <c>write-concurrency-conflict</c>. The old
+    /// <c>write-conflict</c> string is retired and is no longer emitted.
     /// </summary>
     ConcurrencyConflict,
 
     /// <summary>
     /// A database constraint violation (unique, foreign key, NOT NULL, or CHECK) surfaced from
-    /// persistence (D154). HTTP 422 <c>write-constraint-violation</c> — not a conflict, and not
+    /// persistence (D158). HTTP 422 <c>write-constraint-violation</c> — not a conflict, and not
     /// used for a missing table or any other non-constraint <c>DbUpdateException</c>.
     /// </summary>
     ConstraintViolation,
 
     /// <summary>
-    /// Legacy member. Constraints are <see cref="ConstraintViolation"/>. The wire string
-    /// <c>write-conflict</c> belongs to <see cref="ConcurrencyConflict"/> (HTTP 409, D154).
-    /// </summary>
-    WriteConflict,
-
-    /// <summary>
     /// <c>SaveChanges</c> failed for a reason other than a concurrency conflict or a database
     /// constraint violation (for example a missing table or a provider I/O failure). Mapped to
-    /// HTTP 500. The client message stays leak-free (Decision Log D154; spec 01 §14.1, spec 05 §9.2).
+    /// HTTP 500. The client message stays leak-free (Decision Log D158; spec 01 §14.1, spec 05 §9.2).
     /// </summary>
     PersistenceFailed,
 
@@ -98,20 +92,15 @@ public static class WriteErrorCodes
     public const string PreconditionRequired = "write-precondition-required";
 
     /// <summary>
-    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 409. The only
-    /// <c>write-conflict</c> outcome (Decision Log D154).
+    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 409
+    /// <c>write-concurrency-conflict</c> (Decision Log D158).
     /// </summary>
-    public const string ConcurrencyConflict = "write-conflict";
+    public const string ConcurrencyConflict = "write-concurrency-conflict";
 
     /// <summary>
     /// Wire code for <see cref="WriteErrorCode.ConstraintViolation"/>. HTTP 422. Not a conflict.
     /// </summary>
     public const string ConstraintViolation = "write-constraint-violation";
-
-    /// <summary>
-    /// Legacy alias of <see cref="ConstraintViolation"/>. Not the 409 <c>write-conflict</c> code.
-    /// </summary>
-    public const string WriteConflict = ConstraintViolation;
 
     /// <summary>Wire code for <see cref="WriteErrorCode.PersistenceFailed"/>.</summary>
     public const string PersistenceFailed = "write-persistence-failed";
@@ -137,7 +126,6 @@ public static class WriteErrorCodes
         WriteErrorCode.PreconditionRequired => PreconditionRequired,
         WriteErrorCode.ConcurrencyConflict => ConcurrencyConflict,
         WriteErrorCode.ConstraintViolation => ConstraintViolation,
-        WriteErrorCode.WriteConflict => ConstraintViolation,
         WriteErrorCode.PersistenceFailed => PersistenceFailed,
         WriteErrorCode.BulkNotEnabled => BulkNotEnabled,
         WriteErrorCode.NoWritePlan => NoWritePlan,

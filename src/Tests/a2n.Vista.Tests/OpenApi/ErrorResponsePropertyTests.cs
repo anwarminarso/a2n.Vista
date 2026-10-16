@@ -63,7 +63,7 @@ public sealed class ErrorResponsePropertyTests
     };
 
     /// <summary>Every documented error status code the media-type/reference invariant applies to (R6.5).</summary>
-    private static readonly string[] ErrorCodes = { "400", "403", "404", "409", "428" };
+    private static readonly string[] ErrorCodes = { "400", "403", "404", "409", "422", "428", "500" };
 
     /// <summary>The single shared RFC 7807 schema every error response must reference (R6.1/R6.5).</summary>
     private const string ProblemDetailsRef = "#/components/schemas/ProblemDetails";

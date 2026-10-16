@@ -5,7 +5,7 @@ namespace a2n.Vista.Write;
 /// CHECK) rather than an optimistic-concurrency conflict. The AspNetCore layer maps it to HTTP 422
 /// with <see cref="WriteErrorCode.ConstraintViolation"/> (<c>write-constraint-violation</c>). It is not
 /// a 409, and a missing table or any other non-constraint <c>DbUpdateException</c> is a
-/// <see cref="VistaPersistenceException"/> instead (Decision Log D154). The provider exception stays on
+/// <see cref="VistaPersistenceException"/> instead (Decision Log D158). The provider exception stays on
 /// <see cref="Exception.InnerException"/> and is never copied into the client response (R9.6).
 /// </summary>
 public sealed class VistaConstraintViolationException : VistaWriteException

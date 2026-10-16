@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -58,8 +59,8 @@ namespace Microsoft.AspNetCore.Builder;
 /// <para>
 /// <b>Write execution (M12).</b> For a writable view the write handlers bind the request, authorize the
 /// write facet fail-closed, forward to the Core <c>IViewExecutor</c> write facet, and map the outcome to
-/// HTTP: <c>200</c> with the created row's primary key (create) or an <c>ETag</c> header carrying the
-/// current concurrency token (update/delete on a token view), <c>404</c> for a no-match / read-only /
+/// HTTP: <c>200</c> with the created row's primary key and, when the view declares a concurrency token,
+/// an <c>ETag</c> carrying that token (create); an <c>ETag</c> on update as well; <c>404</c> for a no-match / read-only /
 /// unregistered / no-plan target (indistinguishable), <c>428</c> when a token view omits <c>If-Match</c>,
 /// and <c>409</c> / <c>4xx</c> / <c>5xx</c> for the typed write failures (Requirements R1.2, R2.2, R3.2,
 /// R6.x, R12.x, R16.6).
@@ -235,7 +236,15 @@ public static class VistaEndpointRouteBuilderExtensions
 
         // A missing row keeps the 404 contract; a present row is serialized through the seam by its
         // runtime row type (D124), preserving the 200 status and byte-for-byte body (R5.2).
-        return row is null ? Results.NotFound() : VistaJsonWriter.Json(row, row.GetType());
+        // When the row projects the view's concurrency token, the same wire string is the ETag so a
+        // client can send it back as If-Match (D158).
+        if (row is null)
+        {
+            return Results.NotFound();
+        }
+
+        TryApplyDetailETag(http, viewName, row);
+        return VistaJsonWriter.Json(row, row.GetType());
     }
 
     /// <summary>Handles <c>GET {route}/metadata</c>: authorize, then return the serializable metadata.</summary>
@@ -499,7 +508,9 @@ public static class VistaEndpointRouteBuilderExtensions
     /// <summary>
     /// Handles <c>POST {route}/create</c>: bind the write model, insert through the executor, and return
     /// <c>200</c> with a minimal <see cref="VistaWriteResponse"/> carrying only the new primary key
-    /// (Requirements R1.1, R1.2, R10.1).
+    /// (Requirements R1.1, R1.2, R10.1). A view that declares a concurrency token also returns that
+    /// token as <c>ETag</c>, the value the client must send as <c>If-Match</c> on a later update or
+    /// delete (D146, D158).
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleCreateAsync(
@@ -510,6 +521,7 @@ public static class VistaEndpointRouteBuilderExtensions
     {
         var model = VistaWriteBinding.BindModel(body, view.CrudType!);
         var key = await executor.CreateAsync(http, view.Name, model).ConfigureAwait(false);
+        ApplyPostWriteETag(http, view.Name);
         return Results.Ok(new VistaWriteResponse(key));
     }
 
@@ -580,6 +592,59 @@ public static class VistaEndpointRouteBuilderExtensions
 
         // R6.2: a token view requires a non-blank If-Match before the executor is touched.
         return ifMatch ?? throw new VistaPreconditionRequiredException();
+    }
+
+    /// <summary>
+    /// Emits the post-write concurrency token as <c>ETag</c> when the view declares one. Create uses
+    /// this so the client can form the next <c>If-Match</c> without a follow-up read (D158).
+    /// </summary>
+    private static void ApplyPostWriteETag(HttpContext http, string viewName)
+    {
+        if (!ViewDeclaresConcurrencyToken(http, viewName))
+        {
+            return;
+        }
+
+        var token = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
+        if (token is not null)
+        {
+            http.Response.Headers.ETag = token;
+        }
+    }
+
+    /// <summary>
+    /// When the detail row projects the concurrency-token member, sets <c>ETag</c> to that member's
+    /// wire value. A row that does not project the token leaves the header unset.
+    /// </summary>
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075:Members annotated with DynamicallyAccessedMembersAttribute may break when trimming",
+        Justification = "Detail is on the RUC HTTP path. The token member name comes from the authored selector; the property is read only when the projected row actually declares it.")]
+    internal static void TryApplyDetailETag(HttpContext http, string viewName, object row)
+    {
+        var facets = http.RequestServices.GetService<IWriteFacetRegistry>();
+        if (facets is null || !facets.TryGet(viewName, out var facet))
+        {
+            return;
+        }
+
+        var name = ConcurrencyTokenMember.TryGetName(facet.ConcurrencyToken);
+        if (name is null)
+        {
+            return;
+        }
+
+        var property = row.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+        if (property is null || property.GetIndexParameters().Length != 0)
+        {
+            return;
+        }
+
+        var token = ConcurrencyTokenFormat.ToWire(property.GetValue(row));
+        if (token is not null)
+        {
+            http.Response.Headers.ETag = token;
+        }
     }
 
     /// <summary>

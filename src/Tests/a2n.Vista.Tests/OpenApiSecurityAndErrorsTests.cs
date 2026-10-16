@@ -328,7 +328,7 @@ public sealed class OpenApiSecurityAndErrorsTests
     public async Task Every_Error_Response_Uses_ProblemJson_Referencing_The_Single_ProblemDetails()
     {
         var document = Build(anonymous: false);
-        var errorCodes = new[] { "400", "403", "404", "409", "428" };
+        var errorCodes = new[] { "400", "403", "404", "409", "422", "428", "500" };
 
         foreach (var (_, _, operation) in Operations(document))
         {
@@ -363,10 +363,23 @@ public sealed class OpenApiSecurityAndErrorsTests
             var operation = document.Paths![TokenRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
             await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
+            await Assert.That(operation.Responses!["409"].Description).Contains("write-concurrency-conflict");
+            await Assert.That(operation.Responses!.ContainsKey("422")).IsTrue();
+            await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
+            await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
+            await Assert.That(operation.Responses!["500"].Description).Contains("write-persistence-failed");
 
             // The success (200) response carries an ETag header for the token-bearing view (R3.5).
             await Assert.That(operation.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
         }
+
+        var create = document.Paths![TokenRoute + "/create"].Post!;
+        await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("422")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("500")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/detail"].Post!.Responses!.ContainsKey("422")).IsFalse();
     }
 
     [Test]

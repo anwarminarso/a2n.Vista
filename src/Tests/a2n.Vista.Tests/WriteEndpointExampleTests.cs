@@ -4,6 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -14,6 +15,7 @@ using a2n.Vista.Authoring;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -62,7 +64,7 @@ public sealed class WriteEndpointExampleTests
     // ---- Happy paths ---------------------------------------------------------------------------------
 
     /// <summary>
-    /// D154: a create whose table was dropped is a non-constraint <c>DbUpdateException</c>. The HTTP
+    /// D158: a create whose table was dropped is a non-constraint <c>DbUpdateException</c>. The HTTP
     /// response is 500 <c>write-persistence-failed</c> problem+json, not 409 <c>write-conflict</c>, and
     /// the body does not repeat the provider's SQL or table name.
     /// </summary>
@@ -221,6 +223,101 @@ public sealed class WriteEndpointExampleTests
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
     }
 
+    /// <summary>
+    /// D158: create on any token-bearing view returns the post-write token as <c>ETag</c>, and that value
+    /// is a valid <c>If-Match</c> for the following update.
+    /// </summary>
+    [Test]
+    public async Task TokenView_Create_Returns_ETag_And_Update_Honors_It()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var created = await app.Client.PostAsync($"{TokenRoute}/create", Json("{\"model\":{\"name\":\"born\"}}"));
+        var etag = Header(created, "ETag");
+
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(etag).IsEqualTo("0");
+
+        var updated = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"grown\"}}", etag!);
+        await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(updated.ETag).IsEqualTo("0");
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
+    }
+
+    /// <summary>
+    /// D158: a stale <c>If-Match</c> on a token view is 409 <c>write-concurrency-conflict</c>. The retired
+    /// <c>write-conflict</c> code is not emitted.
+    /// </summary>
+    [Test]
+    public async Task TokenView_Update_With_Stale_IfMatch_Returns_409_ConcurrencyConflict()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SeedToken(1, "orig", 42);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{TokenRoute}/update")
+        {
+            Content = new StringContent("{\"key\":1,\"model\":{\"name\":\"lost\"}}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", "0");
+        var response = await app.Client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        using var doc = JsonDocument.Parse(body);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        await Assert.That(code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
+        await Assert.That(code).IsNotEqualTo("write-conflict");
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("orig");
+    }
+
+    /// <summary>
+    /// D158: detail sets <c>ETag</c> from the projected token member, and leaves it unset when the row
+    /// does not project that member. The inline test views have no generated read plan, so this drives
+    /// the mapper directly.
+    /// </summary>
+    [Test]
+    public async Task Detail_ETag_Uses_Projected_Token_And_Skips_A_Row_Without_It()
+    {
+        Expression<Func<TokenSource, int>> token = e => e.Version;
+        var registry = new WriteFacetRegistry();
+        registry.Register(TokenView, new CrudFacetDefinition(
+            typeof(NameCrud),
+            typeof(TokenSource),
+            Array.Empty<WritableFieldMapping>(),
+            token,
+            false));
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IWriteFacetRegistry>(registry);
+        var provider = services.BuildServiceProvider();
+
+        var projected = new DefaultHttpContext { RequestServices = provider };
+        VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
+            projected,
+            TokenView,
+            new TokenRow { Id = 1, Name = "orig", Version = 42 });
+        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("42");
+
+        var unprojected = new DefaultHttpContext { RequestServices = provider };
+        VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
+            unprojected,
+            TokenView,
+            new PlainRow { Id = 1, Name = "orig" });
+        await Assert.That(unprojected.Response.Headers.ETag.Count).IsEqualTo(0);
+    }
+
+    /// <summary>A tokenless create does not emit <c>ETag</c>.</summary>
+    [Test]
+    public async Task TokenlessView_Create_Omits_ETag()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{PlainRoute}/create", Json("{\"model\":{\"name\":\"plain\"}}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(Header(response, "ETag")).IsNull();
+    }
+
     /// <summary>R6.6: a tokenless view ignores a present If-Match (harmless) — the update still returns 200.</summary>
     [Test]
     public async Task TokenlessView_Ignores_Present_IfMatch_Returns_200()
@@ -313,6 +410,9 @@ public sealed class WriteEndpointExampleTests
     // ---- Helpers -------------------------------------------------------------------------------------
 
     private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
+
+    private static string? Header(HttpResponseMessage response, string name) =>
+        response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
 
     /// <summary>Reads the RFC 7807 <c>code</c> extension member from a problem response body.</summary>
     private static async Task<string?> CodeOf(HttpResponseMessage response)

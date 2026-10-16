@@ -193,8 +193,6 @@ internal static class VistaProblemResults
         WriteErrorCode.PreconditionRequired => StatusCodes.Status428PreconditionRequired,
         WriteErrorCode.ConcurrencyConflict => StatusCodes.Status409Conflict,
         WriteErrorCode.ConstraintViolation => StatusCodes.Status422UnprocessableEntity,
-        // Legacy alias of ConstraintViolation. Not a 409 (D154).
-        WriteErrorCode.WriteConflict => StatusCodes.Status422UnprocessableEntity,
         WriteErrorCode.PersistenceFailed => StatusCodes.Status500InternalServerError,
         // NoWritePlan is rendered as an indistinguishable 404 by the endpoint (never via a coded body);
         // if one ever reaches here, fall back to 404 so no existence signal leaks.
@@ -212,9 +210,8 @@ internal static class VistaProblemResults
         WriteErrorCode.ValidationFailed => "Validation failed",
         WriteErrorCode.BulkNotEnabled => "Bulk writes not enabled",
         WriteErrorCode.PreconditionRequired => "Precondition required",
-        WriteErrorCode.ConcurrencyConflict => "Write conflict",
+        WriteErrorCode.ConcurrencyConflict => "Concurrency conflict",
         WriteErrorCode.ConstraintViolation => "Constraint violation",
-        WriteErrorCode.WriteConflict => "Constraint violation",
         WriteErrorCode.PersistenceFailed => "Persistence failed",
         WriteErrorCode.NoWritePlan => "Not found",
         _ => "Write rejected",

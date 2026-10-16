@@ -1,3 +1,4 @@
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
 using a2n.Vista.Contracts;
@@ -5,6 +6,7 @@ using a2n.Vista.Examples.Northwind.Views;
 using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
+using a2n.Vista.Write;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -184,6 +186,12 @@ public static class WriteSelfTest
         Console.WriteLine($"Route     : {view.Route}");
         Console.WriteLine();
 
+        if (!await AssertHostFileDatabaseAsync(scope.ServiceProvider))
+        {
+            Console.WriteLine("HOST WRITE SELF-TEST RESULT: FAIL");
+            return false;
+        }
+
         var failures = 0;
         if (!await HostListAsync(services, view))
         {
@@ -206,6 +214,16 @@ public static class WriteSelfTest
 
             if (memoId is int createdId)
             {
+                if (!await RejectsStaleIfMatchAsync(services, view, createdId))
+                {
+                    failures++;
+                }
+
+                if (!await DetailProjectsTokenAsync(services, view, createdId))
+                {
+                    failures++;
+                }
+
                 await UpdateAsync(
                     services,
                     view,
@@ -234,6 +252,114 @@ public static class WriteSelfTest
         Console.WriteLine($"Failed operations: {failures}");
         Console.WriteLine($"HOST WRITE SELF-TEST RESULT: {(passed ? "PASS" : "FAIL")}");
         return passed;
+    }
+
+    /// <summary>
+    /// The host self-test must run against the shipped <c>northwind.db</c> file, and that file must
+    /// already contain <c>VistaMemos</c> (startup creation, not an in-memory <c>EnsureCreated</c>).
+    /// </summary>
+    private static async Task<bool> AssertHostFileDatabaseAsync(IServiceProvider provider)
+    {
+        var ctx = provider.GetRequiredService<NorthwindDbContext>();
+        var connectionString = ctx.Database.GetConnectionString() ?? string.Empty;
+        Console.WriteLine($"DataSource : {connectionString}");
+        if (connectionString.Contains(":memory:", StringComparison.OrdinalIgnoreCase)
+            || !connectionString.Contains("northwind.db", StringComparison.OrdinalIgnoreCase))
+        {
+            Console.WriteLine("FAIL: host database is not the northwind.db file.");
+            return false;
+        }
+
+        var connection = ctx.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose)
+        {
+            await connection.OpenAsync();
+        }
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'VistaMemos'";
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            if (count != 1)
+            {
+                Console.WriteLine("FAIL: sqlite_master does not contain VistaMemos.");
+                return false;
+            }
+
+            Console.WriteLine("    sqlite_master contains VistaMemos -> PASS");
+            return true;
+        }
+        finally
+        {
+            if (shouldClose)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A stale <c>If-Match</c> must be <see cref="VistaConcurrencyConflictException"/> with wire code
+    /// <c>write-concurrency-conflict</c>, and must not be accepted.
+    /// </summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.UpdateAsync over the typed write contract.")]
+    private static async Task<bool> RejectsStaleIfMatchAsync(IServiceProvider provider, ViewMetadata view, int memoId)
+    {
+        Console.WriteLine($"[1b] Stale If-Match (MemoId={memoId})");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            await executor.UpdateAsync(
+                view,
+                memoId,
+                new MemoWriteModel { Subject = "stale", Body = "stale" },
+                new ViewScope(),
+                concurrencyToken: "00000000-0000-0000-0000-000000000000",
+                CancellationToken.None);
+            Console.WriteLine("    -> FAIL: stale If-Match was accepted");
+            return false;
+        }
+        catch (VistaConcurrencyConflictException ex)
+        {
+            var code = ex.Code.ToWireCode();
+            var ok = code == WriteErrorCodes.ConcurrencyConflict;
+            Console.WriteLine($"    code={code}");
+            Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Detail must project the concurrency token so a client can copy it into <c>If-Match</c>.</summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.DetailAsync over MemoRow.")]
+    private static async Task<bool> DetailProjectsTokenAsync(IServiceProvider provider, ViewMetadata view, int memoId)
+    {
+        Console.WriteLine($"[1c] Detail projects RowVersion (MemoId={memoId})");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            var row = await executor.DetailAsync<MemoRow>(view, memoId, new ViewScope(), CancellationToken.None);
+            var stored = await ReadTokenAsync(provider, memoId);
+            var projected = row?.RowVersion.ToString();
+            var ok = row is not null && projected == stored && row.RowVersion != Guid.Empty;
+            Console.WriteLine($"    RowVersion={projected}");
+            Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>Lists <c>vWritableMemo</c> on the host database. A missing <c>VistaMemos</c> table fails this check.</summary>

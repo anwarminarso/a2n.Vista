@@ -109,6 +109,10 @@ internal static class Program
         //    AOT-clean. Runs after the Phase 5 probe so the seam's reflection fallback is already removed.
         StyleACoverageProbe.Run();
 
+        // 10) D158: classify a SQLSTATE constraint and a direct-type probe without reflection, so the
+        //     trim/AOT analyzer proves DbUpdateFailureClassification is free of IL2075/IL2026.
+        SaveFailureClassificationProbe.Run();
+
         return 0;
     }
 

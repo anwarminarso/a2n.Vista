@@ -13,29 +13,46 @@ While the version is `0.x`, anything may change between releases.
   `VistaMemos` table, so a live list/update/delete returned 500 (`no such table: VistaMemos`) and create
   returned 409 `write-conflict`. Both Northwind hosts now create only that demo table on startup
   (`NorthwindDemoSchema.EnsureWritableMemoTable`). Northwind tables are not recreated or reseeded. The
-  self-test still runs Create/Update/Delete on an isolated database, and now also on the host database,
-  deleting the memo it inserted.
-- **Save failures are three distinct outcomes** (Decision Log D154). Only a genuine concurrency
-  failure (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
-  `VistaConcurrencyConflictException`) is HTTP 409 `write-conflict`. A unique, foreign-key, NOT NULL,
-  or CHECK breach is HTTP 422 `write-constraint-violation` (`VistaConstraintViolationException`) — not
-  a conflict. Every other `DbUpdateException` — a missing table, a connection error, an unrecognized
-  provider error — is HTTP 500 `write-persistence-failed` (`VistaPersistenceException`). The client
-  message stays fixed and leak-free; the provider exception remains the inner exception for server logs.
-  A missing `VistaMemos` table was the case that used to come back as 409 `write-conflict`.
+  host self-test asserts the connection is the `northwind.db` file, that `sqlite_master` contains
+  `VistaMemos`, and that a stale `If-Match` is `write-concurrency-conflict`. The isolated self-test still
+  runs Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
+- **Save failures are three distinct outcomes** (Decision Log D158). A genuine concurrency failure
+  (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
+  `VistaConcurrencyConflictException`) is HTTP 409 `write-concurrency-conflict`. A unique, foreign-key,
+  NOT NULL, or CHECK breach is HTTP 422 `write-constraint-violation`
+  (`VistaConstraintViolationException`). Every other `DbUpdateException` — a missing table, a connection
+  error, an unrecognized provider error — is HTTP 500 `write-persistence-failed`
+  (`VistaPersistenceException`). The client message stays fixed and leak-free; the provider exception
+  remains the inner exception for server logs. A missing `VistaMemos` table was the case that used to
+  come back as 409 `write-conflict`.
+- **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
+  post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
+  row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
+  mismatch is 409 `write-concurrency-conflict`.
 
 ### Changed
-- **Breaking (0.x) wire rename for concurrency.** `WriteErrorCodes.ConcurrencyConflict` is now
-  `write-conflict`. The previous wire code `write-concurrency-conflict` is retired. Clients that
-  matched `write-conflict` as a constraint violation must match `write-constraint-violation` (HTTP 422)
-  instead. `WriteErrorCode.WriteConflict` and `VistaWriteConflictException` remain as legacy names and
-  now alias the 422 constraint outcome; new code raises `VistaConstraintViolationException`.
+- **Breaking (0.x): `write-conflict` is retired.** It previously meant a constraint violation and is no
+  longer emitted. Concurrency keeps `write-concurrency-conflict` (HTTP 409).
+
+  | Outcome | HTTP | Wire code |
+  | --- | --- | --- |
+  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 409 | `write-concurrency-conflict` |
+  | Constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `write-constraint-violation` |
+  | Other `DbUpdateException` (missing table, I/O, unrecognized provider) | 500 | `write-persistence-failed` |
+
+  `WriteErrorCode.WriteConflict`, `WriteErrorCodes.WriteConflict`, and `VistaWriteConflictException` are
+  removed. They are not obsolete aliases. Clients that matched `write-conflict` as a constraint violation
+  must match `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` is unchanged.
+  Constraint detection does not reflect over provider error-code properties. Built-in rules are SQLSTATE
+  class `23` and SQLite's `SqliteException` text. SQL Server and MySQL numeric codes are classified by a
+  host probe (`DbUpdateFailureClassification.AddConstraintProbe`). An unrecognized provider is HTTP 500.
 
 ### Added
 - `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`
   (`write-constraint-violation`) and `VistaConstraintViolationException`.
 - `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
   and `VistaPersistenceException`.
+- `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
 
 ## [0.0.4] - 2026-08-11
 

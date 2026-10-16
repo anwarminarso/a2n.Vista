@@ -325,7 +325,7 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
        → null → 404 not-found
      if there is a token: compare ifMatch vs the entity token → mismatch → 412 precondition-failed
      ApplyWritable(crud, entity); SaveChanges
-       → DbUpdateConcurrencyException → 409 write-conflict
+       → DbUpdateConcurrencyException → 409 write-concurrency-conflict
        → constraint violation (unique, FK, NOT NULL, CHECK) → 422 write-constraint-violation
        → any other DbUpdateException (missing table, I/O) → 500 write-persistence-failed
 5. 200 OK + new ETag + Detail-shape body
@@ -333,7 +333,7 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 
 - **Update by-key is `AND`-ed with the trusted scope** (D85): a row outside the tenant → appears as `404` (not 403), not revealing the existence of a cross-tenant row.
 - PUT is a **full update** over the whitelist fields; whitelist fields absent from the `TCrud` payload follow DTO semantics (null/default) — partial update (PATCH per-field) is **out of v1.0** (§12 OQ).
-- Save failures are three outcomes (D154). A `DbUpdateConcurrencyException` is **409** `write-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error) is a **500** `write-persistence-failed`. The same split applies to Create and Delete.
+- Save failures are three outcomes (D158). A `DbUpdateConcurrencyException` is **409** `write-concurrency-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
 
 ### 7.4 Delete — `DELETE {root}/{v}/{key}`
 
@@ -342,7 +342,7 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 2. concurrency: If-Match REQUIRED if the view has a token → 412 if missing
 3. IViewWriter.DeleteAsync(viewName, key, scope, ifMatch):
      entity = source.Where(scope).FirstOrDefault(KeySelector == key) → null → 404
-     token mismatch → 412 ; SaveChanges → DbUpdateConcurrencyException → 409 write-conflict
+     token mismatch → 409 write-concurrency-conflict ; SaveChanges → DbUpdateConcurrencyException → 409 write-concurrency-conflict
 4. 204 No Content
 ```
 
@@ -389,7 +389,7 @@ Bulk security rules:
 - Token encoding → ETag string: `byte[] RowVersion` → **base64url**; `DateTime LastModifiedAt` → **ISO-8601**; `xmin` (PostgreSQL) → a numeric string. Always a **strong ETag** (not weak `W/`).
 - `PUT`/`DELETE` on a token-bearing view **must** supply `If-Match: "<token>"`:
   - missing header → **412** `precondition-failed` (do not silently perform last-write-wins).
-  - token mismatch on load / `SaveChanges` throwing `DbUpdateConcurrencyException` → **409** `write-conflict`.
+  - token mismatch on load / `SaveChanges` throwing `DbUpdateConcurrencyException` → **409** `write-concurrency-conflict`.
 - A View without a token: `If-Match` is ignored (no optimistic protection). A token is recommended for all multi-user writes.
 
 ## 8. Metadata Endpoint
@@ -436,7 +436,7 @@ Satisfies Spec 01 §14.1 & Spec 02 §15: a single `application/problem+json` sha
 | Write (§7) | `WriteStatus.ValidationFailed` | 400 | `.../validation` (per-field in `errors[]`) |
 | Write (§7) | `WriteStatus.NotFound` (key missing / outside scope) | 404 | `.../not-found` |
 | Write (§7) | `If-Match` missing on a token-bearing view | 412 | `.../precondition-failed` |
-| Write (§7) | token mismatch / `DbUpdateConcurrencyException` | 409 | `.../write-conflict` |
+| Write (§7) | token mismatch / `DbUpdateConcurrencyException` | 409 | `.../write-concurrency-conflict` |
 | Write (§7) | constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `.../write-constraint-violation` |
 | Write (§7) | other `DbUpdateException` (missing table, I/O, unrecognized provider) | 500 | `.../write-persistence-failed` |
 | Bulk (§7.6) | empty `filter` | 400 | `.../bulk-requires-filter` |

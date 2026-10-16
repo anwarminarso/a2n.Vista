@@ -33,13 +33,13 @@ namespace a2n.Vista.Tests;
 /// a real provider, so they run against a SQLite-backed <see cref="DbContext"/> that surfaces genuine
 /// provider persistence failures at <c>SaveChanges</c>:
 /// <list type="bullet">
-/// <item><b>Optimistic concurrency at save time</b> (Requirement R6.5, D154) — a genuine
+/// <item><b>Optimistic concurrency at save time</b> (Requirement R6.5, D158) — a genuine
 /// <see cref="DbUpdateConcurrencyException"/> is translated to a
-/// <see cref="VistaConcurrencyConflictException"/> (HTTP 409 <c>write-conflict</c>) and rolled back.</item>
-/// <item><b>Constraint violation</b> (D154) — a unique or foreign-key breach is a
+/// <see cref="VistaConcurrencyConflictException"/> (HTTP 409 <c>write-concurrency-conflict</c>) and rolled back.</item>
+/// <item><b>Constraint violation</b> (D158) — a unique or foreign-key breach is a
 /// <see cref="VistaConstraintViolationException"/> (HTTP 422 <c>write-constraint-violation</c>), not a
 /// 409. The message carries no SQL or schema detail, and no partial row is persisted.</item>
-/// <item><b>Schema failure</b> (D154) — a missing table is a <see cref="DbUpdateException"/> that is not
+/// <item><b>Schema failure</b> (D158) — a missing table is a <see cref="DbUpdateException"/> that is not
 /// a constraint. It becomes a <see cref="VistaPersistenceException"/> (HTTP 500
 /// <c>write-persistence-failed</c>), never a 409.</item>
 /// </list>
@@ -59,10 +59,10 @@ public sealed class WritePersistenceFailureIntegrationTests
     private const string ForeignKeyViewName = "write-foreign-key-constraint";
     private const string ConcurrencyViewName = "write-savechanges-concurrency";
 
-    // ---- Constraint violation (R1.7, R3.8, R11.3, R11.4, D154) ----------------------------------------
+    // ---- Constraint violation (R1.7, R3.8, R11.3, R11.4, D158) ----------------------------------------
 
     /// <summary>
-    /// D154: a create whose whitelisted value collides with a UNIQUE index makes <c>SaveChanges</c>
+    /// D158: a create whose whitelisted value collides with a UNIQUE index makes <c>SaveChanges</c>
     /// throw a provider <see cref="DbUpdateException"/>. That constraint is not a concurrency conflict:
     /// the executor surfaces a <see cref="VistaConstraintViolationException"/> (422
     /// <c>write-constraint-violation</c>), and no partial row is persisted.
@@ -97,7 +97,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>
-    /// D154: a create whose target table is missing makes <c>SaveChanges</c> throw a provider
+    /// D158: a create whose target table is missing makes <c>SaveChanges</c> throw a provider
     /// <see cref="DbUpdateException"/> that is not a constraint and not a concurrency conflict. The
     /// executor surfaces a <see cref="VistaPersistenceException"/> (500), never 409 <c>write-conflict</c>.
     /// </summary>
@@ -156,11 +156,12 @@ public sealed class WritePersistenceFailureIntegrationTests
             concurrencyToken: "v1",
             CancellationToken.None));
 
-        // R6.5/D154: DbUpdateConcurrencyException is the 409 write-conflict, not a constraint or a 500.
+        // R6.5/D158: DbUpdateConcurrencyException is 409 write-concurrency-conflict, not a constraint or a 500.
         await Assert.That(thrown).IsTypeOf<VistaConcurrencyConflictException>();
         var conflict = (VistaConcurrencyConflictException)thrown!;
         await Assert.That(conflict.Code).IsEqualTo(WriteErrorCode.ConcurrencyConflict);
-        await Assert.That(conflict.Code.ToWireCode()).IsEqualTo("write-conflict");
+        await Assert.That(conflict.Code.ToWireCode()).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
+        await Assert.That(conflict.Code.ToWireCode()).IsNotEqualTo("write-conflict");
         await Assert.That(conflict.Code).IsNotEqualTo(WriteErrorCode.ConstraintViolation);
         await Assert.That(conflict.Code).IsNotEqualTo(WriteErrorCode.PersistenceFailed);
         await AssertMessageIsLeakFree(conflict.Message);
@@ -172,7 +173,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>
-    /// D154: a foreign-key breach is the same non-conflict constraint response as a unique breach, not a
+    /// D158: a foreign-key breach is the same non-conflict constraint response as a unique breach, not a
     /// 409 <c>write-conflict</c> and not a 500.
     /// </summary>
     [Test]
@@ -196,8 +197,8 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>
-    /// D154: the three <c>DbUpdateException</c> cases leave the executor as three different exceptions and
-    /// the HTTP mapper as three different status/code pairs — 409 <c>write-conflict</c> (concurrency),
+    /// D158: the three <c>DbUpdateException</c> cases leave the executor as three different exceptions and
+    /// the HTTP mapper as three different status/code pairs — 409 <c>write-concurrency-conflict</c> (concurrency),
     /// 422 <c>write-constraint-violation</c> (unique constraint), 500 <c>write-persistence-failed</c>
     /// (missing table).
     /// </summary>
@@ -244,10 +245,11 @@ public sealed class WritePersistenceFailureIntegrationTests
         var constraintHttp = await MapProblemAsync(constraint!);
         var schemaHttp = await MapProblemAsync(schema!);
 
-        // (1) concurrency conflict → 409 write-conflict
+        // (1) concurrency conflict → 409 write-concurrency-conflict
         await Assert.That(concurrency).IsTypeOf<VistaConcurrencyConflictException>();
         await Assert.That(concurrencyHttp.Status).IsEqualTo(StatusCodes.Status409Conflict);
-        await Assert.That(concurrencyHttp.Code).IsEqualTo("write-conflict");
+        await Assert.That(concurrencyHttp.Code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
+        await Assert.That(concurrencyHttp.Code).IsNotEqualTo("write-conflict");
 
         // (2) constraint violation → its own non-conflict response
         await Assert.That(constraint).IsTypeOf<VistaConstraintViolationException>();

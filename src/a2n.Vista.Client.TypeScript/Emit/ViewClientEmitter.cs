@@ -346,7 +346,12 @@ public static class ViewClientEmitter
             builder.Append(Indent)
                 .Append(" * missing token surfaces as `precondition-required` (428) and a stale token as")
                 .Append(NewLine);
-            builder.Append(Indent).Append(" * `precondition-failed` (409).").Append(NewLine);
+            builder.Append(Indent).Append(" * `precondition-failed` (409, `write-concurrency-conflict`). A")
+                .Append(NewLine);
+            builder.Append(Indent)
+                .Append(" * constraint breach is `constraint-violation` (422) and another save failure is")
+                .Append(NewLine);
+            builder.Append(Indent).Append(" * `persistence-failed` (500).").Append(NewLine);
         }
 
         builder.Append(Indent).Append(" */").Append(NewLine);
