@@ -131,7 +131,7 @@ While the version is `0.x`, anything may change between releases.
   | --- | --- | --- | --- |
   | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
   | Update of an in-scope row | 200 with an empty body and an `ETag` | 200 with the detail row and the new `ETag` | Read the updated row from the body. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
-  | Missing row, out-of-scope row, read-only route, and unmapped route | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Do not treat an empty body as the not-found signal. |
+  | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
   | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | Read `MaxLength` from the model. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
 
 ## [0.0.4] - 2026-08-11

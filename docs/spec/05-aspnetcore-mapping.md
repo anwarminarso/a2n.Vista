@@ -351,7 +351,7 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 4. 204 No Content, no body, no ETag
 ```
 
-- A missing row is **404** `application/problem+json` with code `not-found`. The same body is returned for an out-of-scope row, a read-only route, and an unmapped route, and it names neither the view nor the key.
+- A missing row is **404** `application/problem+json` with code `not-found`. The same body is returned for an out-of-scope row, a read-only route, and an unmapped route under that view's route prefix, and it names neither the view nor the key. Paths outside the prefix are left to the host, so `/` can still serve the static shell.
 
 Soft-delete is not the endpoint's concern: if a view models soft-delete, it is expressed as `WithRowFilter<TSource>(_ => e => !e.IsDeleted)` (Spec 01 §5.2) + a `WithCrud` that sets the flag, not a physical `DELETE`. The `DELETE` endpoint always = remove the row (or fail to 404/412/428).
 
@@ -459,7 +459,7 @@ Satisfies Spec 01 §14.1 & Spec 02 §15: a single `application/problem+json` sha
 | Auth (§6) | `IsAllowedAsync == false`, user authenticated | 403 | `.../forbidden` |
 | Auth (§6) | `IsAllowedAsync == false`, anonymous user | 401 | `.../unauthorized` |
 | Write (§7) | `WriteStatus.ValidationFailed` | 400 | `.../validation` (per-field in `errors[]`) |
-| Write (§7) | key missing / outside scope / unmapped route | 404 | `.../not-found` (problem+json; same body for each) |
+| Write (§7) | key missing / outside scope / unmapped route under the view prefix | 404 | `.../not-found` (problem+json; same body for each) |
 | Write (§7) | `If-Match` missing on a token-bearing view | 428 | `.../write-precondition-required` |
 | Write (§7) | stale `If-Match` / `DbUpdateConcurrencyException` | 412 | `.../write-concurrency-conflict` |
 | Write (§7) | constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `.../write-constraint-violation` |

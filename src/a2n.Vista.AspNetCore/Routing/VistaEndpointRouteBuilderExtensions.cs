@@ -1,4 +1,5 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
@@ -98,11 +99,30 @@ public static class VistaEndpointRouteBuilderExtensions
             MapSingleView(endpoints, view);
         }
 
-        // Unmapped paths use the same problem body as a missing row, so a read-only or unknown view
-        // cannot be told apart from a key that is not there (R12.3).
-        endpoints.MapFallback(() => VistaProblemResults.ResourceNotFound());
+        // Unmapped paths under a registered view prefix use the same problem body as a missing row,
+        // so a read-only or unknown view cannot be told apart from a key that is not there (R12.3).
+        // The fallback is not the whole app: a global fallback matches "/" before UseDefaultFiles can
+        // rewrite it to index.html, and the showcase pages never issue their data POST.
+        foreach (var prefix in registry.All
+            .Select(view => ViewRoutePrefix(view.Route))
+            .Where(prefix => prefix.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            endpoints.MapFallback(prefix + "/{*path}", () => VistaProblemResults.ResourceNotFound());
+        }
 
         return endpoints;
+    }
+
+    /// <summary>
+    /// The parent of a view route (<c>/api/views/vProductCategory</c> → <c>/api/views</c>). An empty
+    /// result means the route has no directory, and no fallback is registered for it.
+    /// </summary>
+    private static string ViewRoutePrefix(string route)
+    {
+        var trimmed = route.TrimEnd('/');
+        var slash = trimmed.LastIndexOf('/');
+        return slash <= 0 ? string.Empty : trimmed[..slash];
     }
 
     /// <summary>
