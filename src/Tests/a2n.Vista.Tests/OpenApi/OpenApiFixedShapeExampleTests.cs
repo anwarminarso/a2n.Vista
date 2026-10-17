@@ -265,7 +265,7 @@ public sealed class OpenApiFixedShapeExampleTests
         var document = RepresentativeDocument();
         await Assert.That(document.Components!.Schemas!.ContainsKey("ProblemDetails")).IsTrue();
 
-        var errorCodes = new[] { "400", "403", "404", "409", "422", "428", "500" };
+        var errorCodes = new[] { "400", "403", "404", "409", "412", "422", "428", "500" };
         foreach (var (_, _, operation) in Operations(document))
         {
             foreach (var code in errorCodes)
@@ -293,8 +293,9 @@ public sealed class OpenApiFixedShapeExampleTests
         {
             var operation = document.Paths![EmitterFixtures.SubscriptionRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
-            await Assert.That(operation.Responses!["409"].Description).Contains("write-concurrency-conflict");
+            await Assert.That(operation.Responses!.ContainsKey("412")).IsTrue();
+            await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+            await Assert.That(operation.Responses!["412"].Description).Contains("write-concurrency-conflict");
             await Assert.That(operation.Responses!.ContainsKey("422")).IsTrue();
             await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
             await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
@@ -341,6 +342,7 @@ public sealed class OpenApiFixedShapeExampleTests
             var operation = document.Paths!["/api/views/tokenlessWidgets/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
             await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+            await Assert.That(operation.Responses!.ContainsKey("412")).IsFalse();
             await Assert.That(operation.Responses!["200"].Headers).IsNull();
         }
     }

@@ -328,7 +328,7 @@ public sealed class OpenApiSecurityAndErrorsTests
     public async Task Every_Error_Response_Uses_ProblemJson_Referencing_The_Single_ProblemDetails()
     {
         var document = Build(anonymous: false);
-        var errorCodes = new[] { "400", "403", "404", "409", "422", "428", "500" };
+        var errorCodes = new[] { "400", "403", "404", "409", "412", "422", "428", "500" };
 
         foreach (var (_, _, operation) in Operations(document))
         {
@@ -362,8 +362,9 @@ public sealed class OpenApiSecurityAndErrorsTests
         {
             var operation = document.Paths![TokenRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
-            await Assert.That(operation.Responses!["409"].Description).Contains("write-concurrency-conflict");
+            await Assert.That(operation.Responses!.ContainsKey("412")).IsTrue();
+            await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+            await Assert.That(operation.Responses!["412"].Description).Contains("write-concurrency-conflict");
             await Assert.That(operation.Responses!.ContainsKey("422")).IsTrue();
             await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
             await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
@@ -394,6 +395,7 @@ public sealed class OpenApiSecurityAndErrorsTests
             var operation = document.Paths![WriteRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
             await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+            await Assert.That(operation.Responses!.ContainsKey("412")).IsFalse();
             await Assert.That(operation.Responses!["200"].Headers).IsNull();
         }
     }
@@ -413,6 +415,7 @@ public sealed class OpenApiSecurityAndErrorsTests
                 var operation = document.Paths![route + "/" + suffix].Post!;
                 await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
                 await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+                await Assert.That(operation.Responses!.ContainsKey("412")).IsFalse();
             }
         }
     }

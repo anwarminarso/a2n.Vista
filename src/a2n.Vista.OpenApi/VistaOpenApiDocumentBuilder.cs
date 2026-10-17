@@ -33,7 +33,7 @@ namespace a2n.Vista.OpenApi;
 /// component schema (envelopes, <c>FilterNode</c>, per-view <c>TRow</c>/<c>TCrud</c> DTOs). Task 5.3 layers
 /// the per-facet <c>security</c> requirement (the configured or default HTTP bearer scheme when not
 /// anonymous, none when anonymous), the RFC 7807 error responses (<c>400</c>/<c>403</c>/<c>404</c>/
-/// <c>428</c>/<c>409</c>, all referencing the single <c>ProblemDetails</c> schema via
+/// <c>428</c>/<c>412</c>, all referencing the single <c>ProblemDetails</c> schema via
 /// <c>application/problem+json</c>), the cached-metadata <c>If-None-Match</c>/<c>ETag</c>/<c>304</c>
 /// contract, and the write-facet <c>ETag</c> success header for a token-bearing view. The final
 /// deterministic ordering and full <c>info</c>/assembly version assembly are finalized by task 5.4.
@@ -62,7 +62,7 @@ public sealed class VistaOpenApiDocumentBuilder
     /// The optional per-view Write-facet registry (read, never modified). It is the <b>only</b> place a
     /// view's optimistic-concurrency token is recorded (<see cref="Authoring.CrudFacetDefinition.ConcurrencyToken"/>);
     /// <see cref="Metadata.ViewMetadata"/> carries no token concept. When supplied, the emitter documents
-    /// the token-gated <c>428</c>/<c>409</c> responses and the write-facet <c>ETag</c> success header for a
+    /// the token-gated <c>428</c>/<c>412</c> responses and the write-facet <c>ETag</c> success header for a
     /// writable view that declares a token (Requirements 3.5, 6.4). When <see langword="null"/>, no view is
     /// treated as token-bearing, so those token-conditional artifacts are omitted.
     /// </param>
@@ -266,7 +266,7 @@ public sealed class VistaOpenApiDocumentBuilder
         // A writable view is "token-bearing" iff it declares an optimistic-concurrency token on its Write
         // facet. That token lives *only* on the Write-facet registry (CrudFacetDefinition.ConcurrencyToken)
         // — ViewMetadata carries no token concept — so without the registry the view is treated as
-        // tokenless and the 428/409 responses + write ETag header are omitted (Requirements 3.5, 6.4).
+        // tokenless and the 428/412 responses + write ETag header are omitted (Requirements 3.5, 6.4).
         var hasConcurrencyToken =
             !view.IsReadOnly
             && _writeFacets is not null
@@ -404,10 +404,10 @@ public sealed class VistaOpenApiDocumentBuilder
             responses["403"] = ProblemResponse(ErrorDescription(403), schemas);
         }
 
-        // 428/409 on update/delete for a token-bearing writable view (Requirement 6.4).
+        // 428/412 on update/delete for a token-bearing writable view (Requirement 6.4, D159).
         if (facet.ConcurrencyErrorsWhenTokenDeclared && hasConcurrencyToken)
         {
-            responses["409"] = ProblemResponse(ErrorDescription(409), schemas);
+            responses["412"] = ProblemResponse(ErrorDescription(412), schemas);
             responses["428"] = ProblemResponse(ErrorDescription(428), schemas);
         }
 
@@ -478,7 +478,7 @@ public sealed class VistaOpenApiDocumentBuilder
         400 => "The request envelope was invalid (validation or binding failure).",
         403 => "Access was denied by the view's authorizer.",
         404 => "The requested row was not found (or the operation is not available for this view).",
-        409 => "The supplied concurrency token did not match the current row (code write-concurrency-conflict).",
+        412 => "The If-Match precondition did not match the current row (code write-concurrency-conflict).",
         422 => "The write violates a database constraint and was not applied (code write-constraint-violation).",
         428 => "A concurrency token (If-Match) is required for this operation.",
         500 => "The write could not be saved (code write-persistence-failed).",

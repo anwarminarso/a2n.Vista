@@ -16,7 +16,7 @@
 //        - application/problem+json (case-insensitive,
 //          ignoring ;charset) + parseable object      -> problem, or the status-specialized
 //                                                        not-found(404)/precondition-required(428)/
-//                                                        precondition-failed(409). A 422 whose code is
+//                                                        precondition-failed(412). A 422 whose code is
 //                                                        write-constraint-violation is constraint-violation;
 //                                                        a 500 whose code is write-persistence-failed is
 //                                                        persistence-failed. Any other 422/500 stays problem.
@@ -82,7 +82,7 @@ type ExpectedOutcome =
   | { readonly kind: "problem"; readonly status: number }
   | { readonly kind: "not-found"; readonly status: 404 }
   | { readonly kind: "precondition-required"; readonly status: 428 }
-  | { readonly kind: "precondition-failed"; readonly status: 409 }
+  | { readonly kind: "precondition-failed"; readonly status: 412 }
   | { readonly kind: "constraint-violation"; readonly status: 422 }
   | { readonly kind: "persistence-failed"; readonly status: 500 }
   | { readonly kind: "unexpected"; readonly status: number; readonly rawBody: string };
@@ -126,8 +126,8 @@ function expectedOutcome(response: ClassifiableResponse): ExpectedOutcome {
         return { kind: "not-found", status: 404 };
       case 428:
         return { kind: "precondition-required", status: 428 };
-      case 409:
-        return { kind: "precondition-failed", status: 409 };
+      case 412:
+        return { kind: "precondition-failed", status: 412 };
       case 422:
         if (problemCode(parsed) === WRITE_CONSTRAINT_VIOLATION) {
           return { kind: "constraint-violation", status: 422 };
@@ -148,10 +148,10 @@ function expectedOutcome(response: ClassifiableResponse): ExpectedOutcome {
 
 // --- Generators ---------------------------------------------------------------------------------
 
-// Full HTTP status range, biased to include the classifier-significant codes (2xx, 404, 409, 428).
+// Full HTTP status range, biased to include the classifier-significant codes (2xx, 404, 412, 428).
 const statusArb: fc.Arbitrary<number> = fc.oneof(
   fc.integer({ min: 100, max: 599 }),
-  fc.constantFrom(200, 201, 204, 299, 400, 401, 404, 409, 428, 500),
+  fc.constantFrom(200, 201, 204, 299, 400, 401, 404, 412, 428, 500),
 );
 
 // Content types: problem+json in various casings/with parameters, near-misses, other types, null.
@@ -249,9 +249,9 @@ describe("Property 7 — response classification is total and correct (never thr
             break;
 
           case "precondition-failed":
-            // 5.6: 409 problem -> distinct precondition-failed carrying the literal 409 status.
-            expect(result.status).toBe(409);
-            expect(response.status).toBe(409);
+            // 5.6: 412 problem -> distinct precondition-failed carrying the literal 412 status.
+            expect(result.status).toBe(412);
+            expect(response.status).toBe(412);
             expect(typeof result.problem).toBe("object");
             break;
 
@@ -325,9 +325,9 @@ describe("Property 7 — response classification is total and correct (never thr
 
     const concurrency = classifyResponse(
       {
-        status: 409,
+        status: 412,
         contentType: "application/problem+json",
-        body: JSON.stringify({ status: 409, code: "write-concurrency-conflict" }),
+        body: JSON.stringify({ status: 412, code: "write-concurrency-conflict" }),
       },
       parseSuccess,
     );

@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
@@ -207,11 +208,11 @@ public sealed class WriteEndpointExampleTests
     }
 
     /// <summary>
-    /// R6.1/R6.4: a non-empty If-Match matching the stored token is used as the expected token — the
-    /// update succeeds (200) and the ETag round-trips the token.
+    /// A matching unquoted If-Match succeeds, the stored token changes, and the ETag is that new token
+    /// as a strong quoted entity-tag. A second update that resends the old token is 412.
     /// </summary>
     [Test]
-    public async Task TokenView_Update_With_Correct_IfMatch_Returns_200_And_RoundTrips_ETag()
+    public async Task TokenView_Update_Rotates_The_Token_And_Rejects_The_Old_One()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedToken(1, "orig", 42);
@@ -219,16 +220,25 @@ public sealed class WriteEndpointExampleTests
         var response = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"changed\"}}", "42");
 
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.ETag).IsEqualTo("42");
+        await Assert.That(response.ETag).IsNotNull();
+        await Assert.That(response.ETag!).StartsWith("\"");
+        await Assert.That(response.ETag!).EndsWith("\"");
+        await Assert.That(response.ETag).IsNotEqualTo("\"42\"");
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
+        await Assert.That(app.ReadTokenVersion(1).ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
+
+        var stale = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"lost\"}}", "\"42\"");
+        await Assert.That(stale.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
     }
 
     /// <summary>
-    /// D158: create on any token-bearing view returns the post-write token as <c>ETag</c>, and that value
-    /// is a valid <c>If-Match</c> for the following update.
+    /// D158/D159: create returns the post-write token as a quoted ETag. Sending that header back updates
+    /// the row and rotates the token. Sending it again is 412.
     /// </summary>
     [Test]
-    public async Task TokenView_Create_Returns_ETag_And_Update_Honors_It()
+    public async Task TokenView_Create_Returns_Quoted_ETag_And_Update_Honors_It()
     {
         await using var app = await TestApp.StartAsync();
 
@@ -236,20 +246,26 @@ public sealed class WriteEndpointExampleTests
         var etag = Header(created, "ETag");
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(etag).IsEqualTo("0");
+        await Assert.That(etag).IsNotNull();
+        await Assert.That(etag!).StartsWith("\"");
+        await Assert.That(etag!).EndsWith("\"");
 
         var updated = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"grown\"}}", etag!);
         await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(updated.ETag).IsEqualTo("0");
+        await Assert.That(updated.ETag).IsNotEqualTo(etag);
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
+
+        var replay = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"again\"}}", etag!);
+        await Assert.That(replay.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
     }
 
     /// <summary>
-    /// D158: a stale <c>If-Match</c> on a token view is 409 <c>write-concurrency-conflict</c>. The retired
+    /// D159: a stale <c>If-Match</c> on a token view is 412 <c>write-concurrency-conflict</c>. The retired
     /// <c>write-conflict</c> code is not emitted.
     /// </summary>
     [Test]
-    public async Task TokenView_Update_With_Stale_IfMatch_Returns_409_ConcurrencyConflict()
+    public async Task TokenView_Update_With_Stale_IfMatch_Returns_412_ConcurrencyConflict()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedToken(1, "orig", 42);
@@ -258,11 +274,11 @@ public sealed class WriteEndpointExampleTests
         {
             Content = new StringContent("{\"key\":1,\"model\":{\"name\":\"lost\"}}", Encoding.UTF8, "application/json"),
         };
-        request.Headers.TryAddWithoutValidation("If-Match", "0");
+        request.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
         var response = await app.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
         using var doc = JsonDocument.Parse(body);
         var code = doc.RootElement.GetProperty("code").GetString();
         await Assert.That(code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
@@ -296,7 +312,7 @@ public sealed class WriteEndpointExampleTests
             projected,
             TokenView,
             new TokenRow { Id = 1, Name = "orig", Version = 42 });
-        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("42");
+        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("\"42\"");
 
         var unprojected = new DefaultHttpContext { RequestServices = provider };
         VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
@@ -623,6 +639,8 @@ public sealed class WriteEndpointExampleTests
         public string? ReadPlainName(int id) => Read(ctx => ctx.Plains.AsNoTracking().Where(s => s.Id == id).Select(s => s.Name).SingleOrDefault());
 
         public string? ReadTokenName(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Name).SingleOrDefault());
+
+        public int ReadTokenVersion(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Version).Single());
 
         public int PlainRowCount() => Read(ctx => ctx.Plains.AsNoTracking().Count());
 

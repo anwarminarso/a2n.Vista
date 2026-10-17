@@ -548,7 +548,7 @@ public static class VistaEndpointRouteBuilderExtensions
             .UpdateAsync(http, view.Name, key, model, ifMatch)
             .ConfigureAwait(false);
 
-        return updated ? UpdateOk(http, hasToken, ifMatch) : Results.NotFound();
+        return updated ? UpdateOk(http, hasToken) : Results.NotFound();
     }
 
     /// <summary>
@@ -608,7 +608,7 @@ public static class VistaEndpointRouteBuilderExtensions
         var token = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
         if (token is not null)
         {
-            http.Response.Headers.ETag = token;
+            http.Response.Headers.ETag = IfMatchHeader.ToStrongEntityTag(token);
         }
     }
 
@@ -643,34 +643,25 @@ public static class VistaEndpointRouteBuilderExtensions
         var token = ConcurrencyTokenFormat.ToWire(property.GetValue(row));
         if (token is not null)
         {
-            http.Response.Headers.ETag = token;
+            http.Response.Headers.ETag = IfMatchHeader.ToStrongEntityTag(token);
         }
     }
 
     /// <summary>
     /// Produces the <c>200</c> success result for an <b>update</b>, emitting the <b>post-write</b>
-    /// concurrency token as the <c>ETag</c> response header when the view declares one (Requirement R6.4,
-    /// Decision Log D146).
+    /// concurrency token as a strong quoted <c>ETag</c> when the view declares one (Requirement R6.4,
+    /// Decision Log D146, D159). The header is the token published after save. It is never the request's
+    /// <c>If-Match</c>.
     /// </summary>
-    /// <remarks>
-    /// The token comes from the request-scoped <see cref="IWriteTokenSink"/> the execution layer published it
-    /// into, not from the request's own <c>If-Match</c>. Echoing the request value made a store-generated
-    /// <c>rowversion</c> ETag stale the instant it was sent, so the client's next update was guaranteed to
-    /// 409. The <c>If-Match</c> value remains the fallback for a view whose token is client-assigned and
-    /// therefore unchanged by the write (and for an executor that publishes nothing).
-    /// </remarks>
-    private static IResult UpdateOk(HttpContext http, bool hasToken, string? ifMatch)
+    private static IResult UpdateOk(HttpContext http, bool hasToken)
     {
-        if (!hasToken)
+        if (hasToken)
         {
-            return Results.Ok();
-        }
-
-        var postWrite = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
-        var token = postWrite ?? ifMatch;
-        if (token is not null)
-        {
-            http.Response.Headers.ETag = token;
+            var token = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
+            if (token is not null)
+            {
+                http.Response.Headers.ETag = IfMatchHeader.ToStrongEntityTag(token);
+            }
         }
 
         return Results.Ok();

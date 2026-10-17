@@ -358,7 +358,12 @@ public class NorthwindDbContext : DbContext
                 .HasColumnName("MemoID");
             entity.Property(e => e.Subject).IsRequired();
             entity.Property(e => e.Body).IsRequired();
-            entity.Property(e => e.RowVersion).IsConcurrencyToken();
+            // SQLite has no native rowversion. The column is an application Guid: EF includes the
+            // previous value in UPDATE/DELETE WHERE, and the write executor mints a new Guid on every
+            // successful insert and update (ValueGenerated.Never — the database does not assign it).
+            entity.Property(e => e.RowVersion)
+                .IsConcurrencyToken()
+                .ValueGeneratedNever();
         });
 
         modelBuilder.Entity<SalesByCategory>(entity =>

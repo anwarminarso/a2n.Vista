@@ -68,7 +68,7 @@ const responseArb: fc.Arbitrary<HttpResponse> = fc.oneof(
   // 2xx with an unparseable body -> success-parse failure degrades to unexpected (still one send).
   fc.constantFrom(200, 201).map((status) => makeResponse({ status, body: "not json" })),
   // problem+json at specialized statuses -> not-found / precondition-required / precondition-failed.
-  fc.constantFrom(404, 428, 409).map((status) =>
+  fc.constantFrom(404, 428, 412).map((status) =>
     makeProblemResponse(status, `{"type":"about:blank","status":${status}}`),
   ),
   // problem+json at a generic failure status -> problem.

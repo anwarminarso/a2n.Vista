@@ -36,9 +36,9 @@ public enum WriteErrorCode
     PreconditionRequired,
 
     /// <summary>
-    /// The supplied <c>If-Match</c> token did not match the stored row's current token, or
-    /// <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c> (R6.3, R6.5, D158).
-    /// HTTP 409. The wire code stays <c>write-concurrency-conflict</c>. The old
+    /// The supplied <c>If-Match</c> token did not match the stored row, the header could not be
+    /// used as a concurrency predicate, or <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c>
+    /// (R6.3, R6.5, D159). HTTP 412. The wire code stays <c>write-concurrency-conflict</c>. The old
     /// <c>write-conflict</c> string is retired and is no longer emitted.
     /// </summary>
     ConcurrencyConflict,
@@ -92,8 +92,8 @@ public static class WriteErrorCodes
     public const string PreconditionRequired = "write-precondition-required";
 
     /// <summary>
-    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 409
-    /// <c>write-concurrency-conflict</c> (Decision Log D158).
+    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 412
+    /// <c>write-concurrency-conflict</c> (Decision Log D159).
     /// </summary>
     public const string ConcurrencyConflict = "write-concurrency-conflict";
 

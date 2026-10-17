@@ -191,7 +191,7 @@ internal static class VistaProblemResults
         WriteErrorCode.ValidationFailed => StatusCodes.Status400BadRequest,
         WriteErrorCode.BulkNotEnabled => StatusCodes.Status400BadRequest,
         WriteErrorCode.PreconditionRequired => StatusCodes.Status428PreconditionRequired,
-        WriteErrorCode.ConcurrencyConflict => StatusCodes.Status409Conflict,
+        WriteErrorCode.ConcurrencyConflict => StatusCodes.Status412PreconditionFailed,
         WriteErrorCode.ConstraintViolation => StatusCodes.Status422UnprocessableEntity,
         WriteErrorCode.PersistenceFailed => StatusCodes.Status500InternalServerError,
         // NoWritePlan is rendered as an indistinguishable 404 by the endpoint (never via a coded body);
@@ -210,7 +210,7 @@ internal static class VistaProblemResults
         WriteErrorCode.ValidationFailed => "Validation failed",
         WriteErrorCode.BulkNotEnabled => "Bulk writes not enabled",
         WriteErrorCode.PreconditionRequired => "Precondition required",
-        WriteErrorCode.ConcurrencyConflict => "Concurrency conflict",
+        WriteErrorCode.ConcurrencyConflict => "Precondition failed",
         WriteErrorCode.ConstraintViolation => "Constraint violation",
         WriteErrorCode.PersistenceFailed => "Persistence failed",
         WriteErrorCode.NoWritePlan => "Not found",

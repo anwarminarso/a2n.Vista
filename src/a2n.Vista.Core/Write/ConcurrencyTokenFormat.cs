@@ -23,6 +23,110 @@ public static class ConcurrencyTokenFormat
         IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
         _ => value.ToString(),
     };
+
+    /// <summary>
+    /// Converts a bare wire token back to <paramref name="clrType"/> so it can be bound as the original
+    /// value of an EF concurrency predicate. The inverse of <see cref="ToWire"/> for the token types
+    /// Vista writes (Guid, integers, <c>byte[]</c>, string, and other invariant-formattable values).
+    /// </summary>
+    /// <param name="wire">The bare token (quotes already removed).</param>
+    /// <param name="clrType">The concurrency property's CLR type.</param>
+    /// <param name="value">The converted value when this method returns <see langword="true"/>.</param>
+    /// <returns><see langword="true"/> when <paramref name="wire"/> is a value of <paramref name="clrType"/>.</returns>
+    public static bool TryFromWire(string wire, Type clrType, out object? value)
+    {
+        ArgumentNullException.ThrowIfNull(wire);
+        ArgumentNullException.ThrowIfNull(clrType);
+
+        var type = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        if (type == typeof(string))
+        {
+            value = wire;
+            return true;
+        }
+
+        if (type == typeof(Guid))
+        {
+            if (Guid.TryParse(wire, out var guid))
+            {
+                value = guid;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (type == typeof(byte[]))
+        {
+            var buffer = new byte[wire.Length];
+            if (Convert.TryFromBase64String(wire, buffer, out var written))
+            {
+                value = buffer.AsSpan(0, written).ToArray();
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (type == typeof(DateTime))
+        {
+            if (DateTime.TryParse(wire, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dateTime))
+            {
+                value = dateTime;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (type == typeof(DateTimeOffset))
+        {
+            if (DateTimeOffset.TryParse(wire, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var dateTimeOffset))
+            {
+                value = dateTimeOffset;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        if (type.IsEnum)
+        {
+            if (Enum.TryParse(type, wire, ignoreCase: false, out var enumValue))
+            {
+                value = enumValue;
+                return true;
+            }
+
+            value = null;
+            return false;
+        }
+
+        try
+        {
+            value = Convert.ChangeType(wire, type, CultureInfo.InvariantCulture);
+            return true;
+        }
+        catch (FormatException)
+        {
+            value = null;
+            return false;
+        }
+        catch (InvalidCastException)
+        {
+            value = null;
+            return false;
+        }
+        catch (OverflowException)
+        {
+            value = null;
+            return false;
+        }
+    }
 }
 
 /// <summary>
