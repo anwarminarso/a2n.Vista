@@ -1,3 +1,4 @@
+using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
 using System.Linq.Expressions;
 using System.Reflection;
@@ -1085,10 +1086,11 @@ public class EfViewExecutor : IViewExecutor
     /// <c>write-concurrency-conflict</c>, rolled back, Requirement R6.5, Decision Log D159); a
     /// <see cref="DbUpdateException"/> that is a database constraint violation (unique index, NOT NULL,
     /// foreign key, CHECK) becomes a <see cref="VistaConstraintViolationException"/> (HTTP 422
-    /// <c>write-constraint-violation</c>, not a conflict); every other <see cref="DbUpdateException"/> —
-    /// a missing table, a connection failure, or any non-constraint provider error — becomes a
-    /// <see cref="VistaPersistenceException"/> (HTTP 500 <c>write-persistence-failed</c>). A missing
-    /// relation is not a constraint and is not a 409.
+    /// <c>write-constraint-violation</c>, not a conflict); a transient store lock becomes a
+    /// <see cref="VistaStoreBusyException"/> (HTTP 503 <c>write-busy</c>, Decision Log D160); every
+    /// other <see cref="DbUpdateException"/> — a missing table, a connection failure, or any
+    /// non-constraint provider error — becomes a <see cref="VistaPersistenceException"/> (HTTP 500
+    /// <c>write-persistence-failed</c>). A missing relation is not a constraint and is not a 412.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -1105,13 +1107,14 @@ public class EfViewExecutor : IViewExecutor
     /// </para>
     /// <para>
     /// <see cref="DbUpdateConcurrencyException"/> derives from <see cref="DbUpdateException"/>, so it is
-    /// caught first. Constraint detection then inspects the provider exception (Decision Log D158); it
-    /// does not treat the base <see cref="DbUpdateException"/> itself as a conflict.
+    /// caught first. A transient lock is next (D160), then constraint detection (Decision Log D158).
+    /// None of those treats the base <see cref="DbUpdateException"/> itself as a conflict.
     /// </para>
     /// </remarks>
     /// <param name="dbContext">The request-scoped context whose tracked changes are persisted.</param>
     /// <param name="cancellationToken">Token used to cancel the persistence round-trip.</param>
-    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5, D158).</exception>
+    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5, D159).</exception>
+    /// <exception cref="VistaStoreBusyException">The store lock did not clear (D160).</exception>
     /// <exception cref="VistaConstraintViolationException">A database constraint violation occurred (D158).</exception>
     /// <exception cref="VistaPersistenceException">The save failed for some other provider reason (D158).</exception>
     private static async Task SaveWriteChangesAsync(DbContext dbContext, CancellationToken cancellationToken)
@@ -1127,6 +1130,16 @@ public class EfViewExecutor : IViewExecutor
             // as the inner exception only (server-side; never surfaced to clients — R9.6).
             throw new VistaConcurrencyConflictException(innerException: ex);
         }
+        catch (DbUpdateException ex) when (DbUpdateFailureClassification.IsTransientLock(ex))
+        {
+            throw new VistaStoreBusyException(innerException: ex);
+        }
+        catch (DbException ex) when (DbUpdateFailureClassification.IsTransientLock(ex))
+        {
+            // A lock taken while beginning the write transaction is not always wrapped in
+            // DbUpdateException. It is still a retryable busy failure, not a 500 (D160).
+            throw new VistaStoreBusyException(innerException: ex);
+        }
         catch (DbUpdateException ex) when (DbUpdateFailureClassification.IsConstraintViolation(ex))
         {
             // Database constraint violation (unique index, NOT NULL, foreign key, CHECK). The implicit
@@ -1137,9 +1150,9 @@ public class EfViewExecutor : IViewExecutor
         }
         catch (DbUpdateException ex)
         {
-            // Any other store failure (missing table, I/O, lock, corruption, an unrecognized provider
-            // error). This is not a conflict with the current row. Translate to a leak-free 500; the
-            // provider detail stays on the inner exception only (D158, spec 05 §9.2, R9.6).
+            // Any other store failure (missing table, I/O, corruption, an unrecognized provider error).
+            // This is not a conflict with the current row and not a transient lock. Translate to a
+            // leak-free 500; the provider detail stays on the inner exception only (D158, spec 05 §9.2, R9.6).
             throw new VistaPersistenceException(innerException: ex);
         }
     }
@@ -1527,6 +1540,10 @@ public class EfViewExecutor : IViewExecutor
         }
 
         property.OriginalValue = original;
+        if (rotate && !IsStoreGenerated(metadata))
+        {
+            EnsureStrongEntityTag(property.CurrentValue);
+        }
     }
 
     /// <summary>
@@ -1562,6 +1579,23 @@ public class EfViewExecutor : IViewExecutor
 
         var property = entry.Property(memberName);
         property.CurrentValue = NextApplicationToken(property.CurrentValue, metadata.ClrType);
+        EnsureStrongEntityTag(property.CurrentValue);
+    }
+
+    /// <summary>
+    /// Confirms the token's wire form is a strong entity-tag before <c>SaveChanges</c>. A format that
+    /// cannot be quoted must fail the request while the write is still uncommitted.
+    /// </summary>
+    private static void EnsureStrongEntityTag(object? token)
+    {
+        var wire = ConcurrencyTokenFormat.ToWire(token);
+        if (string.IsNullOrEmpty(wire))
+        {
+            throw new InvalidOperationException(
+                "The concurrency token has no wire form, so the response ETag cannot be written.");
+        }
+
+        _ = IfMatchHeader.ToStrongEntityTag(wire);
     }
 
     /// <summary>

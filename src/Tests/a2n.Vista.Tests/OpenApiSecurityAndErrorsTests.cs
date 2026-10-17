@@ -364,6 +364,11 @@ public sealed class OpenApiSecurityAndErrorsTests
         await Assert.That(update.Responses!.ContainsKey("409")).IsFalse();
         await Assert.That(update.Responses!["412"].Description).Contains("write-concurrency-conflict");
         await Assert.That(update.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(update.Responses!["422"].Description).Contains("write-constraint-violation");
+        await Assert.That(update.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(update.Responses!["500"].Description).Contains("write-persistence-failed");
+        await Assert.That(update.Responses!.ContainsKey("503")).IsTrue();
+        await Assert.That(update.Responses!["503"].Description).Contains("write-busy");
         await Assert.That(update.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
         await Assert.That(update.Responses!["200"].Content!.ContainsKey("application/json")).IsTrue();
 
@@ -371,6 +376,13 @@ public sealed class OpenApiSecurityAndErrorsTests
         await Assert.That(delete.Responses!.ContainsKey("428")).IsTrue();
         await Assert.That(delete.Responses!.ContainsKey("412")).IsTrue();
         await Assert.That(delete.Responses!.ContainsKey("409")).IsFalse();
+        await Assert.That(delete.Responses!["412"].Description).Contains("write-concurrency-conflict");
+        await Assert.That(delete.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(delete.Responses!["422"].Description).Contains("write-constraint-violation");
+        await Assert.That(delete.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(delete.Responses!["500"].Description).Contains("write-persistence-failed");
+        await Assert.That(delete.Responses!.ContainsKey("503")).IsTrue();
+        await Assert.That(delete.Responses!["503"].Description).Contains("write-busy");
         await Assert.That(delete.Responses!.ContainsKey("200")).IsFalse();
         await Assert.That(delete.Responses!.ContainsKey("204")).IsTrue();
         await Assert.That(delete.Responses!["204"].Headers).IsNull();
@@ -380,8 +392,10 @@ public sealed class OpenApiSecurityAndErrorsTests
         await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
         await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
         await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("503")).IsTrue();
         await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("422")).IsFalse();
         await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("500")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("503")).IsFalse();
         await Assert.That(document.Paths![ReadRoute + "/detail"].Post!.Responses!.ContainsKey("422")).IsFalse();
     }
 

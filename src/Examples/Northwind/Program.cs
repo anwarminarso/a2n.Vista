@@ -36,10 +36,8 @@ catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationExcept
 }
 var working = NorthwindWorkingDatabase.CreateCopy(templatePath);
 a2n.Vista.Examples.NorthwindMemoTable.EnsureOnCopy(templatePath, working.DatabasePath);
-var workingConnectionString = new SqliteConnectionStringBuilder { DataSource = working.DatabasePath }.ToString();
-
 builder.Services.AddDbContext<NorthwindDbContext>(options =>
-    options.UseSqlite(workingConnectionString));
+    a2n.Vista.Examples.SqliteVistaConnection.Use(options, working.DatabasePath));
 
 // Vista core wiring (EF layer): register the Gaya A central template plus a class-per-view (Style B)
 // *writable* view. A view's route is composed at registration (default root /api/views, or via

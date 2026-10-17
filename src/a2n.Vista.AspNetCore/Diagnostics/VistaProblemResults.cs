@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.Filter;
@@ -188,12 +189,40 @@ internal static class VistaProblemResults
     /// </summary>
     private static IResult CreateWriteProblem(VistaWriteException write)
     {
-        return HttpResults.Problem(
+        var problem = HttpResults.Problem(
             statusCode: MapWriteStatus(write.Code),
             title: WriteTitle(write.Code),
             type: TypePrefix + write.ErrorCode,
             detail: write.Message,
             extensions: BuildWriteExtensions(write));
+
+        if (write.Code == WriteErrorCode.StoreBusy)
+        {
+            return new RetryAfterResult(problem, VistaStoreBusyException.RetryAfterSeconds);
+        }
+
+        return problem;
+    }
+
+    /// <summary>
+    /// Sets <c>Retry-After</c> before the problem body is written (Decision Log D160).
+    /// </summary>
+    private sealed class RetryAfterResult : IResult
+    {
+        private readonly IResult _inner;
+        private readonly int _seconds;
+
+        public RetryAfterResult(IResult inner, int seconds)
+        {
+            _inner = inner;
+            _seconds = seconds;
+        }
+
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.RetryAfter = _seconds.ToString(CultureInfo.InvariantCulture);
+            await _inner.ExecuteAsync(httpContext).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Maps a <see cref="WriteErrorCode"/> to its HTTP status code (design "Error Handling").</summary>
@@ -209,6 +238,7 @@ internal static class VistaProblemResults
         WriteErrorCode.ConcurrencyConflict => StatusCodes.Status412PreconditionFailed,
         WriteErrorCode.ConstraintViolation => StatusCodes.Status422UnprocessableEntity,
         WriteErrorCode.PersistenceFailed => StatusCodes.Status500InternalServerError,
+        WriteErrorCode.StoreBusy => StatusCodes.Status503ServiceUnavailable,
         // NoWritePlan is rendered as an indistinguishable 404 by the endpoint (never via a coded body);
         // if one ever reaches here, fall back to 404 so no existence signal leaks.
         WriteErrorCode.NoWritePlan => StatusCodes.Status404NotFound,
@@ -228,6 +258,7 @@ internal static class VistaProblemResults
         WriteErrorCode.ConcurrencyConflict => "Precondition failed",
         WriteErrorCode.ConstraintViolation => "Constraint violation",
         WriteErrorCode.PersistenceFailed => "Persistence failed",
+        WriteErrorCode.StoreBusy => "Service unavailable",
         WriteErrorCode.NoWritePlan => "Not found",
         _ => "Write rejected",
     };

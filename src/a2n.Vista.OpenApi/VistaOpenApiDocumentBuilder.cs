@@ -483,6 +483,7 @@ public sealed class VistaOpenApiDocumentBuilder
         422 => "The write violates a database constraint and was not applied (code write-constraint-violation).",
         428 => "A concurrency token (If-Match) is required for this operation.",
         500 => "The write could not be saved (code write-persistence-failed).",
+        503 => "The store is busy. Retry after the Retry-After delay (code write-busy).",
         _ => "The request failed.",
     };
 

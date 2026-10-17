@@ -351,7 +351,9 @@ public static class ViewClientEmitter
             builder.Append(Indent).Append(" * `ETag` header value exactly as received, quotes included. A")
                 .Append(NewLine);
             builder.Append(Indent)
-                .Append(" * constraint breach is `constraint-violation` (422) and another save failure is")
+                .Append(" * constraint breach is `constraint-violation` (422), a transient store lock is")
+                .Append(NewLine);
+            builder.Append(Indent).Append(" * `write-busy` (503, `Retry-After`), and another save failure is")
                 .Append(NewLine);
             builder.Append(Indent).Append(" * `persistence-failed` (500).").Append(NewLine);
         }

@@ -21,6 +21,7 @@
   <ItemGroup>
     <!-- Same SQLite probe the Northwind hosts compile. Internal, so it does not clash with the host copy. -->
     <Compile Include="..\..\Examples\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <Compile Include="..\..\Examples\SqliteVistaConnection.cs" Link="SqliteVistaConnection.cs" />
     <!-- VistaMemos DDL. Internal, compiled into the hosts the same way. One statement, no Split. -->
     <Compile Include="..\..\Examples\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
   </ItemGroup>
