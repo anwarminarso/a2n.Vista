@@ -129,8 +129,8 @@ public sealed class ConcurrencyAbortPropertyTests
                     }
                     else
                     {
-                        // The row is updated; its current token is unchanged (the token is not writable and
-                        // is not auto-bumped), so the ETag equals the row's current token AFTER the write.
+                        // The row is updated and its token changed. The ETag is that post-write token,
+                        // quoted as a strong entity-tag.
                         var row = harness.ReadRow(RowKey)
                             ?? throw new Exception($"Row {RowKey} vanished after a successful update.");
 
@@ -140,8 +140,19 @@ public sealed class ConcurrencyAbortPropertyTests
                                 $"Update did not apply the whitelisted field: Name='{row.Name}', expected 'updated'.");
                         }
 
+                        if (row.Version == version)
+                        {
+                            throw new Exception(
+                                $"Update left the concurrency token at {version}; a successful write must renew it.");
+                        }
+
                         var currentToken = row.Version.ToString(CultureInfo.InvariantCulture);
-                        if (!string.Equals(etag, currentToken, StringComparison.Ordinal))
+                        if (etag is null || etag.Length < 2 || etag[0] != '"' || etag[^1] != '"')
+                        {
+                            throw new Exception($"Update ETag '{etag}' is not a quoted strong entity-tag.");
+                        }
+
+                        if (!string.Equals(etag.Trim('"'), currentToken, StringComparison.Ordinal))
                         {
                             throw new Exception(
                                 $"Update ETag '{etag}' did not equal the row's current token '{currentToken}' after the write.");
@@ -150,11 +161,11 @@ public sealed class ConcurrencyAbortPropertyTests
                 }
                 else
                 {
-                    // Mismatch path (R6.3): 409 and the row is unchanged (no persisted effect).
-                    if (status != HttpStatusCode.Conflict)
+                    // Mismatch path (R6.3/D159): 412 and the row is unchanged (no persisted effect).
+                    if (status != HttpStatusCode.PreconditionFailed)
                     {
                         throw new Exception(
-                            $"Expected 409 for a mismatching If-Match ('{ifMatch}' vs stored '{storedToken}') on " +
+                            $"Expected 412 for a mismatching If-Match ('{ifMatch}' vs stored '{storedToken}') on " +
                             $"{(isDelete ? "delete" : "update")}, got {(int)status} {status}.");
                     }
 

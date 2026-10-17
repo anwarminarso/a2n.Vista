@@ -15,7 +15,7 @@ import type { ProblemDetails } from "../types";
  * - `unauthorized`          the client short-circuited before sending (no/failed credential on a secured op).
  * - `not-found`             a 404 problem response (e.g. `detail` for a missing key).
  * - `precondition-required` a 428 problem response (a concurrency token was required but not supplied).
- * - `precondition-failed`   a 409 problem response (the supplied concurrency token did not match;
+ * - `precondition-failed`   a 412 problem response (the supplied concurrency token did not match;
  *                           wire code `write-concurrency-conflict`).
  * - `constraint-violation`  a 422 problem whose `code` is `write-constraint-violation`.
  * - `persistence-failed`    a 500 problem whose `code` is `write-persistence-failed`.
@@ -28,7 +28,7 @@ export type ClientResult<T> =
   | { readonly kind: "unauthorized"; readonly reason: string }
   | { readonly kind: "not-found"; readonly status: 404; readonly problem: ProblemDetails }
   | { readonly kind: "precondition-required"; readonly status: 428; readonly problem: ProblemDetails }
-  | { readonly kind: "precondition-failed"; readonly status: 409; readonly problem: ProblemDetails }
+  | { readonly kind: "precondition-failed"; readonly status: 412; readonly problem: ProblemDetails }
   | { readonly kind: "constraint-violation"; readonly status: 422; readonly problem: ProblemDetails }
   | { readonly kind: "persistence-failed"; readonly status: 500; readonly problem: ProblemDetails }
   | { readonly kind: "transport-error"; readonly error: unknown }
@@ -37,7 +37,7 @@ export type ClientResult<T> =
 /** The set of discriminant values a {@link ClientResult} can carry, derived from the single `kind` field. */
 export type ClientResultKind = ClientResult<unknown>["kind"];
 
-/** Wire code for a concurrency conflict (HTTP 409). The retired string `write-conflict` is not emitted. */
+/** Wire code for a stale If-Match (HTTP 412). The retired string `write-conflict` is not emitted. */
 export const WRITE_CONCURRENCY_CONFLICT = "write-concurrency-conflict";
 
 /** Wire code for a database constraint violation (HTTP 422). */
@@ -119,7 +119,7 @@ export function isPreconditionRequired<T>(
   return result.kind === "precondition-required";
 }
 
-/** Narrows to the 409 precondition-failed problem outcome. */
+/** Narrows to the 412 precondition-failed problem outcome. */
 export function isPreconditionFailed<T>(
   result: ClientResult<T>,
 ): result is Extract<ClientResult<T>, { kind: "precondition-failed" }> {
@@ -176,7 +176,7 @@ export function isProblemJson(contentType: string | null): boolean {
  * 1. `2xx`                              -> deserialize the body with `parseSuccess` into `success`
  *                                          (8.1); a parse failure degrades to `unexpected` (8.5).
  * 2. `application/problem+json`         -> parse `ProblemDetails`, then map by status: 404 -> `not-found`,
- *                                          428 -> `precondition-required`, 409 -> `precondition-failed`.
+ *                                          428 -> `precondition-required`, 412 -> `precondition-failed`.
  *                                          422 is `constraint-violation` only when `code` is
  *                                          `write-constraint-violation`; 500 is `persistence-failed` only
  *                                          when `code` is `write-persistence-failed`. Any other problem,
@@ -211,8 +211,8 @@ export function classifyResponse<T>(
         return { kind: "not-found", status: 404, problem };
       case 428:
         return { kind: "precondition-required", status: 428, problem };
-      case 409:
-        return { kind: "precondition-failed", status: 409, problem };
+      case 412:
+        return { kind: "precondition-failed", status: 412, problem };
       case 422:
         if (problem.code === WRITE_CONSTRAINT_VIOLATION) {
           return { kind: "constraint-violation", status: 422, problem };

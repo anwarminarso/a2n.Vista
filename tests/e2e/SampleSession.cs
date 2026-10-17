@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
 using System.Text;
 
 namespace a2n.Vista.E2E;
@@ -246,14 +245,12 @@ internal sealed class VistaClient
         using var response = await _http.SendAsync(request).ConfigureAwait(false);
         var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
         var type = response.Content.Headers.ContentType?.ToString() ?? string.Empty;
+        // Keep the raw header, quotes included. EntityTagHeaderValue.Tag strips them, and If-Match
+        // must be the bytes the server sent.
         string? etag = null;
-        if (response.Headers.ETag is EntityTagHeaderValue tag)
+        if (response.Headers.TryGetValues("ETag", out var values))
         {
-            etag = tag.Tag;
-        }
-        else if (response.Headers.TryGetValues("ETag", out var values))
-        {
-            etag = string.Join(",", values);
+            etag = string.Concat(values);
         }
 
         return new VistaResponse((int)response.StatusCode, type, bytes, etag);

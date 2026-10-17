@@ -25,9 +25,10 @@ public partial class Memo
     public string Body { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optimistic-concurrency token. A fresh value is assigned when the entity is created; the write
-    /// path compares it against the request's <c>If-Match</c> header and never lets a client assign it
-    /// directly (it is excluded from the writable whitelist).
+    /// Optimistic-concurrency token. The constructor assigns the insert value. Every successful Vista
+    /// update replaces it with a new <see cref="Guid"/> before save, and EF puts the previous value in
+    /// the <c>UPDATE</c>/<c>DELETE</c> <c>WHERE</c> clause. Clients never assign it (it is excluded from
+    /// the writable whitelist). SQLite does not generate this column.
     /// </summary>
     public Guid RowVersion { get; set; } = Guid.NewGuid();
 }

@@ -297,13 +297,13 @@ public sealed class ErrorEnvelopeConformancePropertyTests
                 HttpStatusCode.PreconditionRequired,
                 WriteErrorCodes.PreconditionRequired),
 
-            // R6.3: a token view whose If-Match differs from the stored token → concurrency conflict (409).
+            // R6.3/D159: a token view whose If-Match differs from the stored token → 412.
             Branch.ConcurrencyConflict => new Case(
                 TokenRoute,
                 keyAction,
                 useUpdate ? "{\"key\":1,\"model\":{\"name\":\"x\"}}" : "{\"key\":1}",
                 IfMatch: mismatch,
-                HttpStatusCode.Conflict,
+                HttpStatusCode.PreconditionFailed,
                 WriteErrorCodes.ConcurrencyConflict),
 
             _ => throw new ArgumentOutOfRangeException(nameof(branch), branch, "Unknown branch."),

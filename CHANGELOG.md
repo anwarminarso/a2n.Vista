@@ -22,8 +22,19 @@ While the version is `0.x`, anything may change between releases.
 - `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
   and `VistaPersistenceException`.
 - `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
+- `WriteErrorCode.StoreBusy` / `WriteErrorCodes.StoreBusy` (`write-busy`) and `VistaStoreBusyException`.
+  A transient store lock (`SQLITE_BUSY`, `SQLITE_LOCKED`, or `DbException.IsTransient`) is HTTP 503
+  with `Retry-After: 2` and title "Service unavailable" (Decision Log D160). It is not 412 and not 500.
+- The Northwind and AG Grid hosts open the working SQLite file through `SqliteVistaConnection`:
+  a 5 second busy timeout, WAL, and `BEGIN IMMEDIATE`. The file-database race tests use that same helper.
 
 ### Fixed
+- **DateTime and DateTimeOffset concurrency tokens round-trip.** The wire form is invariant `"O"`.
+  A `DateTime` with `Kind` Unspecified is labeled UTC with `DateTime.SpecifyKind` (no clock shift);
+  `Kind` Local is converted with `ToUniversalTime`. A `DateTimeOffset` keeps its offset. The wire
+  form is checked before `SaveChanges`, so an entity-tag that cannot be quoted does not commit.
+  `byte[]` tokens are standard Base64, not base64url. The create, update, and detail `ETag` values
+  for the same row match byte for byte, including a `DateTimeOffset` stored at a non-zero offset.
 - **`ForeignKeyContext` stays outside the relational-model warmup.** The foreign-key fixture in
   `WritePersistenceFailureIntegrationTests` is built by a per-test harness, not inside a CsCheck
   sample, so `RelationalModelWarmup` does not finalize it. The context is `internal` and listed in
@@ -54,12 +65,12 @@ While the version is `0.x`, anything may change between releases.
   copy only. The copy is deleted on shutdown. Memo create/update/delete and the
   self-tests write only to the copy, which is deleted when the process stops. The host self-test
   asserts the connection is that copy, that the copy's `sqlite_master` contains `VistaMemos`, that a
-  stale `If-Match` is `write-concurrency-conflict`, and that the extracted template's SHA-256 is
+  stale `If-Match` is `write-concurrency-conflict` (HTTP 412), and that the extracted template's SHA-256 is
   unchanged from before the copy through the write round trip. The isolated self-test still runs
   Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
-- **Save failures are three distinct outcomes** (Decision Log D158). A genuine concurrency failure
+- **Save failures are three distinct outcomes** (Decision Log D158, status corrected by D159). A genuine concurrency failure
   (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
-  `VistaConcurrencyConflictException`) is HTTP 409 `write-concurrency-conflict`. A unique, foreign-key,
+  `VistaConcurrencyConflictException`) is HTTP 412 `write-concurrency-conflict`. A unique, foreign-key,
   NOT NULL, or CHECK breach is HTTP 422 `write-constraint-violation`
   (`VistaConstraintViolationException`). Every other `DbUpdateException` — a missing table, a connection
   error, an unrecognized provider error — is HTTP 500 `write-persistence-failed`
@@ -73,21 +84,23 @@ While the version is `0.x`, anything may change between releases.
 - **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
   post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
   row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
-  mismatch is 409 `write-concurrency-conflict`.
+  mismatch is 412 `write-concurrency-conflict`. The `ETag` is a quoted strong entity-tag, and a
+  successful update replaces an application-generated token.
 
 ### Changed
 - **Breaking (0.x): `write-conflict` is retired.** It previously meant a constraint violation and is no
-  longer emitted. Concurrency keeps `write-concurrency-conflict` (HTTP 409).
+  longer emitted. Concurrency keeps `write-concurrency-conflict` (HTTP 412; see the D159 entry below).
 
   | Outcome | HTTP | Wire code |
   | --- | --- | --- |
-  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 409 | `write-concurrency-conflict` |
+  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 412 | `write-concurrency-conflict` |
   | Constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `write-constraint-violation` |
   | Other `DbUpdateException` (missing table, I/O, unrecognized provider) | 500 | `write-persistence-failed` |
 
   `WriteErrorCode.WriteConflict`, `WriteErrorCodes.WriteConflict`, and `VistaWriteConflictException` are
   removed. They are not obsolete aliases. Clients that matched `write-conflict` as a constraint violation
-  must match `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` is unchanged.
+  must match `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` keeps its wire
+  code; its HTTP status is 412 (D159).
   Constraint detection does not reflect over provider error-code properties. The only built-in rule is
   SQLSTATE class `23`. SQLite, SQL Server, and MySQL are classified by a host probe
   (`DbUpdateFailureClassification.AddConstraintProbe`). The Northwind probe is
@@ -111,6 +124,17 @@ While the version is `0.x`, anything may change between releases.
   | `PersistenceFailed` | not present | 8 |
   | `BulkNotEnabled` | 8 | 9 |
   | `NoWritePlan` | 9 | 10 |
+
+- **Breaking (0.0.5): optimistic concurrency on a token-bearing write** (Decision Log D159). Each row is
+  one behavior change. Generated TypeScript clients map `precondition-failed` to HTTP 412.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- | --- | --- |
+  | Missing `If-Match` | 428 `write-precondition-required`. Spec text said 412. | 428 `write-precondition-required` | Keep handling 428. Do not treat a missing token as 412. |
+  | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
+  | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |
+  | `If-Match` parsing | Raw string compare | RFC 9110 quoted strong tags, including a list | Send a quoted strong tag. A single unquoted token is still accepted (legacy). `If-Match: *` and a weak-only `W/"…"` are 412. A comma-separated list matches when one strong tag equals the stored token; that tag is the `WHERE` value. |
+  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match` | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
 
 ## [0.0.4] - 2026-08-11
 

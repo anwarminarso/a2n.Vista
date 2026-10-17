@@ -90,7 +90,7 @@ public enum FacetAvailability
 /// embedded in <see cref="AlwaysErrorCodes"/>. The task 5.3 error layer attaches it uniformly.
 /// </para>
 /// <para>
-/// The concurrency responses (<c>428</c> Precondition Required and <c>409</c> Conflict) apply only to
+/// The concurrency responses (<c>428</c> Precondition Required and <c>412</c> Precondition Failed) apply only to
 /// <see cref="Facet.Update"/>/<see cref="Facet.Delete"/> and only when the writable view declares a
 /// concurrency token; they are gated by <see cref="ConcurrencyErrorsWhenTokenDeclared"/> so the builder
 /// layers them conditionally.
@@ -123,7 +123,7 @@ public sealed record FacetOperation
     /// <summary>
     /// The unconditionally documented error status codes for this facet (a <c>400</c> on every
     /// body-bearing operation and a <c>404</c> on detail/update/delete). Excludes the uniform <c>403</c>
-    /// (see <see cref="ForbiddenWhenNotAnonymous"/>) and the token-gated <c>428</c>/<c>409</c> (see
+    /// (see <see cref="ForbiddenWhenNotAnonymous"/>) and the token-gated <c>428</c>/<c>412</c> (see
     /// <see cref="ConcurrencyErrorsWhenTokenDeclared"/>), which the builder layers conditionally.
     /// </summary>
     public required IReadOnlyList<int> AlwaysErrorCodes { get; init; }
@@ -132,7 +132,7 @@ public sealed record FacetOperation
     public required bool ForbiddenWhenNotAnonymous { get; init; }
 
     /// <summary>
-    /// Whether the <c>428</c>/<c>409</c> concurrency responses are documented when the writable view
+    /// Whether the <c>428</c>/<c>412</c> concurrency responses are documented when the writable view
     /// declares a concurrency token (true for update/delete only).
     /// </summary>
     public required bool ConcurrencyErrorsWhenTokenDeclared { get; init; }
@@ -216,7 +216,7 @@ public static class FacetOperations
             RequestBody = FacetRequestBody.Write,
             SuccessBody = FacetSuccessBody.WriteResponse,
             Availability = FacetAvailability.WritableOnly,
-            AlwaysErrorCodes = new[] { 400, 404, 422, 500 },
+            AlwaysErrorCodes = new[] { 400, 404, 422, 500, 503 },
             ForbiddenWhenNotAnonymous = true,
             ConcurrencyErrorsWhenTokenDeclared = false,
         },
@@ -228,7 +228,7 @@ public static class FacetOperations
             RequestBody = FacetRequestBody.Write,
             SuccessBody = FacetSuccessBody.NoContentOr200,
             Availability = FacetAvailability.WritableOnly,
-            AlwaysErrorCodes = new[] { 400, 404, 422, 500 },
+            AlwaysErrorCodes = new[] { 400, 404, 422, 500, 503 },
             ForbiddenWhenNotAnonymous = true,
             ConcurrencyErrorsWhenTokenDeclared = true,
         },
@@ -240,7 +240,7 @@ public static class FacetOperations
             RequestBody = FacetRequestBody.Write,
             SuccessBody = FacetSuccessBody.NoContentOr200,
             Availability = FacetAvailability.WritableOnly,
-            AlwaysErrorCodes = new[] { 400, 404, 422, 500 },
+            AlwaysErrorCodes = new[] { 400, 404, 422, 500, 503 },
             ForbiddenWhenNotAnonymous = true,
             ConcurrencyErrorsWhenTokenDeclared = true,
         },

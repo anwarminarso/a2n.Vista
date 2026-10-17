@@ -261,7 +261,7 @@ public sealed class WritePersistenceFailureIntegrationTests
 
         // (1) concurrency conflict → 409 write-concurrency-conflict
         await Assert.That(concurrency).IsTypeOf<VistaConcurrencyConflictException>();
-        await Assert.That(concurrencyHttp.Status).IsEqualTo(StatusCodes.Status409Conflict);
+        await Assert.That(concurrencyHttp.Status).IsEqualTo(StatusCodes.Status412PreconditionFailed);
         await Assert.That(concurrencyHttp.Code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
         await Assert.That(concurrencyHttp.Code).IsNotEqualTo("write-conflict");
 

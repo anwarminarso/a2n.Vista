@@ -30,7 +30,7 @@ namespace Microsoft.Extensions.DependencyInjection;
 /// endpoints (de)serialize with), the singleton <see cref="VistaEndpointOptions"/> registered by
 /// <c>AddVistaEndpoints(...)</c> (the anonymity + metadata-caching posture), and the optional
 /// <see cref="IWriteFacetRegistry"/> (resolved with <see cref="System.IServiceProviderServiceExtensions.GetService{T}(System.IServiceProvider)"/>
-/// so token-gated <c>428</c>/<c>409</c> responses are documented when it is available, omitted when not).
+/// so token-gated <c>428</c>/<c>412</c> responses are documented when it is available, omitted when not).
 /// </para>
 /// <para>
 /// <b>AOT posture (Requirement 13.3).</b> Per-view DTO schema generation reflects over CLR row/write
@@ -83,7 +83,7 @@ public static class VistaOpenApiServiceCollectionExtensions
         // the serialization seam's options (schema/wire-parity oracle — the live VistaJson.Options the view
         // endpoints (de)serialize with), the AspNetCore endpoint options (anonymity + metadata caching),
         // the emitter options, and the OPTIONAL write-facet registry (GetService — may be null, in which
-        // case no view is treated as token-bearing and the 428/409 responses are omitted).
+        // case no view is treated as token-bearing and the 428/412 responses are omitted).
         services.TryAddSingleton(sp => new VistaOpenApiDocumentBuilder(
             sp.GetRequiredService<IViewRegistry>(),
             VistaJson.Options,

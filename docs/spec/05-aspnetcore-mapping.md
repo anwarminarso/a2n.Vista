@@ -319,34 +319,37 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 ```text
 1. auth: IsAllowedAsync(facet=Update) → 403 ; ShapeQuery → scope
 2. deserialize body → TCrud ; validate
-3. concurrency: the If-Match header is REQUIRED if the view has a token (§7.8) → 412 if missing
+3. concurrency: the If-Match header is REQUIRED if the view has a token (§7.8) → 428 write-precondition-required if missing
 4. IViewWriter.UpdateAsync(exec, key, ifMatch):
      entity = source.Where(scope).FirstOrDefault(e => KeySelector(e) == key)   // scope AND-ed
        → null → 404 not-found
-     if there is a token: compare ifMatch vs the entity token → mismatch → 412 precondition-failed
-     ApplyWritable(crud, entity); SaveChanges
-       → DbUpdateConcurrencyException → 409 write-concurrency-conflict
+     if there is a token: bind the client's parsed strong tag as the EF original value so the
+       UPDATE carries WHERE token = @If-Match. Do not compare in memory and then SaveChanges.
+       A stale tag, an unusable header, or SaveChanges throwing DbUpdateConcurrencyException
+       → 412 write-concurrency-conflict
+     ApplyWritable(crud, entity); mint a new application token; SaveChanges
        → constraint violation (unique, FK, NOT NULL, CHECK) → 422 write-constraint-violation
        → any other DbUpdateException (missing table, I/O) → 500 write-persistence-failed
-5. 200 OK + new ETag + Detail-shape body
+5. 200 OK + new strong ETag taken from the row after save (never the request If-Match) + Detail-shape body
 ```
 
 - **Update by-key is `AND`-ed with the trusted scope** (D85): a row outside the tenant → appears as `404` (not 403), not revealing the existence of a cross-tenant row.
 - PUT is a **full update** over the whitelist fields; whitelist fields absent from the `TCrud` payload follow DTO semantics (null/default) — partial update (PATCH per-field) is **out of v1.0** (§12 OQ).
-- Save failures are three outcomes (D158). A `DbUpdateConcurrencyException` is **409** `write-concurrency-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Core recognizes a constraint only from SQLSTATE class `23` or a host probe (`AddConstraintProbe`). The Northwind hosts register the SQLite probe (`SqliteErrorCode == 19`, then the message `constraint failed`). Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error, including a non-SQLite exception whose message says `constraint failed`) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
+- Save failures are four outcomes (D158, status corrected by D159, lock split by D160). A `DbUpdateConcurrencyException` is **412** `write-concurrency-conflict`. A transient store lock is **503** `write-busy` with `Retry-After: 2`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Core recognizes a constraint only from SQLSTATE class `23` or a host probe (`AddConstraintProbe`). The Northwind hosts register the SQLite probe (`SqliteErrorCode == 19`, then the message `constraint failed`) and the lock probe (`SqliteErrorCode` 5 or 6). Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error, including a non-SQLite exception whose message says `constraint failed`) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
 
 ### 7.4 Delete — `DELETE {root}/{v}/{key}`
 
 ```text
 1. auth: IsAllowedAsync(facet=Delete) → 403 ; ShapeQuery → scope
-2. concurrency: If-Match REQUIRED if the view has a token → 412 if missing
+2. concurrency: If-Match REQUIRED if the view has a token → 428 write-precondition-required if missing
 3. IViewWriter.DeleteAsync(viewName, key, scope, ifMatch):
      entity = source.Where(scope).FirstOrDefault(KeySelector == key) → null → 404
-     token mismatch → 409 write-concurrency-conflict ; SaveChanges → DbUpdateConcurrencyException → 409 write-concurrency-conflict
+     stale or unusable If-Match, and SaveChanges → DbUpdateConcurrencyException → 412 write-concurrency-conflict
+       (the DELETE carries WHERE token = @If-Match; there is no in-memory compare-then-save)
 4. 204 No Content
 ```
 
-Soft-delete is not the endpoint's concern: if a view models soft-delete, it is expressed as `WithRowFilter<TSource>(_ => e => !e.IsDeleted)` (Spec 01 §5.2) + a `WithCrud` that sets the flag, not a physical `DELETE`. The `DELETE` endpoint always = remove the row (or fail to 404/409/412).
+Soft-delete is not the endpoint's concern: if a view models soft-delete, it is expressed as `WithRowFilter<TSource>(_ => e => !e.IsDeleted)` (Spec 01 §5.2) + a `WithCrud` that sets the flag, not a physical `DELETE`. The `DELETE` endpoint always = remove the row (or fail to 404/412/428).
 
 ### 7.5 Export — `POST {root}/{v}/export?format=csv|xlsx`
 
@@ -385,12 +388,31 @@ Bulk security rules:
 
 ### 7.8 Concurrency (`ETag`/`If-Match`) — details (Spec 01 §14.2)
 
-- A View with `WithConcurrencyToken(field)` exposes the token as the **`ETag` header** on the Detail response (`GET .../{key}`) and on Create/Update items. Header by default; option to expose it to a DTO field via `WithConcurrencyToken(..., exposeAs: "RowVersion")` (Spec 01 §15 #5).
-- Token encoding → ETag string: `byte[] RowVersion` → **base64url**; `DateTime LastModifiedAt` → **ISO-8601**; `xmin` (PostgreSQL) → a numeric string. Always a **strong ETag** (not weak `W/`).
-- `PUT`/`DELETE` on a token-bearing view **must** supply `If-Match: "<token>"`:
-  - missing header → **412** `precondition-failed` (do not silently perform last-write-wins).
-  - token mismatch on load / `SaveChanges` throwing `DbUpdateConcurrencyException` → **409** `write-concurrency-conflict`.
+- A View with `WithConcurrencyToken(field)` exposes the token as the **`ETag` header** on the Detail response and on Create/Update. The header is a **quoted strong entity-tag** (`"<opaque>"`, RFC 9110). The opaque value is the token read from the row **after** a successful save. The response never echoes the request `If-Match`. Header by default; option to expose it to a DTO field via `WithConcurrencyToken(..., exposeAs: "RowVersion")` (Spec 01 §15 #5).
+- Token encoding → opaque string: `byte[] RowVersion` → **standard Base64** (`Convert.ToBase64String`, not base64url); `DateTime` and `DateTimeOffset` → the round-trip format `"O"` in invariant culture (`DateTime` is labeled UTC with `DateTime.SpecifyKind` when `Kind` is `Unspecified`, and converted with `ToUniversalTime` when `Kind` is `Local`; `DateTimeOffset` keeps its offset and is not shifted to UTC); `xmin` (PostgreSQL) → a numeric string; `Guid` → the invariant `D` form. The HTTP layer then wraps that opaque string in quotes. The wire form is checked before `SaveChanges`, so a token that cannot be a strong entity-tag does not commit. Weak tags (`W/"…"`) are not emitted. A `DateTime` token read back with `Kind` Unspecified is assumed to be UTC (`DateTime.SpecifyKind`, no shift), which is safe for tokens Vista mints with `DateTime.UtcNow`. A `DateTimeOffset` keeps the offset it was stored with and is not normalized to UTC.
+- An application-generated token (not a store `rowversion` / `ValueGenerated.OnAddOrUpdate`) is replaced on create and on every successful update. The next write must send the new `ETag`. Reusing the previous token is a lost-update rejection. Delete does not mint a new token.
+- The check is atomic. The executor sets the client's parsed tag as the EF Core concurrency original value, so `UPDATE`/`DELETE` is `WHERE token = @If-Match`. Comparing the loaded row in memory and then calling `SaveChanges` is not the contract: two requests that loaded the same token could both commit. `DbUpdateConcurrencyException` (zero rows) is the lost-update signal. Providers without a native `rowversion` (SQLite) use `IsConcurrencyToken()` plus the application-minted value.
+- `PUT`/`DELETE` on a token-bearing view **must** supply `If-Match`:
+  - missing or blank header → **428** `write-precondition-required` (RFC 6585). Do not treat a missing token as 412, and do not silently perform last-write-wins.
+  - a stale tag, a list in which no strong tag equals the stored token, `If-Match: *`, a weak-only header, or any other unusable header → **412** `write-concurrency-conflict`.
+  - `SaveChanges` throwing `DbUpdateConcurrencyException` → **412** `write-concurrency-conflict` (same wire code, title "Precondition failed").
+  - a transient store lock (`SQLITE_BUSY` 5, `SQLITE_LOCKED` 6, or `DbException.IsTransient`) → **503** `write-busy`, title "Service unavailable", `Retry-After: 2`. This is not a lost update and not a 500 (D160).
+- `If-Match` parsing (RFC 9110 §13.1.1):
+  - a quoted strong tag, or a comma-separated list of them, is the normal form. For one strong tag, that tag is the `WHERE` value (it is not first compared with the loaded row). For a list, the member equal to the loaded token is the `WHERE` value; if none equals it, the write is 412 before `SaveChanges`.
+  - a single unquoted token (no comma, no quotes) is accepted as a legacy form and used as the `WHERE` value.
+  - `*` is recognized only as the entire header and is rejected. A wildcard cannot be an original value, and treating it as "match anything" would drop the check.
+  - weak tags are ignored (strong comparison). A trailing comma, an unclosed quote, or a list that also contains `*` is unusable (412).
 - A View without a token: `If-Match` is ignored (no optimistic protection). A token is recommended for all multi-user writes.
+
+§7.5 is Export. The concurrency status contract is this section and the §9.2 row, not §7.5.
+
+| Behavior | Old | New |
+| --- | --- | --- |
+| Missing `If-Match` on a token-bearing write | Spec text said 412. The implementation returned 428 `write-precondition-required`. | **428** `write-precondition-required`. The spec text matches the implementation. |
+| Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | **409** `write-concurrency-conflict`, title "Concurrency conflict" (D158). | **412** `write-concurrency-conflict`, title "Precondition failed" (D159). The wire code is unchanged. |
+| `ETag` on create, update, and detail | Unquoted opaque token. | Quoted strong entity-tag. Send that header back as `If-Match`, quotes included. |
+| `If-Match` parsing | Raw string compare against the loaded token. | RFC 9110, as above. One unquoted token is still accepted. `*` and weak-only headers are 412. |
+| Token after a successful update | The same token, so a second write with the old `If-Match` could succeed. | A new application token. The response `ETag` is that new value. Reusing the previous token is 412. |
 
 ## 8. Metadata Endpoint
 
@@ -435,8 +457,9 @@ Satisfies Spec 01 §14.1 & Spec 02 §15: a single `application/problem+json` sha
 | Auth (§6) | `IsAllowedAsync == false`, anonymous user | 401 | `.../unauthorized` |
 | Write (§7) | `WriteStatus.ValidationFailed` | 400 | `.../validation` (per-field in `errors[]`) |
 | Write (§7) | `WriteStatus.NotFound` (key missing / outside scope) | 404 | `.../not-found` |
-| Write (§7) | `If-Match` missing on a token-bearing view | 412 | `.../precondition-failed` |
-| Write (§7) | token mismatch / `DbUpdateConcurrencyException` | 409 | `.../write-concurrency-conflict` |
+| Write (§7) | `If-Match` missing on a token-bearing view | 428 | `.../write-precondition-required` |
+| Write (§7) | stale `If-Match` / `DbUpdateConcurrencyException` | 412 | `.../write-concurrency-conflict` |
+| Write (§7) | transient store lock (`SQLITE_BUSY`, `SQLITE_LOCKED`, `DbException.IsTransient`) | 503 + `Retry-After: 2` | `.../write-busy` |
 | Write (§7) | constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `.../write-constraint-violation` |
 | Write (§7) | other `DbUpdateException` (missing table, I/O, unrecognized provider) | 500 | `.../write-persistence-failed` |
 | Bulk (§7.6) | empty `filter` | 400 | `.../bulk-requires-filter` |
@@ -484,7 +507,9 @@ In line with Spec 01 §9, Spec 03 §14:
 | D89 | List-query = `POST {root}/{v}/query` (body); Create = `POST {root}/{v}`. Detail/Update/Delete by-key single path; composite PK = comma segments (v1.0). | **Decided** | §5.2, §7.7. Spec 01 D32. |
 | D90 | `query` & `export` use **POST** (filter tree in the body), not GET. `MaxRequestBodyBytes` (default 1 MiB) → 413. | **Decided** | §5.2, §5.3. |
 | D91 | Endpoints are mapped via **Minimal API** (delegate) from the source-gen registry as the primary AOT-clean path; no MVC controller discovery on the hot path. | **Decided** | §11. |
-| D92 | `WithConcurrencyToken`: **strong** ETag, base64url encoding (`byte[]`) / ISO-8601 (`DateTime`); `If-Match` required on a token-bearing write view (412 if missing), mismatch → 409. | **Decided** | §7.8. Spec 01 §14.2/D30. |
+| D92 | `WithConcurrencyToken`: **strong** ETag, base64url encoding (`byte[]`) / ISO-8601 (`DateTime`); `If-Match` required on a token-bearing write view. | **Superseded in part by D159** | §7.8. Spec 01 §14.2/D30. D92's 412-if-missing and 409-on-mismatch are replaced by D159 (428 if missing, 412 on mismatch). |
+| D159 | **Optimistic concurrency is HTTP 412, and the token moves.** A missing `If-Match` on a token-bearing write stays **428** `write-precondition-required` (RFC 6585). Spec text that said 412 for a missing header was wrong. A stale or unusable `If-Match` and `DbUpdateConcurrencyException` are both **412** `write-concurrency-conflict` (title "Precondition failed"). D158's 409 for that outcome is overridden; the wire code is unchanged. The `ETag` is a quoted strong entity-tag taken from the row after save, never the request `If-Match`. `If-Match` is parsed per RFC 9110: quoted strong tags and lists, one legacy unquoted token accepted, `*` and weak-only headers rejected. The predicate is `WHERE token = @If-Match` (EF concurrency token). An application-generated token is replaced on every successful update, so a second write with the old token is 412. `byte[]` tokens are standard Base64. `DateTime` and `DateTimeOffset` use invariant round-trip `"O"`; an unspecified `DateTime` is labeled UTC without shifting, and a `DateTimeOffset` keeps its offset. §7.5 remains Export; this contract is §7.3, §7.4, §7.8, and §9.2. | **Decided** | §7.3, §7.4, §7.8, §9.2. Spec 01 §14.1, §14.2. |
+| D160 | **A transient store lock is HTTP 503 `write-busy`.** `SQLITE_BUSY` (5), `SQLITE_LOCKED` (6), and any `DbException` with `IsTransient` are not a lost update and not a persistence defect. The EF layer throws `VistaStoreBusyException` (`WriteErrorCode.StoreBusy`). AspNetCore maps it to **503** with title "Service unavailable", type `urn:a2n.vista:error:write-busy`, and `Retry-After: 2`. The sample hosts open the file database through `SqliteVistaConnection`: `Default Timeout` of 5 seconds, `PRAGMA busy_timeout = 5000`, WAL, and `BEGIN IMMEDIATE`, so two writers wait and then one of them loses the concurrency predicate (412) instead of failing the lock. A lock that still escapes `SaveChanges` is 503, never 412 and never 500. | **Decided** | §7.8, §9.2. Spec 01 §14.1. |
 | D93 | PUT = full update over the whitelist fields; partial/JSON-Merge-Patch deferred. Soft-delete is modeled via `WithRowFilter` + `WithCrud`, not the `DELETE` verb. | **Decided** | §7.3, §7.4. |
 
 ## 13. Open Questions

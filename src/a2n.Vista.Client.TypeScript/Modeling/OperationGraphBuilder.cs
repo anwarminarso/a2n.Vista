@@ -102,7 +102,9 @@ public sealed class OperationGraphBuilder
     };
 
     /// <summary>The concurrency-signalling response status codes (Requirement 5.6).</summary>
-    private static readonly IReadOnlyList<string> ConcurrencyStatusCodes = ["428", "409"];
+    // 412 is the status a current document uses for a stale If-Match (D159). 409 remains recognized so a
+    // document emitted before that change still selects a token-bearing client.
+    private static readonly IReadOnlyList<string> ConcurrencyStatusCodes = ["428", "412", "409"];
 
     /// <summary>
     /// Groups the resolved document's <c>paths</c> by view root and builds one <see cref="ViewModel"/> per

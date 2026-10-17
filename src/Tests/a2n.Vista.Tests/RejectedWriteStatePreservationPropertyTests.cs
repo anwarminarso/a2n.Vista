@@ -303,9 +303,9 @@ public sealed class RejectedWriteStatePreservationPropertyTests
 
                 // Token view: a present key with a mismatching If-Match → concurrency-conflict 409 (R6.3).
                 Branch.Mismatch409Update =>
-                    (Send($"/api/views/{TokenView}/update", $"{{\"key\":{targetId},\"model\":{{\"name\":\"x\"}}}}", wrongToken), HttpStatusCode.Conflict),
+                    (Send($"/api/views/{TokenView}/update", $"{{\"key\":{targetId},\"model\":{{\"name\":\"x\"}}}}", wrongToken), HttpStatusCode.PreconditionFailed),
                 Branch.Mismatch409Delete =>
-                    (Send($"/api/views/{TokenView}/delete", $"{{\"key\":{targetId}}}", wrongToken), HttpStatusCode.Conflict),
+                    (Send($"/api/views/{TokenView}/delete", $"{{\"key\":{targetId}}}", wrongToken), HttpStatusCode.PreconditionFailed),
 
                 _ => throw new InvalidOperationException($"Unhandled branch {branch}."),
             };

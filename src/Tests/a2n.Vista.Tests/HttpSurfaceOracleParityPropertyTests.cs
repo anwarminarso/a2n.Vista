@@ -772,7 +772,11 @@ internal sealed class HttpSurfaceParityDbContext : DbContext
     {
         modelBuilder.Entity<ProductEntity>().HasKey(e => e.ProductId);
         modelBuilder.Entity<RegionTerritoryEntity>().HasKey(e => new { e.RegionId, e.TerritoryId });
-        modelBuilder.Entity<EmployeeEntity>().HasKey(e => e.EmployeeId);
+        var employee = modelBuilder.Entity<EmployeeEntity>();
+        employee.HasKey(e => e.EmployeeId);
+        // The view declares Version as its concurrency token. SQLite has no rowversion, so the
+        // column is an application token and the executor includes it in WHERE and replaces it on write.
+        employee.Property(e => e.Version).IsConcurrencyToken().ValueGeneratedNever();
     }
 
     /// <summary>
