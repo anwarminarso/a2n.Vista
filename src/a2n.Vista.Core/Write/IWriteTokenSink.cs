@@ -33,6 +33,17 @@ public interface IWriteTokenSink
     /// <summary>Publishes the post-write token for this request.</summary>
     /// <param name="token">The formatted token, or <see langword="null"/> to clear it.</param>
     void SetPostWriteToken(string? token);
+
+    /// <summary>
+    /// The projected row after a successful update, or <see langword="null"/> for create, delete, and
+    /// a failed write. Property names match the view's query type. Fields that exist only on the entity
+    /// are not copied.
+    /// </summary>
+    object? PostWriteRow { get; }
+
+    /// <summary>Publishes the projected row for this request.</summary>
+    /// <param name="row">The row, or <see langword="null"/> to clear it.</param>
+    void SetPostWriteRow(object? row);
 }
 
 /// <summary>
@@ -45,4 +56,10 @@ public sealed class WriteTokenSink : IWriteTokenSink
 
     /// <inheritdoc />
     public void SetPostWriteToken(string? token) => PostWriteToken = token;
+
+    /// <inheritdoc />
+    public object? PostWriteRow { get; private set; }
+
+    /// <inheritdoc />
+    public void SetPostWriteRow(object? row) => PostWriteRow = row;
 }

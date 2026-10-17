@@ -9,7 +9,7 @@ namespace a2n.Vista.E2E;
 /// <summary>
 /// HTTP create/update/delete round trip for <c>vWritableMemo</c>: a quoted strong ETag, token
 /// rotation, rejection of the previous token, a legacy unquoted token, and rejection of <c>*</c>.
-/// Delete stays 200 until the follow-up contract change.
+/// Delete is 204 with no body. A missing row is problem+json.
 /// </summary>
 public sealed class WritableMemoRoundTripTests
 {
@@ -28,7 +28,7 @@ public sealed class WritableMemoRoundTripTests
             new Uri(SampleSession.Northwind, "/api/views/vWritableMemo/create"))
         {
             Content = new StringContent(
-                $$"""{"model":{"subject":"{{subject}}","body":"round trip"}}""",
+                JsonSerializer.Serialize(new { model = new { subject, body = "round trip" } }),
                 Encoding.UTF8,
                 "application/json"),
         };
@@ -53,6 +53,8 @@ public sealed class WritableMemoRoundTripTests
         var edited = subject + "-edited";
         var update = await UpdateAsync(key, edited, token!).ConfigureAwait(false);
         await Assert.That(update.Status).IsEqualTo(200);
+        using var updateJson = update.Json();
+        await Assert.That(updateJson.RootElement.GetProperty("subject").GetString()).IsEqualTo(edited);
         var nextToken = update.ETag;
         await Assert.That(nextToken).IsNotNull();
         await Assert.That(nextToken!).StartsWith("\"");
@@ -103,7 +105,8 @@ public sealed class WritableMemoRoundTripTests
         };
         deleteRequest.Headers.TryAddWithoutValidation("If-Match", afterLegacy);
         var deleted = await SendAsync(deleteRequest).ConfigureAwait(false);
-        await Assert.That(deleted.Status).IsEqualTo(200);
+        await Assert.That(deleted.Status).IsEqualTo(204);
+        await Assert.That(deleted.Body.Length).IsEqualTo(0);
 
         var gone = await SampleSession.Http.PostJsonAsync(
             SampleSession.Northwind,

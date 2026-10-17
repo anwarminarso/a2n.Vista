@@ -117,6 +117,9 @@ public sealed record FacetOperation
     /// <summary>The success-response body shape this facet returns.</summary>
     public required FacetSuccessBody SuccessBody { get; init; }
 
+    /// <summary>The success status. Delete is 204. Every other facet is 200.</summary>
+    public int SuccessStatus { get; init; } = 200;
+
     /// <summary>Whether this facet exists on every view or only on writable views.</summary>
     public required FacetAvailability Availability { get; init; }
 
@@ -226,7 +229,7 @@ public static class FacetOperations
             HttpMethod = "POST",
             PathSuffix = "update",
             RequestBody = FacetRequestBody.Write,
-            SuccessBody = FacetSuccessBody.NoContentOr200,
+            SuccessBody = FacetSuccessBody.Row,
             Availability = FacetAvailability.WritableOnly,
             AlwaysErrorCodes = new[] { 400, 404, 422, 500 },
             ForbiddenWhenNotAnonymous = true,
@@ -239,6 +242,7 @@ public static class FacetOperations
             PathSuffix = "delete",
             RequestBody = FacetRequestBody.Write,
             SuccessBody = FacetSuccessBody.NoContentOr200,
+            SuccessStatus = 204,
             Availability = FacetAvailability.WritableOnly,
             AlwaysErrorCodes = new[] { 400, 404, 422, 500 },
             ForbiddenWhenNotAnonymous = true,

@@ -333,6 +333,8 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
 5. 200 OK + new strong ETag taken from the row after save (never the request If-Match) + Detail-shape body
 ```
 
+- A string longer than the writable property's EF `MaxLength` is **422** `write-constraint-violation`. The limit is the model metadata. The endpoint does not embed a length literal. The row is not saved.
+
 - **Update by-key is `AND`-ed with the trusted scope** (D85): a row outside the tenant → appears as `404` (not 403), not revealing the existence of a cross-tenant row.
 - PUT is a **full update** over the whitelist fields; whitelist fields absent from the `TCrud` payload follow DTO semantics (null/default) — partial update (PATCH per-field) is **out of v1.0** (§12 OQ).
 - Save failures are three outcomes (D158, status corrected by D159). A `DbUpdateConcurrencyException` is **412** `write-concurrency-conflict`. A constraint violation (unique, foreign key, NOT NULL, CHECK) is **422** `write-constraint-violation` — its own response, not a conflict. Core recognizes a constraint only from SQLSTATE class `23` or a host probe (`AddConstraintProbe`). The Northwind hosts register the SQLite probe (`SqliteErrorCode == 19`, then the message `constraint failed`). Any other `DbUpdateException` (missing table, I/O, an unrecognized provider error, including a non-SQLite exception whose message says `constraint failed`) is a **500** `write-persistence-failed`. The same split applies to Create and Delete. The retired wire string `write-conflict` is not emitted.
@@ -346,8 +348,10 @@ The `object` boundary is consistent with Spec 02 §6.3 and keeps Core/AspNetCore
      entity = source.Where(scope).FirstOrDefault(KeySelector == key) → null → 404
      stale or unusable If-Match, and SaveChanges → DbUpdateConcurrencyException → 412 write-concurrency-conflict
        (the DELETE carries WHERE token = @If-Match; there is no in-memory compare-then-save)
-4. 204 No Content
+4. 204 No Content, no body, no ETag
 ```
+
+- A missing row is **404** `application/problem+json` with code `not-found`. The same body is returned for an out-of-scope row, a read-only route, and an unmapped route, and it names neither the view nor the key.
 
 Soft-delete is not the endpoint's concern: if a view models soft-delete, it is expressed as `WithRowFilter<TSource>(_ => e => !e.IsDeleted)` (Spec 01 §5.2) + a `WithCrud` that sets the flag, not a physical `DELETE`. The `DELETE` endpoint always = remove the row (or fail to 404/412/428).
 
@@ -455,7 +459,7 @@ Satisfies Spec 01 §14.1 & Spec 02 §15: a single `application/problem+json` sha
 | Auth (§6) | `IsAllowedAsync == false`, user authenticated | 403 | `.../forbidden` |
 | Auth (§6) | `IsAllowedAsync == false`, anonymous user | 401 | `.../unauthorized` |
 | Write (§7) | `WriteStatus.ValidationFailed` | 400 | `.../validation` (per-field in `errors[]`) |
-| Write (§7) | `WriteStatus.NotFound` (key missing / outside scope) | 404 | `.../not-found` |
+| Write (§7) | key missing / outside scope / unmapped route | 404 | `.../not-found` (problem+json; same body for each) |
 | Write (§7) | `If-Match` missing on a token-bearing view | 428 | `.../write-precondition-required` |
 | Write (§7) | stale `If-Match` / `DbUpdateConcurrencyException` | 412 | `.../write-concurrency-conflict` |
 | Write (§7) | constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `.../write-constraint-violation` |

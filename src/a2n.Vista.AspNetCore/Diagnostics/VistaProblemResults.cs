@@ -55,6 +55,21 @@ internal static class VistaProblemResults
     private const string TypePrefix = "urn:a2n.vista:error:";
 
     /// <summary>
+    /// A 404 whose body is identical for a missing row, an out-of-scope row, a read-only route, and an
+    /// unmapped route. The body names no view and no key, so it does not reveal that a target exists.
+    /// </summary>
+    public static IResult ResourceNotFound() =>
+        HttpResults.Problem(
+            statusCode: StatusCodes.Status404NotFound,
+            title: "Not found",
+            type: TypePrefix + "not-found",
+            detail: "The requested resource was not found.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "not-found",
+            });
+
+    /// <summary>
     /// Attempts to map <paramref name="exception"/> to an RFC 7807 <see cref="IResult"/>. Returns
     /// <see langword="true"/> and sets <paramref name="result"/> for the recognized Vista failures;
     /// returns <see langword="false"/> (and a <see langword="null"/> result) for anything else, so the

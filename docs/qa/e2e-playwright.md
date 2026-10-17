@@ -51,7 +51,7 @@ UI assertions wait for the data POST whose body matches the action, fail immedia
 
 `WritableMemoRoundTripTests` runs against the live Northwind host. The host copies the extracted template and creates `VistaMemos` on that copy, so the old skip (missing table, create 409 `write-conflict`, no `ETag`) no longer applies.
 
-The test lists the view, creates a memo, and requires a quoted strong `ETag`. It updates with that header, requires a different quoted `ETag`, and requires a second update that resends the original `ETag` to return 412 `write-concurrency-conflict` without changing the row. It then accepts the new token unquoted (legacy), rejects `If-Match: *` with 412, deletes with the latest token (200), and requires the following detail to be 404. The client stores the raw `ETag` header, quotes included.
+The test lists the view, creates a memo, and requires a quoted strong `ETag`. It updates with that header, requires a different quoted `ETag`, and requires a second update that resends the original `ETag` to return 412 `write-concurrency-conflict` without changing the row. It then accepts the new token unquoted (legacy), rejects `If-Match: *` with 412, deletes with the latest token (204, empty body), and requires the following detail to be 404. The client stores the raw `ETag` header, quotes included.
 
 ## Run it
 

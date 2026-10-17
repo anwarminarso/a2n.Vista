@@ -125,6 +125,15 @@ While the version is `0.x`, anything may change between releases.
   | `If-Match` parsing | Raw string compare | RFC 9110 quoted strong tags, including a list | Send a quoted strong tag. A single unquoted token is still accepted (legacy). `If-Match: *` and a weak-only `W/"…"` are 412. A comma-separated list matches when one strong tag equals the stored token; that tag is the `WHERE` value. |
   | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match` | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
 
+- **Breaking (0.0.5): write success and not-found bodies.** Each row is one behavior change.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- |
+  | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
+  | Update of an in-scope row | 200 with an empty body and an `ETag` | 200 with the detail row and the new `ETag` | Read the updated row from the body. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Missing row, out-of-scope row, read-only route, and unmapped route | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Do not treat an empty body as the not-found signal. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | Read `MaxLength` from the model. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
+
 ## [0.0.4] - 2026-08-11
 
 > **This is the release that carries the issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4)
