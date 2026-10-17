@@ -28,7 +28,7 @@ public sealed class WritableMemoRoundTripTests
             new Uri(SampleSession.Northwind, "/api/views/vWritableMemo/create"))
         {
             Content = new StringContent(
-                $$"""{"model":{"subject":"{{subject}}","body":"round trip"}}""",
+                JsonSerializer.Serialize(new { model = new { subject, body = "round trip" } }),
                 Encoding.UTF8,
                 "application/json"),
         };
