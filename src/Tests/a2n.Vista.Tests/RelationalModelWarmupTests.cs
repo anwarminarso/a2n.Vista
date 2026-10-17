@@ -35,6 +35,7 @@ public sealed class RelationalModelWarmupTests
         new(typeof(WriteEndpointExampleTests.ExampleWriteContext), OutsideSample),
         new(typeof(WritePersistenceFailureIntegrationTests.UniqueContext), OutsideSample),
         new(typeof(WritePersistenceFailureIntegrationTests.TokenContext), OutsideSample),
+        new(typeof(WritePersistenceFailureIntegrationTests.ForeignKeyContext), OutsideSample),
         new(typeof(WriteResponseMinimalityPropertyTests.MinimalityContext), OutsideSample),
         new(typeof(WriteSaveChangesSemanticsTests.WriteContext), OutsideSample),
 #if NET9_0_OR_GREATER

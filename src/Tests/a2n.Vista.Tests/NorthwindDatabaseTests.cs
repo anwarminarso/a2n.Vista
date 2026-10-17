@@ -95,6 +95,133 @@ public sealed class NorthwindDatabaseTests
         await Assert.That(Convert.ToHexString(File.ReadAllBytes(database))).IsEqualTo(Convert.ToHexString(payload));
     }
 
+    /// <summary>
+    /// A database that is already the pinned file is not extracted again and is not rewritten.
+    /// </summary>
+    [Test]
+    public async Task Extraction_Skips_When_The_Database_Already_Matches_The_Pin()
+    {
+        using var workspace = new ExtractWorkspace();
+        var payload = "already-pinned-northwind"u8.ToArray();
+        var zip = workspace.WriteZip(payload);
+        var database = workspace.DatabasePath;
+        Directory.CreateDirectory(Path.GetDirectoryName(database)!);
+        await File.WriteAllBytesAsync(database, payload);
+        var sentinel = new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(database, sentinel);
+        var checksum = workspace.WriteChecksum(
+            NorthwindWorkingDatabase.Sha256(zip).ToLowerInvariant(),
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant());
+
+        var result = await workspace.ExtractAsync(zip, database, checksum);
+
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+        await Assert.That(result.Output).Contains("Skipping extract.");
+        await Assert.That(File.GetLastWriteTimeUtc(database)).IsEqualTo(sentinel);
+        await Assert.That(Convert.ToHexString(File.ReadAllBytes(database))).IsEqualTo(Convert.ToHexString(payload));
+        await Assert.That(Directory.GetDirectories(Path.GetDirectoryName(database)!, ".northwind-extract-*").Length).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// A stale file that is not the pin is replaced by the verified extract. The temp directory does not remain.
+    /// </summary>
+    [Test]
+    public async Task Extraction_Replaces_A_Mismatched_Database_With_The_Pinned_File()
+    {
+        using var workspace = new ExtractWorkspace();
+        var payload = "replacement-northwind-bytes"u8.ToArray();
+        var zip = workspace.WriteZip(payload);
+        var database = workspace.DatabasePath;
+        Directory.CreateDirectory(Path.GetDirectoryName(database)!);
+        await File.WriteAllBytesAsync(database, "stale-wrong-database"u8.ToArray());
+        var checksum = workspace.WriteChecksum(
+            NorthwindWorkingDatabase.Sha256(zip).ToLowerInvariant(),
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant());
+
+        var result = await workspace.ExtractAsync(zip, database, checksum);
+
+        await Assert.That(result.ExitCode).IsEqualTo(0);
+        await Assert.That(Convert.ToHexString(await File.ReadAllBytesAsync(database))).IsEqualTo(Convert.ToHexString(payload));
+        await Assert.That(Directory.GetDirectories(Path.GetDirectoryName(database)!, ".northwind-extract-*").Length).IsEqualTo(0);
+        await Assert.That(File.Exists(database + ".extract.lock")).IsFalse();
+        await Assert.That(Directory.GetFiles(Path.GetDirectoryName(database)!, "northwind.db.stale-*").Length).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// A database hash mismatch deletes the temp extract only. An existing <c>northwind.db</c> is left as it was.
+    /// </summary>
+    [Test]
+    public async Task Extraction_Hash_Mismatch_Deletes_Only_The_Temp_File()
+    {
+        using var workspace = new ExtractWorkspace();
+        var payload = "temp-file-that-fails-the-pin"u8.ToArray();
+        var zip = workspace.WriteZip(payload);
+        var database = workspace.DatabasePath;
+        var existing = "preexisting-database-bytes"u8.ToArray();
+        Directory.CreateDirectory(Path.GetDirectoryName(database)!);
+        await File.WriteAllBytesAsync(database, existing);
+        var checksum = workspace.WriteChecksum(
+            NorthwindWorkingDatabase.Sha256(zip).ToLowerInvariant(),
+            new string('e', 64));
+
+        var result = await workspace.ExtractAsync(zip, database, checksum);
+
+        await Assert.That(result.ExitCode).IsNotEqualTo(0);
+        await Assert.That(result.Output).Contains("hash mismatch");
+        await Assert.That(result.Output).Contains("empty database");
+        await Assert.That(Convert.ToHexString(await File.ReadAllBytesAsync(database))).IsEqualTo(Convert.ToHexString(existing));
+        await Assert.That(Directory.GetDirectories(Path.GetDirectoryName(database)!, ".northwind-extract-*").Length).IsEqualTo(0);
+    }
+
+    /// <summary>
+    /// Six <c>dotnet msbuild -t:ExtractNorthwindDatabase</c> processes share one temp copy of the DB folder.
+    /// Each exits 0, the final file matches the pin, and a second wave does not rewrite a correct file.
+    /// </summary>
+    [Test]
+    [Timeout(180000)]
+    public async Task Concurrent_Extraction_Places_The_Pinned_Database_Once(CancellationToken cancellationToken)
+    {
+        using var workspace = new ExtractWorkspace();
+        var payload = new byte[64 * 1024];
+        for (var i = 0; i < payload.Length; i++)
+        {
+            payload[i] = (byte)(i * 31);
+        }
+
+        var zip = workspace.WriteZip(payload);
+        var database = workspace.DatabasePath;
+        var checksum = workspace.WriteChecksum(
+            NorthwindWorkingDatabase.Sha256(zip).ToLowerInvariant(),
+            Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(payload)).ToLowerInvariant());
+        var dbDir = Path.GetDirectoryName(database)!;
+
+        var first = await workspace.ExtractManyAsync(zip, database, checksum, 6, cancellationToken);
+        var firstFailures = string.Join(
+            Environment.NewLine + "----" + Environment.NewLine,
+            first.Where(result => result.ExitCode != 0).Select(result => result.Output));
+        await Assert.That(firstFailures).IsEmpty();
+        await Assert.That(File.Exists(database)).IsTrue();
+        await Assert.That(Convert.ToHexString(await File.ReadAllBytesAsync(database))).IsEqualTo(Convert.ToHexString(payload));
+        await Assert.That(Directory.GetDirectories(dbDir, ".northwind-extract-*").Length).IsEqualTo(0);
+        await Assert.That(File.Exists(database + ".extract.lock")).IsFalse();
+        await Assert.That(Directory.GetFiles(dbDir, "northwind.db.stale-*").Length).IsEqualTo(0);
+
+        var sentinel = new DateTime(2001, 1, 1, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(database, sentinel);
+        var second = await workspace.ExtractManyAsync(zip, database, checksum, 6, cancellationToken);
+        var secondFailures = string.Join(
+            Environment.NewLine + "----" + Environment.NewLine,
+            second.Where(result => result.ExitCode != 0).Select(result => result.Output));
+        await Assert.That(secondFailures).IsEmpty();
+        foreach (var result in second)
+        {
+            await Assert.That(result.Output).Contains("Skipping extract.");
+        }
+
+        await Assert.That(File.GetLastWriteTimeUtc(database)).IsEqualTo(sentinel);
+        await Assert.That(Convert.ToHexString(await File.ReadAllBytesAsync(database))).IsEqualTo(Convert.ToHexString(payload));
+    }
+
     [Test]
     public async Task Host_Refuses_A_Missing_Or_Mismatched_Template()
     {
@@ -329,14 +456,22 @@ public sealed class NorthwindDatabaseTests
             return path;
         }
 
-        public async Task<(int ExitCode, string Output)> ExtractAsync(string zip, string database, string checksum)
+        public Task<(int ExitCode, string Output)> ExtractAsync(string zip, string database, string checksum) =>
+            ExtractAsync(zip, database, checksum, CancellationToken.None);
+
+        public async Task<(int ExitCode, string Output)> ExtractAsync(
+            string zip,
+            string database,
+            string checksum,
+            CancellationToken cancellationToken)
         {
             System.IO.Directory.CreateDirectory(Path.GetDirectoryName(database)!);
-            var project = Path.Combine(Root, "extract.proj");
+            var project = Path.Combine(Root, "extract-" + Guid.NewGuid().ToString("N") + ".proj");
             var targets = TargetsPath().Replace('\\', '/');
             await File.WriteAllTextAsync(
                 project,
-                "<Project>\n  <Import Project=\"" + targets + "\" />\n</Project>\n");
+                "<Project>\n  <Import Project=\"" + targets + "\" />\n</Project>\n",
+                cancellationToken);
 
             var start = new ProcessStartInfo("dotnet")
             {
@@ -356,11 +491,40 @@ public sealed class NorthwindDatabaseTests
 
             using var process = Process.Start(start)
                 ?? throw new InvalidOperationException("Failed to start dotnet msbuild.");
-            var stdout = process.StandardOutput.ReadToEndAsync();
-            var stderr = process.StandardError.ReadToEndAsync();
-            await process.WaitForExitAsync();
+            var stdout = process.StandardOutput.ReadToEndAsync(cancellationToken);
+            var stderr = process.StandardError.ReadToEndAsync(cancellationToken);
+            try
+            {
+                await process.WaitForExitAsync(cancellationToken);
+            }
+            catch (OperationCanceledException)
+            {
+                if (!process.HasExited)
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+
+                throw;
+            }
+
             var output = await stdout + await stderr;
             return (process.ExitCode, output);
+        }
+
+        public async Task<(int ExitCode, string Output)[]> ExtractManyAsync(
+            string zip,
+            string database,
+            string checksum,
+            int workers,
+            CancellationToken cancellationToken)
+        {
+            var tasks = new Task<(int ExitCode, string Output)>[workers];
+            for (var i = 0; i < workers; i++)
+            {
+                tasks[i] = ExtractAsync(zip, database, checksum, cancellationToken);
+            }
+
+            return await Task.WhenAll(tasks);
         }
 
         public void Dispose()

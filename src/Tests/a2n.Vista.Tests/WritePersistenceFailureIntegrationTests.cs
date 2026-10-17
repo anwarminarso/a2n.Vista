@@ -666,7 +666,7 @@ public sealed class WritePersistenceFailureIntegrationTests
     }
 
     /// <summary>EF context with a required foreign key from child to parent.</summary>
-    private sealed class ForeignKeyContext : DbContext
+    internal sealed class ForeignKeyContext : DbContext
     {
         public ForeignKeyContext(DbContextOptions<ForeignKeyContext> options)
             : base(options)

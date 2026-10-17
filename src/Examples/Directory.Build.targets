@@ -4,6 +4,12 @@
     src/Examples/DB/Northwind SQLite.zip. The zip and the extracted northwind.db are pinned in
     src/Examples/DB/Northwind.sha256 (sha256sum lines: 64 hex digits, two spaces, file name).
     A missing zip or a hash mismatch fails the build. Nothing here creates an empty database.
+
+    Several hosts and TFM inner builds can run this target at once against the same northwind.db.
+    The zip is unpacked into a unique directory beside the database (same volume, GUID name), the
+    extracted file is hashed there, and only a file that matches the pin is moved onto northwind.db.
+    A destination that already has the pinned hash is left untouched. A run that loses the race
+    accepts that file and deletes only its own temp directory. A correct northwind.db is never deleted.
   -->
   <PropertyGroup>
     <_NorthwindDbDirectory Condition="'$(_NorthwindDbDirectory)' == ''">$(MSBuildThisFileDirectory)DB/</_NorthwindDbDirectory>
@@ -11,6 +17,273 @@
     <NorthwindSqliteDatabase Condition="'$(NorthwindSqliteDatabase)' == ''">$(_NorthwindDbDirectory)northwind.db</NorthwindSqliteDatabase>
     <NorthwindChecksumFile Condition="'$(NorthwindChecksumFile)' == ''">$(_NorthwindDbDirectory)Northwind.sha256</NorthwindChecksumFile>
   </PropertyGroup>
+
+  <!--
+    Places a temp file that already matches the pin onto NorthwindSqliteDatabase.
+    Compiled against the MSBuild task surface (netstandard2.0): no SHA256.HashData, no File.Move overwrite.
+  -->
+  <UsingTask TaskName="PlaceVerifiedNorthwindDatabase"
+             TaskFactory="RoslynCodeTaskFactory"
+             AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source Required="true" />
+      <Destination Required="true" />
+      <ExpectedHash Required="true" />
+      <TempDirectory Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System" />
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.Security.Cryptography" />
+      <Using Namespace="System.Threading" />
+      <Using Namespace="Microsoft.Build.Framework" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        var expected = (ExpectedHash ?? string.Empty).Trim().ToLowerInvariant();
+        if (expected.Length != 64)
+        {
+            Log.LogError("Northwind database pin is empty. Refusing to place " + Destination + ". This build does not create an empty database.");
+            DeleteTemp();
+            return false;
+        }
+
+        if (!File.Exists(Source))
+        {
+            Log.LogError("Northwind database hash mismatch after extracting " + Source + ". Expected " + expected + ", actual (missing). The extracted file was deleted. This build does not fall back to an empty database.");
+            DeleteTemp();
+            return false;
+        }
+
+        var sourceHash = Sha(Source);
+        if (!string.Equals(sourceHash, expected, StringComparison.Ordinal))
+        {
+            Log.LogError("Northwind database hash mismatch after extracting " + Source + ". Expected " + expected + ", actual " + sourceHash + ". The extracted file was deleted. This build does not fall back to an empty database.");
+            DeleteTemp();
+            return false;
+        }
+
+        var destFull = Path.GetFullPath(Destination);
+        var destDir = Path.GetDirectoryName(destFull);
+        if (!string.IsNullOrEmpty(destDir))
+        {
+            Directory.CreateDirectory(destDir);
+        }
+
+        var lockPath = destFull + ".extract.lock";
+        FileStream lockStream = null;
+        var deadline = DateTime.UtcNow.AddSeconds(60);
+        while (lockStream == null)
+        {
+            try
+            {
+                lockStream = new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+            }
+            catch (IOException)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    Log.LogError("Timed out waiting to place Northwind database " + Destination + ". This build does not create an empty database.");
+                    DeleteTemp();
+                    return false;
+                }
+
+                Thread.Sleep(50);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                if (DateTime.UtcNow >= deadline)
+                {
+                    Log.LogError("Timed out waiting to place Northwind database " + Destination + ". This build does not create an empty database.");
+                    DeleteTemp();
+                    return false;
+                }
+
+                Thread.Sleep(50);
+            }
+        }
+
+        try
+        {
+            Exception last = null;
+            var moved = false;
+            for (var attempt = 1; attempt <= 10 && !moved; attempt++)
+            {
+                try
+                {
+                    if (HasPin(destFull))
+                    {
+                        return AcceptExisting();
+                    }
+
+                    if (!File.Exists(destFull))
+                    {
+                        File.Move(Source, destFull);
+                    }
+                    else
+                    {
+                        var backup = destFull + ".stale-" + Guid.NewGuid().ToString("N");
+                        File.Replace(Source, destFull, backup);
+                        if (File.Exists(backup))
+                        {
+                            File.Delete(backup);
+                        }
+                    }
+
+                    moved = true;
+                }
+                catch (IOException ex)
+                {
+                    last = ex;
+                    if (HasPin(destFull))
+                    {
+                        return AcceptExisting();
+                    }
+
+                    if (attempt == 10)
+                    {
+                        break;
+                    }
+
+                    Thread.Sleep(50);
+                }
+                catch (UnauthorizedAccessException ex)
+                {
+                    last = ex;
+                    if (HasPin(destFull))
+                    {
+                        return AcceptExisting();
+                    }
+
+                    if (attempt == 10)
+                    {
+                        break;
+                    }
+
+                    Thread.Sleep(50);
+                }
+            }
+
+            if (!moved)
+            {
+                if (HasPin(destFull))
+                {
+                    return AcceptExisting();
+                }
+
+                var message = last == null ? "could not place the file" : last.Message;
+                Log.LogError("Failed to place Northwind database " + Destination + ". " + message + " This build does not create an empty database.");
+                DeleteTemp();
+                return false;
+            }
+
+            if (!HasPin(destFull))
+            {
+                var actual = File.Exists(destFull) ? Sha(destFull) : "(missing)";
+                Log.LogError("Northwind database hash mismatch after placing " + Destination + ". Expected " + expected + ", actual " + actual + ". This build does not fall back to an empty database.");
+                DeleteTemp();
+                return false;
+            }
+
+            Log.LogMessage(MessageImportance.High, "Placed Northwind database " + Destination + " from a verified extract.");
+            DeleteTemp();
+            return true;
+        }
+        finally
+        {
+            if (lockStream != null)
+            {
+                lockStream.Dispose();
+            }
+
+            try
+            {
+                if (File.Exists(lockPath))
+                {
+                    File.Delete(lockPath);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
+        }
+
+        string Sha(string path)
+        {
+            using (var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+            using (var algorithm = SHA256.Create())
+            {
+                var hash = algorithm.ComputeHash(stream);
+                var chars = new char[hash.Length * 2];
+                const string hex = "0123456789abcdef";
+                for (var i = 0; i < hash.Length; i++)
+                {
+                    chars[i * 2] = hex[hash[i] >> 4];
+                    chars[i * 2 + 1] = hex[hash[i] & 15];
+                }
+
+                return new string(chars);
+            }
+        }
+
+        bool HasPin(string path)
+        {
+            return File.Exists(path) && string.Equals(Sha(path), expected, StringComparison.Ordinal);
+        }
+
+        bool AcceptExisting()
+        {
+            Log.LogMessage(MessageImportance.High, "Northwind database " + Destination + " matches the pinned SHA-256. Accepting the existing file.");
+            DeleteTemp();
+            return true;
+        }
+
+        void DeleteTemp()
+        {
+            if (string.IsNullOrEmpty(TempDirectory))
+            {
+                if (!string.IsNullOrEmpty(Source) && File.Exists(Source))
+                {
+                    File.Delete(Source);
+                }
+
+                return;
+            }
+
+            var fullTemp = Path.GetFullPath(TempDirectory);
+            var parent = Path.GetDirectoryName(Path.GetFullPath(Destination)) ?? string.Empty;
+            var tempTrim = fullTemp.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            var parentTrim = parent.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            if (parentTrim.Length > 0 && string.Equals(tempTrim, parentTrim, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            for (var i = 0; i < 10; i++)
+            {
+                try
+                {
+                    if (Directory.Exists(fullTemp))
+                    {
+                        Directory.Delete(fullTemp, true);
+                    }
+
+                    return;
+                }
+                catch (IOException)
+                {
+                    Thread.Sleep(50);
+                }
+                catch (UnauthorizedAccessException)
+                {
+                    Thread.Sleep(50);
+                }
+            }
+        }
+      ]]></Code>
+    </Task>
+  </UsingTask>
 
   <Target Name="ExtractNorthwindDatabase"
           BeforeTargets="BeforeBuild"
@@ -58,24 +331,41 @@
              Condition="'$(_NorthwindDatabaseMatches)' == 'true'"
              Text="Northwind database $(NorthwindSqliteDatabase) matches the pinned SHA-256. Skipping extract." />
 
-    <Delete Files="$(NorthwindSqliteDatabase)"
-            Condition="'$(_NorthwindDatabaseMatches)' != 'true' and Exists('$(NorthwindSqliteDatabase)')" />
+    <PropertyGroup>
+      <_NorthwindExtractId Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.Guid]::NewGuid().ToString('N'))</_NorthwindExtractId>
+      <_NorthwindExtractParent Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.IO.Path]::GetDirectoryName('$(NorthwindSqliteDatabase)'))</_NorthwindExtractParent>
+      <_NorthwindExtractParent Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_NorthwindExtractParent)' == ''">.</_NorthwindExtractParent>
+      <_NorthwindExtractLeaf Condition="'$(_NorthwindDatabaseMatches)' != 'true'">.northwind-extract-$(_NorthwindExtractId)</_NorthwindExtractLeaf>
+      <_NorthwindExtractTempDir Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.IO.Path]::Combine('$(_NorthwindExtractParent)', '$(_NorthwindExtractLeaf)'))</_NorthwindExtractTempDir>
+      <_NorthwindExtractTempDb Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.IO.Path]::Combine('$(_NorthwindExtractTempDir)', 'northwind.db'))</_NorthwindExtractTempDb>
+    </PropertyGroup>
+
+    <MakeDir Directories="$(_NorthwindExtractTempDir)" Condition="'$(_NorthwindDatabaseMatches)' != 'true'" />
     <Unzip SourceFiles="$(NorthwindSqliteZip)"
-           DestinationFolder="$([System.IO.Path]::GetDirectoryName('$(NorthwindSqliteDatabase)'))"
+           DestinationFolder="$(_NorthwindExtractTempDir)"
            SkipUnchangedFiles="false"
            Condition="'$(_NorthwindDatabaseMatches)' != 'true'" />
-    <Error Condition="'$(_NorthwindDatabaseMatches)' != 'true' and !Exists('$(NorthwindSqliteDatabase)')"
+
+    <RemoveDir Directories="$(_NorthwindExtractTempDir)"
+               Condition="'$(_NorthwindDatabaseMatches)' != 'true' and !Exists('$(_NorthwindExtractTempDb)')" />
+    <Error Condition="'$(_NorthwindDatabaseMatches)' != 'true' and !Exists('$(_NorthwindExtractTempDb)')"
            Text="Extracting $(NorthwindSqliteZip) did not produce $(NorthwindSqliteDatabase). The zip must contain northwind.db at its root. This build does not create an empty database." />
 
-    <GetFileHash Files="$(NorthwindSqliteDatabase)" Algorithm="SHA256" Condition="'$(_NorthwindDatabaseMatches)' != 'true'">
+    <GetFileHash Files="$(_NorthwindExtractTempDb)" Algorithm="SHA256" Condition="'$(_NorthwindDatabaseMatches)' != 'true' and Exists('$(_NorthwindExtractTempDb)')">
       <Output TaskParameter="Items" ItemName="_NorthwindExtractedDbHash" />
     </GetFileHash>
     <PropertyGroup>
-      <_ActualDbHash Condition="'$(_NorthwindDatabaseMatches)' != 'true'">$([System.String]::Copy('%(_NorthwindExtractedDbHash.FileHash)').ToLowerInvariant())</_ActualDbHash>
+      <_ActualDbHash Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '@(_NorthwindExtractedDbHash)' != ''">$([System.String]::Copy('%(_NorthwindExtractedDbHash.FileHash)').ToLowerInvariant())</_ActualDbHash>
     </PropertyGroup>
-    <Delete Files="$(NorthwindSqliteDatabase)"
-            Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_ActualDbHash)' != '$(_ExpectedDbHash)'" />
+    <RemoveDir Directories="$(_NorthwindExtractTempDir)"
+               Condition="'$(_NorthwindDatabaseMatches)' != 'true' and Exists('$(_NorthwindExtractTempDb)') and '$(_ActualDbHash)' != '$(_ExpectedDbHash)'" />
     <Error Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_ActualDbHash)' != '$(_ExpectedDbHash)'"
            Text="Northwind database hash mismatch after extracting $(NorthwindSqliteZip). Expected $(_ExpectedDbHash), actual $(_ActualDbHash). The extracted file was deleted. This build does not fall back to an empty database." />
+
+    <PlaceVerifiedNorthwindDatabase Source="$(_NorthwindExtractTempDb)"
+                                     Destination="$(NorthwindSqliteDatabase)"
+                                     ExpectedHash="$(_ExpectedDbHash)"
+                                     TempDirectory="$(_NorthwindExtractTempDir)"
+                                     Condition="'$(_NorthwindDatabaseMatches)' != 'true' and '$(_ActualDbHash)' == '$(_ExpectedDbHash)'" />
   </Target>
 </Project>

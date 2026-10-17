@@ -66,6 +66,9 @@ pnpm-debug.log*
 
 # Extracted from src/Examples/DB/Northwind SQLite.zip by the sample build. Not committed.
 northwind.db
+.northwind-extract-*/
+northwind.db.extract.lock
+northwind.db.stale-*
 
 ## Brand / design scratch (out-of-project, agent-generated)
 brand/
