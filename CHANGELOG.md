@@ -8,15 +8,20 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
+## [0.0.5] - 2026-10-17
+
 ### Added
-- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D154–D157). The third
-  real grid adapter. `POST {route}/tanstack` binds TanStack Table's manual state — `pagination`,
-  `sorting`, `columnFilters`, `globalFilter`, `columnVisibility` — into Vista's query
-  (absolute offset, sort, Filter, Search, `SelectFields`) and returns `{ rows, rowCount, pageCount }`.
-  `columnVisibility` / `SelectFields` only hides a column in the table UI. Hidden fields are still sent
-  to the client; it is not an access-control mechanism. Core-only, source-generated JSON, same host glue
-  as DataTables and AG Grid. The Northwind showcase gains a TanStack Table page next to the AG Grid and
-  DataTables pages. NuGet publishing of the adapter package is deferred.
+- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D154–D157,
+  [#21](https://github.com/anwarminarso/a2n.Vista/pull/21)). The third real grid adapter.
+  `POST {route}/tanstack` binds TanStack Table's manual state — `pagination`, `sorting`,
+  `columnFilters`, `globalFilter`, `columnVisibility` — into Vista's query (absolute offset, sort,
+  Filter, Search, `SelectFields`) and returns `{ rows, rowCount, pageCount }`. `columnVisibility` /
+  `SelectFields` only hides a column in the table UI. Hidden fields are still sent to the client; it
+  is not an access-control mechanism. Core-only, source-generated JSON, same host glue as DataTables
+  and AG Grid. The Northwind showcase gains a TanStack Table page next to the AG Grid and DataTables
+  pages. The package is published to NuGet with this release: `publish.yml` lists
+  `a2n.Vista.Adapters.TanStackTable` in `PACK_PROJECTS`, and the package depends on `a2n.Vista.Core`
+  at the same version.
 - `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`
   (`write-constraint-violation`) and `VistaConstraintViolationException`.
 - `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
@@ -39,7 +44,8 @@ While the version is `0.x`, anything may change between releases.
   The target still does not create an empty database and does not call `EnsureCreated`.
   `tests/e2e/run.sh`, `tests/e2e/run-startup-burst.sh`, CI, and `RepoPaths.EnsureDatabase` still call
   only this target.
-- **Northwind `vWritableMemo` works against a per-run copy of the extracted database.** The Microsoft
+- **Northwind `vWritableMemo` works against a per-run copy of the extracted database**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8)). The Microsoft
   sample had no `VistaMemos` table, so a live list/update/delete returned 500 (`no such table:
   VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/Northwind SQLite.zip` stays
   the shipped database (11,096,792 bytes). `src/Examples/DB/Northwind.sha256` pins the SHA-256 of that
@@ -57,7 +63,8 @@ While the version is `0.x`, anything may change between releases.
   stale `If-Match` is `write-concurrency-conflict`, and that the extracted template's SHA-256 is
   unchanged from before the copy through the write round trip. The isolated self-test still runs
   Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
-- **Save failures are three distinct outcomes** (Decision Log D158). A genuine concurrency failure
+- **Save failures are three distinct outcomes**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8), Decision Log D158). A genuine concurrency failure
   (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
   `VistaConcurrencyConflictException`) is HTTP 409 `write-concurrency-conflict`. A unique, foreign-key,
   NOT NULL, or CHECK breach is HTTP 422 `write-constraint-violation`
@@ -76,26 +83,45 @@ While the version is `0.x`, anything may change between releases.
   mismatch is 409 `write-concurrency-conflict`.
 
 ### Changed
-- **Breaking (0.x): `write-conflict` is retired.** It previously meant a constraint violation and is no
-  longer emitted. Concurrency keeps `write-concurrency-conflict` (HTTP 409).
+- **Breaking (0.x): `write-conflict` is retired**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8), Decision Log D158). It previously meant a
+  constraint violation and is no longer emitted. Concurrency keeps `write-concurrency-conflict` (HTTP 409).
 
-  | Outcome | HTTP | Wire code |
-  | --- | --- | --- |
-  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 409 | `write-concurrency-conflict` |
-  | Constraint violation (unique, foreign key, NOT NULL, CHECK) | 422 | `write-constraint-violation` |
-  | Other `DbUpdateException` (missing table, I/O, unrecognized provider) | 500 | `write-persistence-failed` |
+  | Outcome | HTTP | Wire code | Exception |
+  | --- | --- | --- | --- | --- |
+  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 409 | `write-concurrency-conflict` | `VistaConcurrencyConflictException` (unchanged) |
+  | Constraint violation (unique, foreign key, NOT NULL, CHECK), when recognized | 422 | `write-constraint-violation` | `VistaConstraintViolationException` |
+  | Other `DbUpdateException` (missing table, I/O, unrecognized provider error) | 500 | `write-persistence-failed` | `VistaPersistenceException` |
 
-  `WriteErrorCode.WriteConflict`, `WriteErrorCodes.WriteConflict`, and `VistaWriteConflictException` are
-  removed. They are not obsolete aliases. Clients that matched `write-conflict` as a constraint violation
-  must match `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` is unchanged.
-  Constraint detection does not reflect over provider error-code properties. The only built-in rule is
-  SQLSTATE class `23`. SQLite, SQL Server, and MySQL are classified by a host probe
-  (`DbUpdateFailureClassification.AddConstraintProbe`). The Northwind probe is
-  `SqliteException.SqliteErrorCode == 19`, then the message `constraint failed`. An unrecognized
-  provider error is HTTP 500.
+  Clients that matched the wire string `write-conflict` as a constraint violation must match
+  `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` (HTTP 409) is unchanged.
+  `WriteErrorCode.WriteConflict` and `WriteErrorCodes.WriteConflict` are removed. They are not obsolete
+  aliases.
 
-  The integer values of `WriteErrorCode` shifted in this change. Compare the enum by name, not by
-  number. An integer stored or switched on from 0.0.4 is a different member now.
+  **`VistaWriteConflictException` is removed.** It is not an obsolete alias. Catch sites, `is` tests,
+  and `switch` arms on that type must change. Its two replacements are:
+
+  - `VistaConstraintViolationException` (`WriteErrorCode.ConstraintViolation`) — a recognized unique,
+    foreign-key, NOT NULL, or CHECK breach. HTTP 422 `write-constraint-violation`. The default message
+    is "The write violates a database constraint and was not applied."
+  - `VistaPersistenceException` (`WriteErrorCode.PersistenceFailed`) — every other non-concurrency
+    `DbUpdateException`, including a missing table, a connection failure, and a constraint the
+    classifier does not recognize. HTTP 500 `write-persistence-failed`. The default message is
+    "The write could not be saved."
+
+  Concurrency stays `VistaConcurrencyConflictException`. That type was not `VistaWriteConflictException`.
+  The provider exception remains `InnerException` and is not copied into the client response.
+
+  **`WriteErrorCode` values shifted, and code that switches on them must be updated.** `WriteConflict`
+  (7) was removed. `ConstraintViolation` now occupies 7 and `PersistenceFailed` is the new 8, so
+  `BulkNotEnabled` moved from 8 to 9 and `NoWritePlan` moved from 9 to 10. A `switch` on the 0.0.4
+  integer — or a stored integer compared against these values — selects a different member:
+  `7` is `ConstraintViolation` (it was `WriteConflict`), `8` is `PersistenceFailed` (it was
+  `BulkNotEnabled`), and `9` is `BulkNotEnabled` (it was `NoWritePlan`). A `switch` that names
+  `WriteConflict` no longer compiles. A `switch` that lists the members by name must drop
+  `WriteConflict` and handle `ConstraintViolation` and `PersistenceFailed`. Names that remain
+  (`MalformedBody` through `ConcurrencyConflict`, `BulkNotEnabled`, `NoWritePlan`) still mean the same
+  outcome; only their integers moved where the table says so.
 
   | Member | Previous value | Current value |
   | --- | --- | --- |
@@ -111,6 +137,41 @@ While the version is `0.x`, anything may change between releases.
   | `PersistenceFailed` | not present | 8 |
   | `BulkNotEnabled` | 8 | 9 |
   | `NoWritePlan` | 9 | 10 |
+
+  **Unique and foreign-key violations on providers without SQLSTATE class `23` are HTTP 500 unless the
+  host registers a probe.** Core's only built-in rule reads `DbException.SqlState` and treats class
+  `23` as a constraint (PostgreSQL, and any driver that surfaces SQLSTATE). It does not reference a
+  provider, match an exception type name, or treat the words `constraint failed` as a constraint.
+  SQLite, SQL Server, and MySQL do not set that SQLSTATE, so a unique or foreign-key violation on
+  those providers — and a NOT NULL or CHECK violation the same way — is
+  `VistaPersistenceException`, HTTP 500 `write-persistence-failed`, until the host registers
+  `DbUpdateFailureClassification.AddConstraintProbe`. Register the probe once at startup, in the
+  assembly that references the provider, so the trimmer can see the type test. The delegate is
+  `Func<Exception, bool?>`: return `true` for a constraint, `false` for a definite non-constraint
+  (`false` stops the walk), or `null` to leave the exception to later probes and the SQLSTATE rule.
+  Probes run before the built-in rule and walk the exception and its inner exceptions. The Northwind
+  hosts call `SqliteConstraintProbe.Register()` before the host is built, which registers:
+
+  ```csharp
+  DbUpdateFailureClassification.AddConstraintProbe(static exception =>
+  {
+      if (exception is not SqliteException sqlite)
+      {
+          return null;
+      }
+
+      if (sqlite.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
+      {
+          return true;
+      }
+
+      return sqlite.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
+  });
+  ```
+
+  SQL Server and MySQL use the same method against the provider's own exception type. The
+  classification remarks name SQL Server 2601, 2627, 547, and 515, and MySQL 1062, 1451, and 1452.
+  The library does not ship those probes. An unrecognized provider error stays HTTP 500.
 
 ## [0.0.4] - 2026-08-11
 
@@ -735,7 +796,8 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1...v0.0.2
