@@ -1,7 +1,7 @@
 # a2n.Vista — Project Status & Session Handoff
 
 > Status: **LIVING DOCUMENT** — update as work proceeds.
-> Last updated: 2026-10-16 (**D158 — save failures are three outcomes**, after the TanStack adapter D154–D157).
+> Last updated: 2026-10-17 (**0.0.5** — `<Version>` is `0.0.5`; TanStack Table ships on NuGet. Prior update 2026-10-16, **D158 — save failures are three outcomes**, after the TanStack adapter D154–D157).
 > `DbUpdateConcurrencyException` and a stale `If-Match` stay 409 `write-concurrency-conflict`. A constraint
 > breach (unique, foreign key, NOT NULL, CHECK) is 422 `write-constraint-violation`, not a 409. Every other
 > `DbUpdateException` (a missing table included) is 500 `write-persistence-failed`. The wire string
@@ -27,8 +27,8 @@
 > access-control mechanism. The response is
 > `{rows, rowCount, pageCount}` with `rowCount = RecordsFiltered`. **D157** adds a fourth page to the
 > Northwind showcase (`wwwroot/tanstack.html`, `@tanstack/table-core` 8.21.3) and a self-test round-trip.
-> `publish.yml` does not pack the adapter yet (NuGet publishing waits for a QA smoke and an owner
-> decision). No Core/EF/AspNetCore type changed. Verified Release
+> `publish.yml` packs `a2n.Vista.Adapters.TanStackTable` with the other shipping libraries (0.0.5).
+> No Core/EF/AspNetCore type changed for that adapter. Verified Release
 > `dotnet test src/a2n.Vista.slnx`: **596 tests (net8) / 597 (net9, net10)** in `a2n.Vista.Tests`
 > (+41, 0 failed / 0 skipped), **115** generator tests, **143** TypeScript-client tests, per TFM.
 > See §2.30.
@@ -1177,13 +1177,12 @@ package-content change). No decision numbers — pure operational tooling.
     `user:` input is the `NUGET_USER` secret (the nuget.org **account/profile name**, not an email). No
     long-lived API key is stored. The registered Trusted Publishing policy's **Workflow File** must be
     `publish.yml` (GitHub Actions only runs `.yml`/`.yaml`).
-  - **Scope — 8 implemented libraries:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
+  - **Scope — 9 implemented libraries:** `a2n.Vista.Core`, `.EntityFrameworkCore`, `.AspNetCore`,
     `.OpenApi`, `.EntityFrameworkCore.Npgsql`, `.Adapters.DataTablesNet`, `.Adapters.AgGrid`,
+    `.Adapters.TanStackTable` (D154–D157; on the pack list as of 0.0.5),
     `.Client.TypeScript` (the last ships as a `dotnet tool`, command `vista-ts`).
     **Excluded:** the empty scaffolds (`a2n.Vista.Newtonsoft` + the MudBlazor/OData/GraphQL/PrimeNG/
-    Syncfusion/Telerik adapter shells — `AssemblyMarker.cs` only),
-    **`a2n.Vista.Adapters.TanStackTable`** (implemented, D154–D157; NuGet publishing deferred until after
-    a QA smoke and an owner decision), and
+    Syncfusion/Telerik adapter shells — `AssemblyMarker.cs` only) and
     **`a2n.Vista.SourceGenerators`** — not shipped standalone; it is **bundled into `a2n.Vista.Core`**
     (packed under `analyzers/dotnet/cs`) so consumers get the generator transitively.
 
@@ -1191,7 +1190,7 @@ package-content change). No decision numbers — pure operational tooling.
 under `analyzers/dotnet/cs` (verified: a local-feed package consumer's build emits the accessor/invoker/
 json-context generators); (2) **`a2n.Vista.Client.TypeScript`** now ships as a `dotnet tool`
 (`PackAsTool`, command `vista-ts`); (3) `<Version>` in `Directory.Build.props` is the local/default only
-(kept in step with the version being prepared — **`0.0.4`** as of 2026-08-11), since a real release cuts the
+(kept in step with the version being prepared — **`0.0.5`** as of 2026-10-17), since a real release cuts the
 version from the Git tag (`publish.yml` passes `-p:Version=<tag without the leading v>`, which overrides
 it). Every shipping package also carries the brand icon
 and a per-package `README.md` for its nuget.org page. **Verification** is the first green Actions run
@@ -1679,8 +1678,8 @@ The third real grid adapter. TanStack Table (React, Vue, Solid, vanilla `table-c
 no HTTP protocol, and its manual mode already holds the state a server grid needs. Those slices —
 `PaginationState`, `SortingState`, `ColumnFiltersState`, `globalFilter`, `columnVisibility` — are the same
 object shapes in v8 and v9, so the wire is the state itself. The package was a scaffold
-(`AssemblyMarker.cs`, `IsPackable=false`); `IsPackable` is now the repo default. `publish.yml` does
-not list it: NuGet publishing is deferred until after a QA smoke and an owner decision.
+(`AssemblyMarker.cs`, `IsPackable=false`); `IsPackable` is now the repo default. `publish.yml`
+lists it in `PACK_PROJECTS`; the package ships to NuGet with 0.0.5.
 
 - **D154 — surface.** `TanStackTableAdapter : ViewAdapter<TanStackTableRequest, TanStackTableResponse>`,
   `Id`/`RouteSuffix` = `"tanstack"`, three pure steps, `a2n.Vista.Core` only. `BindRequest` requires a JSON
