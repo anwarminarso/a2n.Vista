@@ -357,7 +357,7 @@ public sealed class RejectedWriteStatePreservationPropertyTests
     }
 
     /// <summary>EF source entity the three writable Style B views project from; Id-keyed with a string token.</summary>
-    private sealed class RejectSource
+    internal sealed class RejectSource
     {
         public int Id { get; set; }
 
@@ -387,7 +387,7 @@ public sealed class RejectedWriteStatePreservationPropertyTests
     }
 
     /// <summary>Minimal EF context backing the three writable Style B views over one shared table.</summary>
-    private sealed class RejectContext : DbContext
+    internal sealed class RejectContext : DbContext
     {
         public RejectContext(DbContextOptions<RejectContext> options)
             : base(options)

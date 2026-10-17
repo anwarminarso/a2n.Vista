@@ -123,7 +123,7 @@ public sealed class WritableStyleB501Tests
     private static StringContent JsonContent(string json) => new(json, System.Text.Encoding.UTF8, "application/json");
 
     /// <summary>EF source entity the writable Style B view projects from (single-source, Id-keyed).</summary>
-    private sealed class WritableSource
+    internal sealed class WritableSource
     {
         public int Id { get; set; }
 
@@ -145,7 +145,7 @@ public sealed class WritableStyleB501Tests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class WritableContext : DbContext
+    internal sealed class WritableContext : DbContext
     {
         public WritableContext(DbContextOptions<WritableContext> options)
             : base(options)

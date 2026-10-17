@@ -316,7 +316,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     /// <summary>Tokenless backing entity: a projected key + name, plus a non-projected server-only secret.</summary>
-    private sealed class PlainSource
+    internal sealed class PlainSource
     {
         public int Id { get; set; }
 
@@ -326,7 +326,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     }
 
     /// <summary>Token backing entity: adds a concurrency-token member (absent from the read projection).</summary>
-    private sealed class TokenSource
+    internal sealed class TokenSource
     {
         public int Id { get; set; }
 
@@ -360,7 +360,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     }
 
     /// <summary>Single EF context backing both writable Style B views.</summary>
-    private sealed class ErrorEnvContext : DbContext
+    internal sealed class ErrorEnvContext : DbContext
     {
         public ErrorEnvContext(DbContextOptions<ErrorEnvContext> options)
             : base(options)

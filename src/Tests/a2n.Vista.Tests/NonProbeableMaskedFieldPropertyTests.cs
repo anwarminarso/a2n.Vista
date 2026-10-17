@@ -338,7 +338,7 @@ public sealed class NonProbeableMaskedFieldPropertyTests
     private static string Describe(Probe probe) => $"({probe.Kind}, term='{probe.Term}', key={probe.Key})";
 
     /// <summary>Test-only EF context exposing <see cref="P6PersonSource"/> over SQLite.</summary>
-    private sealed class P6Db : DbContext
+    internal sealed class P6Db : DbContext
     {
         public P6Db(DbContextOptions<P6Db> options)
             : base(options)

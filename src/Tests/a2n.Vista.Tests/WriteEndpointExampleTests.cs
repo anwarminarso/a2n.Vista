@@ -424,14 +424,14 @@ public sealed class WriteEndpointExampleTests
 
     // ---- Fixtures ------------------------------------------------------------------------------------
 
-    private sealed class PlainSource
+    internal sealed class PlainSource
     {
         public int Id { get; set; }
 
         public string Name { get; set; } = string.Empty;
     }
 
-    private sealed class TokenSource
+    internal sealed class TokenSource
     {
         public int Id { get; set; }
 
@@ -440,7 +440,7 @@ public sealed class WriteEndpointExampleTests
         public int Version { get; set; }
     }
 
-    private sealed class BulkSource
+    internal sealed class BulkSource
     {
         public int Id { get; set; }
 
@@ -476,7 +476,7 @@ public sealed class WriteEndpointExampleTests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class ExampleWriteContext : DbContext
+    internal sealed class ExampleWriteContext : DbContext
     {
         public ExampleWriteContext(DbContextOptions<ExampleWriteContext> options)
             : base(options)

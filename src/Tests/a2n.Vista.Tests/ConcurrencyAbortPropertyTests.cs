@@ -304,7 +304,7 @@ public sealed class ConcurrencyAbortPropertyTests
     }
 
     /// <summary>EF source entity the writable Style B view projects from; Id-keyed with an int token.</summary>
-    private sealed class ConcurrencySource
+    internal sealed class ConcurrencySource
     {
         public int Id { get; set; }
 
@@ -330,7 +330,7 @@ public sealed class ConcurrencyAbortPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class ConcurrencyContext : DbContext
+    internal sealed class ConcurrencyContext : DbContext
     {
         public ConcurrencyContext(DbContextOptions<ConcurrencyContext> options)
             : base(options)

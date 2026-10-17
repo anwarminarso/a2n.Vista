@@ -247,7 +247,7 @@ public sealed class ConditionalMaskingPropertyTests
     /// A <see cref="DbCommandInterceptor"/> recording the text of every executed command (reader / scalar
     /// / non-query, sync and async). Used to prove the SQL is identical whether masking is on or off.
     /// </summary>
-    private sealed class P5SqlSpyInterceptor : DbCommandInterceptor
+    internal sealed class P5SqlSpyInterceptor : DbCommandInterceptor
     {
         private readonly List<string> _executed = new();
 
@@ -303,11 +303,11 @@ public sealed class ConditionalMaskingPropertyTests
     }
 
     /// <summary>Test-only EF context exposing <see cref="P5AccountSource"/> over SQLite with the SQL spy.</summary>
-    private sealed class P5MaskingDbContext : DbContext
+    internal sealed class P5MaskingDbContext : DbContext
     {
         private readonly P5SqlSpyInterceptor _spy;
 
-        public P5MaskingDbContext(DbContextOptions<P5MaskingDbContext> options, P5SqlSpyInterceptor spy)
+        internal P5MaskingDbContext(DbContextOptions<P5MaskingDbContext> options, P5SqlSpyInterceptor spy)
             : base(options) => _spy = spy;
 
         public DbSet<P5AccountSource> Accounts => Set<P5AccountSource>();
