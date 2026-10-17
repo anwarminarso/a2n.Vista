@@ -65,6 +65,13 @@ public enum WriteErrorCode
     /// surfaced internally and rendered as an indistinguishable not-found response (R12.4).
     /// </summary>
     NoWritePlan,
+
+    /// <summary>
+    /// The store lock did not clear before the provider gave up (<c>SQLITE_BUSY</c>,
+    /// <c>SQLITE_LOCKED</c>, or <c>DbException.IsTransient</c>). HTTP 503 <c>write-busy</c> with
+    /// <c>Retry-After</c> (Decision Log D160). Not a lost update and not a 500.
+    /// </summary>
+    StoreBusy,
 }
 
 /// <summary>
@@ -111,6 +118,9 @@ public static class WriteErrorCodes
     /// <summary>Wire code for <see cref="WriteErrorCode.NoWritePlan"/>.</summary>
     public const string NoWritePlan = "write-no-plan";
 
+    /// <summary>Wire code for <see cref="WriteErrorCode.StoreBusy"/>. HTTP 503.</summary>
+    public const string StoreBusy = "write-busy";
+
     /// <summary>
     /// Maps a <see cref="WriteErrorCode"/> to its stable wire code.
     /// </summary>
@@ -129,6 +139,7 @@ public static class WriteErrorCodes
         WriteErrorCode.PersistenceFailed => PersistenceFailed,
         WriteErrorCode.BulkNotEnabled => BulkNotEnabled,
         WriteErrorCode.NoWritePlan => NoWritePlan,
+        WriteErrorCode.StoreBusy => StoreBusy,
         _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown write error code."),
     };
 }

@@ -34,6 +34,8 @@ public sealed class RelationalModelWarmupTests
         new(typeof(WriteEndpointAuthorizationExampleTests.AuthContext), OutsideSample),
         new(typeof(WriteEndpointExampleTests.ExampleWriteContext), OutsideSample),
         new(typeof(WritableConcurrencyRaceTests.RaceContext), OutsideSample),
+        new(typeof(DateTimeConcurrencyTokenTests.StampContext), OutsideSample),
+        new(typeof(StoreBusyWriteTests.BusyContext), OutsideSample),
         new(typeof(WritePersistenceFailureIntegrationTests.UniqueContext), OutsideSample),
         new(typeof(WritePersistenceFailureIntegrationTests.TokenContext), OutsideSample),
         new(typeof(WritePersistenceFailureIntegrationTests.ForeignKeyContext), OutsideSample),

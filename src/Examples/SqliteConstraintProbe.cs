@@ -13,8 +13,11 @@ internal static class SqliteConstraintProbe
     /// Registers <see cref="Classify"/> with <see cref="DbUpdateFailureClassification.AddConstraintProbe"/>.
     /// Safe to call more than once; each registration agrees.
     /// </summary>
-    public static void Register() =>
+    public static void Register()
+    {
         DbUpdateFailureClassification.AddConstraintProbe(Classify);
+        DbUpdateFailureClassification.AddTransientLockProbe(ClassifyLock);
+    }
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="exception"/> is a
@@ -39,5 +42,22 @@ internal static class SqliteConstraintProbe
         }
 
         return sqlite.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> for SQLite error 5 (<c>SQLITE_BUSY</c>) and 6
+    /// (<c>SQLITE_LOCKED</c>). Returns <see langword="null"/> for every other exception so a
+    /// constraint failure is not classified as a lock (Decision Log D160).
+    /// </summary>
+    /// <param name="exception">One exception in the provider failure chain.</param>
+    /// <returns>A lock decision, or <see langword="null"/> when this probe does not apply.</returns>
+    public static bool? ClassifyLock(Exception exception)
+    {
+        if (exception is not SqliteException sqlite)
+        {
+            return null;
+        }
+
+        return sqlite.SqliteErrorCode is 5 or 6 ? true : null;
     }
 }

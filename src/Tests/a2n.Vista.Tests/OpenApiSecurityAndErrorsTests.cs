@@ -369,6 +369,8 @@ public sealed class OpenApiSecurityAndErrorsTests
             await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
             await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
             await Assert.That(operation.Responses!["500"].Description).Contains("write-persistence-failed");
+            await Assert.That(operation.Responses!.ContainsKey("503")).IsTrue();
+            await Assert.That(operation.Responses!["503"].Description).Contains("write-busy");
 
             // The success (200) response carries an ETag header for the token-bearing view (R3.5).
             await Assert.That(operation.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
@@ -378,8 +380,10 @@ public sealed class OpenApiSecurityAndErrorsTests
         await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
         await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
         await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("503")).IsTrue();
         await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("422")).IsFalse();
         await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("500")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("503")).IsFalse();
         await Assert.That(document.Paths![ReadRoute + "/detail"].Post!.Responses!.ContainsKey("422")).IsFalse();
     }
 

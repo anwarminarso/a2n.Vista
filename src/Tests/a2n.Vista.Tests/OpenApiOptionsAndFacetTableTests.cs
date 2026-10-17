@@ -187,6 +187,7 @@ public sealed class OpenApiOptionsAndFacetTableTests
             var expects = operation.Facet is Facet.Create or Facet.Update or Facet.Delete;
             await Assert.That(operation.AlwaysErrorCodes.Contains(422)).IsEqualTo(expects);
             await Assert.That(operation.AlwaysErrorCodes.Contains(500)).IsEqualTo(expects);
+            await Assert.That(operation.AlwaysErrorCodes.Contains(503)).IsEqualTo(expects);
         }
     }
 

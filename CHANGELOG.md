@@ -22,8 +22,19 @@ While the version is `0.x`, anything may change between releases.
 - `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
   and `VistaPersistenceException`.
 - `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
+- `WriteErrorCode.StoreBusy` / `WriteErrorCodes.StoreBusy` (`write-busy`) and `VistaStoreBusyException`.
+  A transient store lock (`SQLITE_BUSY`, `SQLITE_LOCKED`, or `DbException.IsTransient`) is HTTP 503
+  with `Retry-After: 2` and title "Service unavailable" (Decision Log D160). It is not 412 and not 500.
+- The Northwind and AG Grid hosts open the working SQLite file through `SqliteVistaConnection`:
+  a 5 second busy timeout, WAL, and `BEGIN IMMEDIATE`. The file-database race tests use that same helper.
 
 ### Fixed
+- **DateTime and DateTimeOffset concurrency tokens round-trip.** The wire form is invariant `"O"`.
+  A `DateTime` with `Kind` Unspecified is labeled UTC with `DateTime.SpecifyKind` (no clock shift);
+  `Kind` Local is converted with `ToUniversalTime`. A `DateTimeOffset` keeps its offset. The wire
+  form is checked before `SaveChanges`, so an entity-tag that cannot be quoted does not commit.
+  `byte[]` tokens are standard Base64, not base64url. The create, update, and detail `ETag` values
+  for the same row match byte for byte, including a `DateTimeOffset` stored at a non-zero offset.
 - **`ForeignKeyContext` stays outside the relational-model warmup.** The foreign-key fixture in
   `WritePersistenceFailureIntegrationTests` is built by a per-test harness, not inside a CsCheck
   sample, so `RelationalModelWarmup` does not finalize it. The context is `internal` and listed in
@@ -118,7 +129,7 @@ While the version is `0.x`, anything may change between releases.
   one behavior change. Generated TypeScript clients map `precondition-failed` to HTTP 412.
 
   | Behavior | Old | New | Migration |
-  | --- | --- | --- | --- | --- |
+  | --- | --- | --- | --- | --- | --- |
   | Missing `If-Match` | 428 `write-precondition-required`. Spec text said 412. | 428 `write-precondition-required` | Keep handling 428. Do not treat a missing token as 412. |
   | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
   | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |

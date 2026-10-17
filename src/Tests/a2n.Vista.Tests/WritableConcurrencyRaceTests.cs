@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using a2n.Vista.Authoring;
+using a2n.Vista.Examples;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
@@ -75,6 +76,63 @@ public sealed class WritableConcurrencyRaceTests
             && sql.Contains("WHERE", StringComparison.OrdinalIgnoreCase));
         await Assert.That(updateSql).IsNotNull();
         await Assert.That(updateSql!).Contains("RowVersion");
+    }
+
+    [Test]
+    public async Task File_Sqlite_Fifty_Rounds_Of_Two_Parallel_Updates_Are_One_200_And_One_412()
+    {
+        await using var app = await RaceApp.StartAsync();
+        var created = await app.CreateAsync("seed");
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
+        var token = created.ETag!;
+        for (var round = 0; round < 50; round++)
+        {
+            token = await OneRoundAsync(app, token, writers: 2, round);
+        }
+    }
+
+    [Test]
+    public async Task File_Sqlite_Twenty_Rounds_Of_Three_Parallel_Updates_Are_One_200_And_The_Rest_412()
+    {
+        await using var app = await RaceApp.StartAsync();
+        var created = await app.CreateAsync("seed");
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
+        var token = created.ETag!;
+        for (var round = 0; round < 20; round++)
+        {
+            token = await OneRoundAsync(app, token, writers: 3, round);
+        }
+    }
+
+    private static async Task<string> OneRoundAsync(RaceApp app, string token, int writers, int round)
+    {
+        var subjects = new string[writers];
+        var tasks = new Task<RaceResponse>[writers];
+        for (var writer = 0; writer < writers; writer++)
+        {
+            subjects[writer] = $"r{round}-w{writer}";
+            tasks[writer] = app.UpdateAsync(subjects[writer], token);
+        }
+
+        var results = await Task.WhenAll(tasks);
+        var successes = results.Where(result => result.Status == HttpStatusCode.OK).ToArray();
+        var conflicts = results.Where(result => result.Status == HttpStatusCode.PreconditionFailed).ToArray();
+        await Assert.That(successes.Length).IsEqualTo(1);
+        await Assert.That(conflicts.Length).IsEqualTo(writers - 1);
+        foreach (var result in results)
+        {
+            await Assert.That(result.Status).IsNotEqualTo(HttpStatusCode.InternalServerError);
+            await Assert.That(result.Status).IsNotEqualTo(HttpStatusCode.ServiceUnavailable);
+            if (result.Status == HttpStatusCode.PreconditionFailed)
+            {
+                await Assert.That(await result.CodeAsync()).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
+            }
+        }
+
+        var stored = app.Read();
+        await Assert.That(subjects).Contains(stored.Subject);
+        await Assert.That(stored.RowVersion.ToString()).IsEqualTo(successes[0].ETag!.Trim('"'));
+        return successes[0].ETag!;
     }
 
     [Test]
@@ -220,38 +278,16 @@ public sealed class WritableConcurrencyRaceTests
         }
     }
 
-    private sealed class BusyTimeout : DbConnectionInterceptor
-    {
-        public override void ConnectionOpened(DbConnection connection, ConnectionEndEventData eventData)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA busy_timeout = 5000;";
-            command.ExecuteNonQuery();
-            base.ConnectionOpened(connection, eventData);
-        }
-
-        public override async Task ConnectionOpenedAsync(
-            DbConnection connection,
-            ConnectionEndEventData eventData,
-            CancellationToken cancellationToken = default)
-        {
-            using var command = connection.CreateCommand();
-            command.CommandText = "PRAGMA busy_timeout = 5000;";
-            await command.ExecuteNonQueryAsync(cancellationToken).ConfigureAwait(false);
-            await base.ConnectionOpenedAsync(connection, eventData, cancellationToken).ConfigureAwait(false);
-        }
-    }
-
     private sealed class RaceApp : IAsyncDisposable
     {
         private readonly IHost _host;
-        private readonly SqliteConnection _keepAlive;
+        private readonly string _directory;
         private readonly SqlCapture _capture;
 
-        private RaceApp(IHost host, SqliteConnection keepAlive, SqlCapture capture, HttpClient client)
+        private RaceApp(IHost host, string directory, SqlCapture capture, HttpClient client)
         {
             _host = host;
-            _keepAlive = keepAlive;
+            _directory = directory;
             _capture = capture;
             Client = client;
         }
@@ -262,18 +298,11 @@ public sealed class WritableConcurrencyRaceTests
 
         public static async Task<RaceApp> StartAsync()
         {
-            var connectionString = new SqliteConnectionStringBuilder
-            {
-                DataSource = "race-" + Guid.NewGuid().ToString("N"),
-                Mode = SqliteOpenMode.Memory,
-                Cache = SqliteCacheMode.Shared,
-            }.ToString();
-
-            var keepAlive = new SqliteConnection(connectionString);
-            keepAlive.Open();
+            var directory = Path.Combine(Path.GetTempPath(), "vista-race-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(directory);
+            var databasePath = Path.Combine(directory, "race.db");
 
             var capture = new SqlCapture();
-            var busy = new BusyTimeout();
             var host = await new HostBuilder()
                 .ConfigureWebHost(web => web
                     .UseTestServer()
@@ -281,12 +310,9 @@ public sealed class WritableConcurrencyRaceTests
                     {
                         services.AddRouting();
                         services.AddSingleton(capture);
-                        services.AddSingleton(busy);
-                        services.AddDbContext<RaceContext>((sp, options) => options
-                            .UseSqlite(connectionString)
-                            .AddInterceptors(
-                                sp.GetRequiredService<SqlCapture>(),
-                                sp.GetRequiredService<BusyTimeout>()));
+                        services.AddDbContext<RaceContext>((sp, options) =>
+                            SqliteVistaConnection.Use(options, databasePath)
+                                .AddInterceptors(sp.GetRequiredService<SqlCapture>()));
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<RaceContext>());
                         services.AddVista(v => v.Register<RaceView>());
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
@@ -304,7 +330,7 @@ public sealed class WritableConcurrencyRaceTests
                 scope.ServiceProvider.GetRequiredService<RaceContext>().Database.EnsureCreated();
             }
 
-            return new RaceApp(host, keepAlive, capture, host.GetTestClient());
+            return new RaceApp(host, directory, capture, host.GetTestClient());
         }
 
         public async Task<RaceResponse> CreateAsync(string subject)
@@ -349,7 +375,14 @@ public sealed class WritableConcurrencyRaceTests
             Client.Dispose();
             await _host.StopAsync();
             _host.Dispose();
-            _keepAlive.Dispose();
+            SqliteConnection.ClearAllPools();
+            try
+            {
+                Directory.Delete(_directory, recursive: true);
+            }
+            catch (IOException)
+            {
+            }
         }
 
         private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
