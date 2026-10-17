@@ -134,7 +134,18 @@ While the version is `0.x`, anything may change between releases.
   | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
   | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |
   | `If-Match` parsing | Raw string compare | RFC 9110 quoted strong tags, including a list | Send a quoted strong tag. A single unquoted token is still accepted (legacy). `If-Match: *` and a weak-only `W/"…"` are 412. A comma-separated list matches when one strong tag equals the stored token; that tag is the `WHERE` value. |
-  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match` | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
+  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match`. That replacement overwrites a version the host stored on the entity. A store-generated token is not replaced by Vista | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
+
+  `If-Match: *` deviates from RFC 9110 §13.1.1. That section treats `*` as success when the resource has a current representation. Vista returns 412 `write-concurrency-conflict` (the wire code is not renamed) because a wildcard cannot be the `WHERE` token and would skip the lost-update check. A successful delete of an in-scope row is 204 with no body and no `ETag`.
+
+- **Breaking (0.0.5): write success and not-found bodies.** Each row is one behavior change.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- |
+  | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
+  | Update of an in-scope row | 200 with an empty body and an `ETag` | 200 with the detail row and the new `ETag` | Read the updated row from the body. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | Read `MaxLength` from the model. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
 
 ## [0.0.4] - 2026-08-11
 

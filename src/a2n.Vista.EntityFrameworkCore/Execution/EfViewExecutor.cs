@@ -803,6 +803,7 @@ public class EfViewExecutor : IViewExecutor
         // skipped by the mapper itself (defense in depth), so identity is store-assigned, not client-set.
         var entity = new TEntity();
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(dbContext, entity);
 
         dbContext.Add(entity);
 
@@ -980,6 +981,7 @@ public class EfViewExecutor : IViewExecutor
         var facet = RequireWriteFacet(services, view);
         var mapper = services.GetRequiredService<WriteMapperResolver>().Resolve(view);
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(RequireDbContext(view, nameof(UpdateAsync)), entity);
 
         // The check is the database predicate, not an in-memory compare-then-save. The client's token
         // becomes OriginalValue (WHERE token = @If-Match). An application token also gets a new
@@ -996,6 +998,7 @@ public class EfViewExecutor : IViewExecutor
         // Publish the token the row carries AFTER the write (D146, D159). This is the value the HTTP layer
         // returns as ETag. It is never the request's If-Match.
         PublishPostWriteToken<TEntity>(services, facet, entity);
+        services.GetService<IWriteTokenSink>()?.SetPostWriteRow(ProjectUpdatedRow(view, entity));
         return true;
     }
 
@@ -1408,6 +1411,59 @@ public class EfViewExecutor : IViewExecutor
                 $"View '{view.Name}' declares key field '{keyFieldName}', but the write entity type " +
                 $"'{typeof(TEntity).Name}' has no matching public instance property. Ensure the projected " +
                 "key field name matches the entity member for single-source writable views.");
+    }
+
+    /// <summary>
+    /// Copies same-named public properties from the saved entity onto a new instance of the view's
+    /// query type. This is the update response body. It does not run the read plan, so a reflection
+    /// test view that has no generated plan still returns the row it just wrote.
+    /// </summary>
+    private static object? ProjectUpdatedRow(ViewMetadata view, object entity)
+    {
+        var row = Activator.CreateInstance(view.QueryType);
+        if (row is null)
+        {
+            return null;
+        }
+
+        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
+        foreach (var target in view.QueryType.GetProperties(flags))
+        {
+            if (!target.CanWrite || target.GetIndexParameters().Length != 0)
+            {
+                continue;
+            }
+
+            var source = entity.GetType().GetProperty(target.Name, flags);
+            if (source is null || source.PropertyType != target.PropertyType)
+            {
+                continue;
+            }
+
+            target.SetValue(row, source.GetValue(entity));
+        }
+
+        return row;
+    }
+
+    /// <summary>
+    /// Rejects a string that is longer than the EF property's <c>MaxLength</c>. The limit is read from
+    /// the model. Nothing in this method names a column size. SQLite does not enforce <c>TEXT</c> length,
+    /// so the check happens before <c>SaveChanges</c> and is HTTP 422.
+    /// </summary>
+    private static void EnforceDeclaredMaxLengths(DbContext dbContext, object entity)
+    {
+        foreach (var property in dbContext.Entry(entity).Properties)
+        {
+            var max = property.Metadata.GetMaxLength();
+            if (max is null || property.CurrentValue is not string text || text.Length <= max.Value)
+            {
+                continue;
+            }
+
+            throw new VistaConstraintViolationException(
+                $"Field '{property.Metadata.Name}' exceeds its maximum length and was not applied.");
+        }
     }
 
     /// <summary>

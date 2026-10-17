@@ -18,10 +18,10 @@ public partial class Memo
     /// <summary>Store-assigned primary key.</summary>
     public int MemoId { get; set; }
 
-    /// <summary>A short subject line — a client-writable scalar field.</summary>
+    /// <summary>A short subject line. The EF model caps it at 120 characters.</summary>
     public string Subject { get; set; } = string.Empty;
 
-    /// <summary>The memo body — a client-writable scalar field.</summary>
+    /// <summary>The memo body. The EF model caps it at 4000 characters.</summary>
     public string Body { get; set; } = string.Empty;
 
     /// <summary>

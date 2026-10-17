@@ -204,7 +204,32 @@ public static class NorthwindWorkingDatabase
 
             if (Directory.Exists(directory))
             {
+                // WAL keeps the log and shared-memory files beside the database. Delete those
+                // names before the directory so a locked directory delete cannot leave them behind.
+                foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+                {
+                    TryDelete(file + "-wal");
+                    TryDelete(file + "-shm");
+                }
+
                 Directory.Delete(directory, recursive: true);
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
+
+    private static void TryDelete(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+            {
+                File.Delete(path);
             }
         }
         catch (IOException)

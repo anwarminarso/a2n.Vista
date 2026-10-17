@@ -103,11 +103,12 @@ public sealed class ConcurrencyAbortPropertyTests
 
                 if (shouldMatch)
                 {
-                    // Success path (R6.4): 200 and the ETag round-trips the token.
-                    if (status != HttpStatusCode.OK)
+                    // Success path (R6.4): update is 200 with the post-write ETag; delete is 204 with no body and no ETag.
+                    var expected = isDelete ? HttpStatusCode.NoContent : HttpStatusCode.OK;
+                    if (status != expected)
                     {
                         throw new Exception(
-                            $"Expected 200 for a matching If-Match on {(isDelete ? "delete" : "update")} " +
+                            $"Expected {(int)expected} for a matching If-Match on {(isDelete ? "delete" : "update")} " +
                             $"(token '{storedToken}'), got {(int)status} {status}.");
                     }
 

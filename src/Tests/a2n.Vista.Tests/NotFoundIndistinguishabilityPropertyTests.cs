@@ -153,7 +153,10 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
             iter: Iterations);
     }
 
-    /// <summary>Asserts a response is a <c>404</c> with an empty body (the shared not-found shape).</summary>
+    /// <summary>
+    /// Asserts a response is a <c>404</c> problem whose body is the shared not-found shape. The body
+    /// names no view and no key.
+    /// </summary>
     private static void RequireNotFound((HttpStatusCode Status, string Body) response, string what)
     {
         if (response.Status != HttpStatusCode.NotFound)
@@ -161,9 +164,10 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
             throw new Exception($"Expected 404 for {what}, but got {(int)response.Status} {response.Status}.");
         }
 
-        if (response.Body.Length != 0)
+        if (!response.Body.Contains("\"not-found\"", StringComparison.Ordinal)
+            || response.Body.Contains("view", StringComparison.OrdinalIgnoreCase))
         {
-            throw new Exception($"Expected an empty body for {what}, but got '{response.Body}'.");
+            throw new Exception($"Expected a generic not-found problem for {what}, but got '{response.Body}'.");
         }
     }
 
