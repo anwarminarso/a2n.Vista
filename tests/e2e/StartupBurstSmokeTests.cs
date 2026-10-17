@@ -64,7 +64,18 @@ public sealed class StartupBurstSmokeTests
         var efVersion = ReadPackageVersion(outputDir, "Microsoft.EntityFrameworkCore");
         await Assert.That(runtimeTfm).IsEqualTo(tfm);
 
+        string workingDirectory;
+        {
         await using var host = await ColdHost.StartAsync(tfm, dll, port, cancellationToken);
+        workingDirectory = host.WorkingDirectory;
+        var copyDirectories = Directory.GetDirectories(host.WorkingDirectory);
+        await Assert.That(copyDirectories.Length).IsEqualTo(1);
+        await Assert.That(Guid.TryParseExact(Path.GetFileName(copyDirectories[0]), "N", out _)).IsTrue();
+        var copyDatabase = Path.Combine(copyDirectories[0], "northwind.db");
+        await Assert.That(File.Exists(copyDatabase)).IsTrue();
+        var template = Path.GetFullPath(Path.Combine(FindRepoRoot(), "src", "Examples", "DB", "northwind.db"));
+        await Assert.That(Path.GetFullPath(copyDatabase)).IsNotEqualTo(template);
+
         var results = Burst(host.BaseAddress);
 
         var histogram = string.Join(
@@ -89,6 +100,9 @@ public sealed class StartupBurstSmokeTests
 
         await Assert.That(results.Length).IsEqualTo(WaveSize);
         await Assert.That(failureText).IsEqualTo(string.Empty);
+        }
+
+        await Assert.That(Directory.Exists(workingDirectory)).IsFalse();
     }
 
     private static BurstResponse[] Burst(Uri baseAddress)
@@ -243,17 +257,21 @@ public sealed class StartupBurstSmokeTests
     private sealed class ColdHost : IAsyncDisposable
     {
         private readonly Process _process;
+        private readonly string _workingDirectory;
 
-        private ColdHost(Uri baseAddress, Process process, bool applicationStartedBeforeBurst)
+        private ColdHost(Uri baseAddress, Process process, bool applicationStartedBeforeBurst, string workingDirectory)
         {
             BaseAddress = baseAddress;
             _process = process;
             ApplicationStartedBeforeBurst = applicationStartedBeforeBurst;
+            _workingDirectory = workingDirectory;
         }
 
         public Uri BaseAddress { get; }
 
         public bool ApplicationStartedBeforeBurst { get; }
+
+        public string WorkingDirectory => _workingDirectory;
 
         public static async Task<ColdHost> StartAsync(
             string tfm,
@@ -263,6 +281,13 @@ public sealed class StartupBurstSmokeTests
         {
             var url = $"http://127.0.0.1:{port}";
             var projectDir = Path.GetFullPath(Path.Combine(FindRepoRoot(), "src", "Examples", "Northwind"));
+            // The host copies the pinned template into a GUID directory under this parent and opens
+            // only that copy. Kill does not run the host's shutdown hook, so Dispose deletes the parent.
+            var workingDirectory = Path.Combine(
+                Path.GetTempPath(),
+                "a2n-vista-startup-burst",
+                Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(workingDirectory);
             var start = new ProcessStartInfo("dotnet")
             {
                 WorkingDirectory = projectDir,
@@ -275,6 +300,7 @@ public sealed class StartupBurstSmokeTests
             start.Environment["ASPNETCORE_URLS"] = url;
             start.Environment["DOTNET_NOLOGO"] = "1";
             start.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
+            start.Environment["NORTHWIND_WORKING_DIRECTORY"] = workingDirectory;
 
             var process = Process.Start(start)
                 ?? throw new InvalidOperationException($"Failed to start the {tfm} Northwind host.");
@@ -318,13 +344,14 @@ public sealed class StartupBurstSmokeTests
             catch (Exception ex)
             {
                 TryKill(process);
+                DeleteWorkingDirectory(workingDirectory);
                 throw new InvalidOperationException(
                     $"Northwind {tfm} did not log 'Now listening on' at {url}.\n{LineBuffer.Text(process)}",
                     ex);
             }
 
             var started = LineBuffer.Text(process).Contains("Application started", StringComparison.Ordinal);
-            return new ColdHost(new Uri(url), process, started);
+            return new ColdHost(new Uri(url), process, started, workingDirectory);
         }
 
         public async ValueTask DisposeAsync()
@@ -334,6 +361,8 @@ public sealed class StartupBurstSmokeTests
             {
                 await _process.WaitForExitAsync().ConfigureAwait(false);
             }
+
+            DeleteWorkingDirectory(_workingDirectory);
 
             LineBuffer.Remove(_process);
             _process.Dispose();
@@ -348,6 +377,25 @@ public sealed class StartupBurstSmokeTests
             catch (InvalidOperationException)
             {
                 return "unknown";
+            }
+        }
+
+        private static void DeleteWorkingDirectory(string workingDirectory)
+        {
+            for (var attempt = 0; attempt < 10 && Directory.Exists(workingDirectory); attempt++)
+            {
+                try
+                {
+                    Directory.Delete(workingDirectory, recursive: true);
+                }
+                catch (IOException) when (attempt < 9)
+                {
+                    Thread.Sleep(100);
+                }
+                catch (UnauthorizedAccessException) when (attempt < 9)
+                {
+                    Thread.Sleep(100);
+                }
             }
         }
 

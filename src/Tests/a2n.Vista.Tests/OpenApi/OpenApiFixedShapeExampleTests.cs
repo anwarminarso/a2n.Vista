@@ -265,7 +265,7 @@ public sealed class OpenApiFixedShapeExampleTests
         var document = RepresentativeDocument();
         await Assert.That(document.Components!.Schemas!.ContainsKey("ProblemDetails")).IsTrue();
 
-        var errorCodes = new[] { "400", "403", "404", "409", "428" };
+        var errorCodes = new[] { "400", "403", "404", "409", "422", "428", "500" };
         foreach (var (_, _, operation) in Operations(document))
         {
             foreach (var code in errorCodes)
@@ -294,7 +294,17 @@ public sealed class OpenApiFixedShapeExampleTests
             var operation = document.Paths![EmitterFixtures.SubscriptionRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
             await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
+            await Assert.That(operation.Responses!["409"].Description).Contains("write-concurrency-conflict");
+            await Assert.That(operation.Responses!.ContainsKey("422")).IsTrue();
+            await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
+            await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
+            await Assert.That(operation.Responses!["500"].Description).Contains("write-persistence-failed");
         }
+
+        var create = document.Paths![EmitterFixtures.SubscriptionRoute + "/create"].Post!;
+        await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
     }
 
     [Test]

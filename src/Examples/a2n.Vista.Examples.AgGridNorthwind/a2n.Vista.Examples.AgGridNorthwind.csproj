@@ -17,6 +17,8 @@
     <!-- Example app, never packaged. -->
     <IsPackable>false</IsPackable>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <!-- Extract src/Examples/DB/Northwind SQLite.zip during build. See Directory.Build.targets. -->
+    <ExtractNorthwindDatabase>true</ExtractNorthwindDatabase>
   </PropertyGroup>
 
   <ItemGroup>
@@ -30,6 +32,12 @@
          endpoint response with vs. without the emitter registered (Requirements 10.1, 11.1). Version is
          pinned per-TFM in Directory.Packages.props (net8.0 -> 8.0.11). -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SQLite constraint probe. The EF library does not reference Microsoft.Data.Sqlite. -->
+    <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <Compile Include="..\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
   </ItemGroup>
 
   <ItemGroup>

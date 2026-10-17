@@ -216,7 +216,9 @@ public static class DocsEmitter
         builder.Append("  case \"unauthorized\":         // no credential available; request was not sent")
             .Append(NewLine);
         builder.Append("  case \"precondition-required\": // 428, missing concurrency token").Append(NewLine);
-        builder.Append("  case \"precondition-failed\":   // 409, stale concurrency token").Append(NewLine);
+        builder.Append("  case \"precondition-failed\":   // 409, stale concurrency token (write-concurrency-conflict)").Append(NewLine);
+        builder.Append("  case \"constraint-violation\":  // 422, write-constraint-violation").Append(NewLine);
+        builder.Append("  case \"persistence-failed\":    // 500, write-persistence-failed").Append(NewLine);
         builder.Append("  case \"transport-error\":       // the transport rejected; no retry was performed")
             .Append(NewLine);
         builder.Append("  case \"unexpected\":            // non-2xx / undecodable body; raw body preserved")

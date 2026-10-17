@@ -1,9 +1,12 @@
+using System.Data;
 using System.Diagnostics.CodeAnalysis;
 using System.Globalization;
+using a2n.Vista.Contracts;
 using a2n.Vista.Examples.AgGridNorthwind.Views;
 using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
+using a2n.Vista.Write;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
@@ -19,15 +22,22 @@ namespace a2n.Vista.Examples.AgGridNorthwind;
 /// </summary>
 /// <remarks>
 /// <para>
-/// The shipped <c>northwind.db</c> is a read-only sample that does not contain the <c>VistaMemos</c>
-/// table, so the write self-test never touches it. Instead it stands up its own isolated, in-memory
-/// SQLite database (a single open connection kept alive for the run), calls
+/// <see cref="RunAsync"/> stands up its own isolated, in-memory SQLite database (a single open
+/// connection kept alive for the run), calls
 /// <see cref="Microsoft.EntityFrameworkCore.Infrastructure.DatabaseFacade.EnsureCreated"/> to materialize
 /// the schema (including <c>VistaMemos</c>), and wires a self-contained DI container:
 /// <c>AddDbContext&lt;NorthwindDbContext&gt;</c> over that connection, an <c>AddScoped&lt;DbContext&gt;</c>
 /// forwarder (so the executor resolves the concrete context when no template captured one), and
 /// <c>AddVista(v =&gt; v.Register&lt;WritableMemoView&gt;())</c> which publishes the view metadata, the
-/// write-facet registry, and the reflection write-mapper resolver.
+/// write-facet registry, and the reflection write-mapper resolver. That pass never touches the shipped
+/// sample file.
+/// </para>
+/// <para>
+/// <see cref="RunAgainstHostAsync"/> repeats Create/Update/Delete through the host's own
+/// <see cref="NorthwindDbContext"/>, which is a per-run copy of the extracted <c>northwind.db</c>
+/// template. The host creates <c>VistaMemos</c> on that copy before this pass. The host pass deletes
+/// the memo it inserted. The template hash taken before the copy must still match, and the connection
+/// must not be the template file.
 /// </para>
 /// <para>
 /// The concurrency token (<see cref="Memo.RowVersion"/>) is a <see cref="Guid"/>; the executor renders it
@@ -109,12 +119,23 @@ public static class WriteSelfTest
         var failures = 0;
 
         // ---- Create ---------------------------------------------------------------------------------
-        var memoId = await CreateAsync(provider, view, incrementFailures: () => failures++);
+        var memoId = await CreateAsync(
+            provider,
+            view,
+            subject: "Welcome",
+            body: "First memo created by the write self-test.",
+            incrementFailures: () => failures++);
 
         // ---- Update ---------------------------------------------------------------------------------
         if (memoId is int createdId)
         {
-            await UpdateAsync(provider, view, createdId, incrementFailures: () => failures++);
+            await UpdateAsync(
+                provider,
+                view,
+                createdId,
+                subject: "Welcome (edited)",
+                body: "Body updated by the write self-test.",
+                incrementFailures: () => failures++);
 
             // ---- Delete -----------------------------------------------------------------------------
             await DeleteAsync(provider, view, createdId, incrementFailures: () => failures++);
@@ -136,13 +157,295 @@ public static class WriteSelfTest
         return passed;
     }
 
+    /// <summary>
+    /// R16.5 — Create/Update/Delete on the host's working copy of <c>northwind.db</c>. Also lists the
+    /// view first, which is the read that returns 500 when <c>VistaMemos</c> is missing. Rows inserted
+    /// here are deleted before the method returns. The template file's hash must match
+    /// <paramref name="templateHash"/> afterwards.
+    /// </summary>
+    /// <param name="services">The built host's root service provider.</param>
+    /// <param name="templatePath">Absolute path of the read-only template. It must not be the connection.</param>
+    /// <param name="templateHash">SHA-256 of the template taken before the host opened a database.</param>
+    /// <returns><see langword="true"/> when every operation passed; otherwise <see langword="false"/>.</returns>
+    [RequiresUnreferencedCode("Self-test drives the reflection write path (Register<TView> + reflection write mapper).")]
+    public static async Task<bool> RunAgainstHostAsync(
+        IServiceProvider services,
+        string templatePath,
+        string templateHash)
+    {
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentException.ThrowIfNullOrWhiteSpace(templatePath);
+        ArgumentException.ThrowIfNullOrWhiteSpace(templateHash);
+
+        using var scope = services.CreateScope();
+        var registry = scope.ServiceProvider.GetRequiredService<IViewRegistry>();
+        var view = registry.Get(ViewName);
+
+        Console.WriteLine();
+        Console.WriteLine("=== Vista Northwind write self-test (host database) ===");
+        if (view is null)
+        {
+            Console.WriteLine($"FAIL: view '{ViewName}' is not registered.");
+            Console.WriteLine("HOST WRITE SELF-TEST RESULT: FAIL");
+            return false;
+        }
+
+        Console.WriteLine($"View      : {view.Name}");
+        Console.WriteLine($"Route     : {view.Route}");
+        Console.WriteLine();
+
+        if (!await AssertHostFileDatabaseAsync(scope.ServiceProvider, templatePath))
+        {
+            Console.WriteLine("HOST WRITE SELF-TEST RESULT: FAIL");
+            return false;
+        }
+
+        var failures = 0;
+        if (!await HostListAsync(services, view))
+        {
+            failures++;
+        }
+
+        var subject = "vista-selftest-" + Guid.NewGuid().ToString("N");
+        var editedSubject = subject + " (edited)";
+        const string body = "Memo created by the host write self-test.";
+        const string editedBody = "Body updated by the host write self-test.";
+
+        try
+        {
+            var memoId = await CreateAsync(
+                services,
+                view,
+                subject,
+                body,
+                incrementFailures: () => failures++);
+
+            if (memoId is int createdId)
+            {
+                if (!await RejectsStaleIfMatchAsync(services, view, createdId))
+                {
+                    failures++;
+                }
+
+                if (!await DetailProjectsTokenAsync(services, view, createdId))
+                {
+                    failures++;
+                }
+
+                await UpdateAsync(
+                    services,
+                    view,
+                    createdId,
+                    editedSubject,
+                    editedBody,
+                    incrementFailures: () => failures++);
+                await DeleteAsync(services, view, createdId, incrementFailures: () => failures++);
+            }
+            else
+            {
+                Console.WriteLine("[2] Update — SKIPPED: no created row to update.");
+                Console.WriteLine("    -> FAIL");
+                Console.WriteLine("[3] Delete — SKIPPED: no created row to delete.");
+                Console.WriteLine("    -> FAIL");
+                failures += 2;
+            }
+        }
+        finally
+        {
+            await DeleteSubjectsAsync(services, subject, editedSubject);
+        }
+
+        var hashAfter = NorthwindWorkingDatabase.Sha256(templatePath);
+        if (!string.Equals(hashAfter, templateHash, StringComparison.Ordinal))
+        {
+            Console.WriteLine("FAIL: extracted template northwind.db hash changed during the write round trip.");
+            Console.WriteLine($"    before: {templateHash}");
+            Console.WriteLine($"    after : {hashAfter}");
+            failures++;
+        }
+        else
+        {
+            Console.WriteLine("    extracted template hash unchanged after write round trip -> PASS");
+        }
+
+        var passed = failures == 0;
+        Console.WriteLine();
+        Console.WriteLine($"Failed operations: {failures}");
+        Console.WriteLine($"HOST WRITE SELF-TEST RESULT: {(passed ? "PASS" : "FAIL")}");
+        return passed;
+    }
+
+    /// <summary>
+    /// The host self-test must run against the working copy, not the read-only template, and that
+    /// copy's <c>sqlite_master</c> must already contain <c>VistaMemos</c>.
+    /// </summary>
+    private static async Task<bool> AssertHostFileDatabaseAsync(IServiceProvider provider, string templatePath)
+    {
+        var ctx = provider.GetRequiredService<NorthwindDbContext>();
+        var connectionString = ctx.Database.GetConnectionString() ?? string.Empty;
+        var dataSource = new SqliteConnectionStringBuilder(connectionString).DataSource;
+        var workingPath = Path.GetFullPath(dataSource);
+        var templateFullPath = Path.GetFullPath(templatePath);
+        Console.WriteLine($"DataSource : {workingPath}");
+        Console.WriteLine($"Template   : {templateFullPath}");
+        if (connectionString.Contains(":memory:", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(workingPath, templateFullPath, StringComparison.OrdinalIgnoreCase)
+            || !File.Exists(workingPath))
+        {
+            Console.WriteLine("FAIL: host database is not a working copy of northwind.db.");
+            return false;
+        }
+
+        var connection = ctx.Database.GetDbConnection();
+        var shouldClose = connection.State != ConnectionState.Open;
+        if (shouldClose)
+        {
+            await connection.OpenAsync();
+        }
+
+        try
+        {
+            using var command = connection.CreateCommand();
+            command.CommandText =
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'VistaMemos'";
+            var count = Convert.ToInt32(await command.ExecuteScalarAsync(), CultureInfo.InvariantCulture);
+            if (count != 1)
+            {
+                Console.WriteLine("FAIL: sqlite_master does not contain VistaMemos.");
+                return false;
+            }
+
+            Console.WriteLine("    sqlite_master contains VistaMemos -> PASS");
+            return true;
+        }
+        finally
+        {
+            if (shouldClose)
+            {
+                await connection.CloseAsync();
+            }
+        }
+    }
+
+    /// <summary>
+    /// A stale <c>If-Match</c> must be <see cref="VistaConcurrencyConflictException"/> with wire code
+    /// <c>write-concurrency-conflict</c>, and must not be accepted.
+    /// </summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.UpdateAsync over the typed write contract.")]
+    private static async Task<bool> RejectsStaleIfMatchAsync(IServiceProvider provider, ViewMetadata view, int memoId)
+    {
+        Console.WriteLine($"[1b] Stale If-Match (MemoId={memoId})");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            await executor.UpdateAsync(
+                view,
+                memoId,
+                new MemoWriteModel { Subject = "stale", Body = "stale" },
+                new ViewScope(),
+                concurrencyToken: "00000000-0000-0000-0000-000000000000",
+                CancellationToken.None);
+            Console.WriteLine("    -> FAIL: stale If-Match was accepted");
+            return false;
+        }
+        catch (VistaConcurrencyConflictException ex)
+        {
+            var code = ex.Code.ToWireCode();
+            var ok = code == WriteErrorCodes.ConcurrencyConflict;
+            Console.WriteLine($"    code={code}");
+            Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Detail must project the concurrency token so a client can copy it into <c>If-Match</c>.</summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.DetailAsync over MemoRow.")]
+    private static async Task<bool> DetailProjectsTokenAsync(IServiceProvider provider, ViewMetadata view, int memoId)
+    {
+        Console.WriteLine($"[1c] Detail projects RowVersion (MemoId={memoId})");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            var row = await executor.DetailAsync<MemoRow>(view, memoId, new ViewScope(), CancellationToken.None);
+            var stored = await ReadTokenAsync(provider, memoId);
+            var projected = row?.RowVersion.ToString();
+            var ok = row is not null && projected == stored && row.RowVersion != Guid.Empty;
+            Console.WriteLine($"    RowVersion={projected}");
+            Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
+            return ok;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Lists <c>vWritableMemo</c> on the host database. A missing <c>VistaMemos</c> table fails this check.</summary>
+    [RequiresUnreferencedCode("Closes the generic IViewExecutor.ListAsync over MemoRow.")]
+    private static async Task<bool> HostListAsync(IServiceProvider provider, ViewMetadata view)
+    {
+        Console.WriteLine("[0] List (host database)");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            var listed = await executor.ListAsync<MemoRow>(
+                view,
+                new ViewQueryRequest(null, Array.Empty<SortSpec>(), Page: 0, PageSize: 5),
+                new ViewScope(),
+                CancellationToken.None);
+            Console.WriteLine($"    Page items={listed.Page.Items.Count}  TotalRows={listed.Page.TotalRows}");
+            Console.WriteLine("    -> PASS");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>Removes host-self-test rows so the sample file does not keep them. Best-effort.</summary>
+    private static async Task DeleteSubjectsAsync(IServiceProvider provider, string subject, string editedSubject)
+    {
+        try
+        {
+            using var scope = provider.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<NorthwindDbContext>();
+            var rows = await ctx.Memos
+                .Where(m => m.Subject == subject || m.Subject == editedSubject)
+                .ToListAsync();
+            if (rows.Count == 0)
+            {
+                return;
+            }
+
+            ctx.Memos.RemoveRange(rows);
+            await ctx.SaveChangesAsync();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    cleanup warning: {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     /// <summary>R16.5 — Create: insert a new memo through the write facet and verify it landed.</summary>
     [RequiresUnreferencedCode("Closes the generic IViewExecutor.CreateAsync over the typed write contract.")]
-    private static async Task<int?> CreateAsync(IServiceProvider provider, ViewMetadata view, Action incrementFailures)
+    private static async Task<int?> CreateAsync(
+        IServiceProvider provider,
+        ViewMetadata view,
+        string subject,
+        string body,
+        Action incrementFailures)
     {
-        const string subject = "Welcome";
-        const string body = "First memo created by the write self-test.";
-
         int newId;
         using (var scope = provider.CreateScope())
         {
@@ -179,11 +482,14 @@ public static class WriteSelfTest
 
     /// <summary>R16.5 — Update: change the memo's scalars through the write facet under its token.</summary>
     [RequiresUnreferencedCode("Closes the generic IViewExecutor.UpdateAsync over the typed write contract.")]
-    private static async Task UpdateAsync(IServiceProvider provider, ViewMetadata view, int memoId, Action incrementFailures)
+    private static async Task UpdateAsync(
+        IServiceProvider provider,
+        ViewMetadata view,
+        int memoId,
+        string subject,
+        string body,
+        Action incrementFailures)
     {
-        const string subject = "Welcome (edited)";
-        const string body = "Body updated by the write self-test.";
-
         // The If-Match token is the row's current RowVersion; a Guid renders invariantly, matching the
         // executor's FormatToken so the optimistic-concurrency pre-check succeeds.
         var ifMatch = await ReadTokenAsync(provider, memoId);

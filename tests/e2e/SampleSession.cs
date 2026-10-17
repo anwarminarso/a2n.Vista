@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.IO.Compression;
 using System.Net.Http.Headers;
 using System.Text;
 
@@ -20,27 +19,39 @@ internal static class RepoPaths
         Path.Combine(Root, "src", "Examples", "DB", "northwind.db");
 
     /// <summary>
-    /// Extracts <c>Northwind SQLite.zip</c> when <c>northwind.db</c> is absent. The database
-    /// file is gitignored; the zip is the committed source of truth.
+    /// Runs the <c>ExtractNorthwindDatabase</c> MSBuild target. That target is the only extract of
+    /// <c>Northwind SQLite.zip</c>; it checks <c>Northwind.sha256</c> and fails on a missing zip or a
+    /// hash mismatch. It does not create an empty database.
     /// </summary>
     public static void EnsureDatabase()
     {
-        if (File.Exists(DatabaseFile))
+        var project = Path.Combine(NorthwindProject, "a2n.Vista.Examples.Northwind.csproj");
+        var start = new ProcessStartInfo("dotnet")
         {
-            return;
-        }
+            WorkingDirectory = Root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        start.ArgumentList.Add("msbuild");
+        start.ArgumentList.Add(project);
+        start.ArgumentList.Add("-t:ExtractNorthwindDatabase");
+        start.ArgumentList.Add("-p:ExtractNorthwindDatabase=true");
+        start.ArgumentList.Add("-nologo");
+        start.ArgumentList.Add("-v:m");
 
-        var zip = Path.Combine(Root, "src", "Examples", "DB", "Northwind SQLite.zip");
-        if (!File.Exists(zip))
+        using var process = Process.Start(start)
+            ?? throw new InvalidOperationException("Failed to start dotnet msbuild.");
+        var stdout = process.StandardOutput.ReadToEndAsync();
+        var stderr = process.StandardError.ReadToEndAsync();
+        process.WaitForExit();
+        if (process.ExitCode != 0 || !File.Exists(DatabaseFile))
         {
-            throw new FileNotFoundException("Northwind SQLite zip was not found.", zip);
-        }
-
-        ZipFile.ExtractToDirectory(zip, Path.GetDirectoryName(DatabaseFile)!);
-        if (!File.Exists(DatabaseFile))
-        {
-            throw new FileNotFoundException(
-                "Extracting the Northwind zip did not produce northwind.db.", DatabaseFile);
+            throw new InvalidOperationException(
+                "ExtractNorthwindDatabase failed (exit " + process.ExitCode + "). " +
+                "The Northwind zip and northwind.db must match src/Examples/DB/Northwind.sha256. " +
+                "An empty database is not a fallback." + Environment.NewLine +
+                stdout.GetAwaiter().GetResult() + stderr.GetAwaiter().GetResult());
         }
     }
 

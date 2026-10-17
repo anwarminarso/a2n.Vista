@@ -34,6 +34,7 @@ public partial class WritableMemoView : View<MemoRow, MemoWriteModel>
                 MemoId = m.MemoId,
                 Subject = m.Subject,
                 Body = m.Body,
+                RowVersion = m.RowVersion,
             })
             .Field(x => x.MemoId, f => f.PrimaryKey());
 
@@ -60,6 +61,12 @@ public sealed class MemoRow
 
     /// <summary>Memo body.</summary>
     public string Body { get; init; } = string.Empty;
+
+    /// <summary>
+    /// Optimistic-concurrency token. Clients send this value as <c>If-Match</c> on update and delete.
+    /// Create and detail also return it as the <c>ETag</c> header.
+    /// </summary>
+    public Guid RowVersion { get; init; }
 }
 
 /// <summary>

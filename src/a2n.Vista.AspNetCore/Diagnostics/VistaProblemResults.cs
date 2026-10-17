@@ -192,7 +192,8 @@ internal static class VistaProblemResults
         WriteErrorCode.BulkNotEnabled => StatusCodes.Status400BadRequest,
         WriteErrorCode.PreconditionRequired => StatusCodes.Status428PreconditionRequired,
         WriteErrorCode.ConcurrencyConflict => StatusCodes.Status409Conflict,
-        WriteErrorCode.WriteConflict => StatusCodes.Status409Conflict,
+        WriteErrorCode.ConstraintViolation => StatusCodes.Status422UnprocessableEntity,
+        WriteErrorCode.PersistenceFailed => StatusCodes.Status500InternalServerError,
         // NoWritePlan is rendered as an indistinguishable 404 by the endpoint (never via a coded body);
         // if one ever reaches here, fall back to 404 so no existence signal leaks.
         WriteErrorCode.NoWritePlan => StatusCodes.Status404NotFound,
@@ -210,7 +211,8 @@ internal static class VistaProblemResults
         WriteErrorCode.BulkNotEnabled => "Bulk writes not enabled",
         WriteErrorCode.PreconditionRequired => "Precondition required",
         WriteErrorCode.ConcurrencyConflict => "Concurrency conflict",
-        WriteErrorCode.WriteConflict => "Write conflict",
+        WriteErrorCode.ConstraintViolation => "Constraint violation",
+        WriteErrorCode.PersistenceFailed => "Persistence failed",
         WriteErrorCode.NoWritePlan => "Not found",
         _ => "Write rejected",
     };

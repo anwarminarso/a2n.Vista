@@ -366,11 +366,12 @@ public sealed class VistaOpenApiDocumentBuilder
         var successResponse = BuildSuccessResponse(facet, rowSchema, listResultRef, schemas);
 
         // Success-response headers: an ETag on the cached metadata GET (Requirement 2.4) and on a
-        // token-bearing writable view's update/delete (Requirement 3.5). Both carry the row's current
-        // entity-tag so a caller can round-trip it as a subsequent If-None-Match / If-Match.
+        // token-bearing writable view's create/update (Requirement 3.5, D158). Create returns the new
+        // row's token; update returns the post-write token. Both are the next If-Match value.
         var emitSuccessEtag =
             isCachedMetadata
-            || (hasConcurrencyToken && facet.ConcurrencyErrorsWhenTokenDeclared);
+            || (hasConcurrencyToken
+                && (facet.ConcurrencyErrorsWhenTokenDeclared || facet.Facet == Facet.Create));
         if (emitSuccessEtag)
         {
             successResponse = successResponse with { Headers = EtagHeader() };
@@ -477,8 +478,10 @@ public sealed class VistaOpenApiDocumentBuilder
         400 => "The request envelope was invalid (validation or binding failure).",
         403 => "Access was denied by the view's authorizer.",
         404 => "The requested row was not found (or the operation is not available for this view).",
-        409 => "The supplied concurrency token did not match the current row (concurrency conflict).",
+        409 => "The supplied concurrency token did not match the current row (code write-concurrency-conflict).",
+        422 => "The write violates a database constraint and was not applied (code write-constraint-violation).",
         428 => "A concurrency token (If-Match) is required for this operation.",
+        500 => "The write could not be saved (code write-persistence-failed).",
         _ => "The request failed.",
     };
 

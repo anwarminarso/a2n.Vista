@@ -19,6 +19,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Same SQLite probe the Northwind hosts compile. Internal, so it does not clash with the host copy. -->
+    <Compile Include="..\..\Examples\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <!-- VistaMemos DDL. Internal, compiled into the hosts the same way. One statement, no Split. -->
+    <Compile Include="..\..\Examples\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Metapackage: pulls TUnit.Core, TUnit.Engine, and TUnit.Assertions. -->
     <PackageReference Include="TUnit" />
     <!-- Property-based testing (CsCheck): generated/RUC behavioral parity (Property 1, task 7.6). -->
@@ -39,6 +46,8 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Working-copy and pinned-template tests. The sample model is not a Vista package. -->
+    <ProjectReference Include="..\..\Examples\Northwind.DataAccess\Northwind.DataAccess.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.Core\a2n.Vista.Core.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.EntityFrameworkCore\a2n.Vista.EntityFrameworkCore.csproj" />
     <ProjectReference Include="..\..\a2n.Vista.AspNetCore\a2n.Vista.AspNetCore.csproj" />

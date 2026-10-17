@@ -29,6 +29,7 @@ jobs:
             9.0.x
             10.0.x
 
+      # run.sh calls ExtractNorthwindDatabase, the same target the sample build uses.
       - name: Run e2e
         run: bash tests/e2e/run.sh
 
@@ -53,5 +54,7 @@ jobs:
             9.0.x
             10.0.x
 
+      # run-startup-burst.sh calls ExtractNorthwindDatabase. The host copies the template
+      # into a per-process temp directory and the smoke deletes that directory on dispose.
       - name: Run startup-burst smoke
         run: bash tests/e2e/run-startup-burst.sh

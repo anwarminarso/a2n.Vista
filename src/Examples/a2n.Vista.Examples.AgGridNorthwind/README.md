@@ -20,17 +20,22 @@ under the landed routing model (`/api/views/{viewName}`), and each also exposes 
 Follow these steps in order. They are sufficient to build and run the whole showcase with no additional,
 undocumented steps.
 
-### 1. Extract the Northwind database
+### 1. The Northwind database is a read-only template
 
-The Northwind SQLite database is shipped **zipped** and must be extracted before the first run. The host
-never recreates or seeds it, so the extracted file is the single source of truth.
+`src/Examples/DB/Northwind SQLite.zip` is the shipped Microsoft database (11,096,792 bytes).
+`src/Examples/DB/Northwind.sha256` pins the SHA-256 of that zip
+(`78fe424288a3b07d54db7a9130b04fa29e14029dd8dfea2f842f2e4112b65bf9`) and of the extracted
+`northwind.db` (`2f4f5c68dfcd33ba27373eae48c7a4869800c68095ee0f9f0da494f83382a877`). Building this
+project runs `ExtractNorthwindDatabase`, which extracts the file to the gitignored
+`src/Examples/DB/northwind.db` and fails if the zip is missing or either hash does not match. It does
+not create an empty database. The template is not committed and is never opened for writing.
 
-1. Open the folder next to the project: `src/Examples/DB`.
-2. Extract `Northwind SQLite.zip` into that folder.
-3. Ensure the extracted file is named `northwind.db` (rename it if needed).
-
-The result must be `src/Examples/DB/northwind.db`. If it is missing, the host prints this same extraction
-guidance and exits with a non-zero code instead of running.
+On startup the host checks the template against the pin and exits if the file is missing or the hash
+does not match. It then copies the template into a new directory named with a GUID under the temp
+directory, and runs one `CREATE TABLE IF NOT EXISTS VistaMemos` (`MemoID`, `Subject`, `Body`,
+`RowVersion`) against the copy. Memo create/update/delete and `dotnet run -- selftest` use the copy.
+The copy is deleted when the process stops. Set `NORTHWIND_WORKING_DIRECTORY` to choose a different
+parent folder; each run still gets its own GUID subdirectory.
 
 ### 2. Build the TypeScript client
 
@@ -79,7 +84,7 @@ Simple Wiring page); the shared navigation links the other three pages. The TanS
 ### 4. Self-test (optional but recommended)
 
 A guarded end-to-end round-trip verifies the read, write, OpenAPI, and view-browser paths against the
-shipped read-only database, without a browser:
+per-run working copy, without a browser. It also checks that the template's SHA-256 is unchanged:
 
 ```sh
 dotnet run -- selftest
@@ -115,8 +120,8 @@ startup in a non-Development environment (Decision Log D94); calling `AllowAnony
 open posture a deliberate, documented choice for a public read-only demo.
 
 Only explicitly-registered views are browsable (secure-by-default): the view catalog and the selector
-enumerate exactly the three registered views, never arbitrary database tables. All three views are
-read-only (List + Detail; no write facet), and the host never seeds or mutates the shipped database.
+enumerate the registered views, never arbitrary database tables. Reads use the working copy of the
+shipped database. `vWritableMemo` writes to that same copy. The template file is never mutated.
 
 **A real application does not run open.** Gate access by registering an authorizer via
 `UseAuthorizer<T>()` instead of `AllowAnonymousAccess()`, so every view request is authorized inside the

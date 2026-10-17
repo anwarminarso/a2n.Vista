@@ -17,11 +17,14 @@ if [[ -z "${DOTNET_ROOT:-}" && -d "$HOME/.dotnet" ]]; then
   export PATH="$DOTNET_ROOT:$PATH"
 fi
 
-DB_DIR="$ROOT/src/Examples/DB"
-if [[ ! -f "$DB_DIR/northwind.db" ]]; then
-  echo "Extracting Northwind SQLite database..."
-  unzip -o "$DB_DIR/Northwind SQLite.zip" -d "$DB_DIR"
-fi
+# Same target the sample build, CI, and tests/e2e/run.sh use. It checks
+# src/Examples/DB/Northwind.sha256 and fails on a missing zip or a hash mismatch.
+echo "Extracting Northwind SQLite database (ExtractNorthwindDatabase)..."
+dotnet msbuild "$ROOT/src/Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" \
+  -t:ExtractNorthwindDatabase \
+  -p:ExtractNorthwindDatabase=true \
+  -nologo \
+  -v:m
 
 NORTHWIND="$ROOT/src/Examples/Northwind/a2n.Vista.Examples.Northwind.csproj"
 for tfm in net9.0 net10.0; do

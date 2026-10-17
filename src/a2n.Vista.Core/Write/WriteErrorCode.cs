@@ -37,12 +37,25 @@ public enum WriteErrorCode
 
     /// <summary>
     /// The supplied <c>If-Match</c> token did not match the stored row's current token, or
-    /// <c>SaveChanges</c> raised a concurrency violation (R6.3, R6.5).
+    /// <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c> (R6.3, R6.5, D158).
+    /// HTTP 409. The wire code stays <c>write-concurrency-conflict</c>. The old
+    /// <c>write-conflict</c> string is retired and is no longer emitted.
     /// </summary>
     ConcurrencyConflict,
 
-    /// <summary>A database constraint violation surfaced from persistence (R9.4).</summary>
-    WriteConflict,
+    /// <summary>
+    /// A database constraint violation (unique, foreign key, NOT NULL, or CHECK) surfaced from
+    /// persistence (D158). HTTP 422 <c>write-constraint-violation</c> — not a conflict, and not
+    /// used for a missing table or any other non-constraint <c>DbUpdateException</c>.
+    /// </summary>
+    ConstraintViolation,
+
+    /// <summary>
+    /// <c>SaveChanges</c> failed for a reason other than a concurrency conflict or a database
+    /// constraint violation (for example a missing table or a provider I/O failure). Mapped to
+    /// HTTP 500. The client message stays leak-free (Decision Log D158; spec 01 §14.1, spec 05 §9.2).
+    /// </summary>
+    PersistenceFailed,
 
     /// <summary>A bulk (array) body was posted while bulk execution is not enabled (R15.1).</summary>
     BulkNotEnabled,
@@ -78,11 +91,19 @@ public static class WriteErrorCodes
     /// <summary>Wire code for <see cref="WriteErrorCode.PreconditionRequired"/>.</summary>
     public const string PreconditionRequired = "write-precondition-required";
 
-    /// <summary>Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>.</summary>
+    /// <summary>
+    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 409
+    /// <c>write-concurrency-conflict</c> (Decision Log D158).
+    /// </summary>
     public const string ConcurrencyConflict = "write-concurrency-conflict";
 
-    /// <summary>Wire code for <see cref="WriteErrorCode.WriteConflict"/>.</summary>
-    public const string WriteConflict = "write-conflict";
+    /// <summary>
+    /// Wire code for <see cref="WriteErrorCode.ConstraintViolation"/>. HTTP 422. Not a conflict.
+    /// </summary>
+    public const string ConstraintViolation = "write-constraint-violation";
+
+    /// <summary>Wire code for <see cref="WriteErrorCode.PersistenceFailed"/>.</summary>
+    public const string PersistenceFailed = "write-persistence-failed";
 
     /// <summary>Wire code for <see cref="WriteErrorCode.BulkNotEnabled"/>.</summary>
     public const string BulkNotEnabled = "write-bulk-not-enabled";
@@ -104,7 +125,8 @@ public static class WriteErrorCodes
         WriteErrorCode.ValidationFailed => ValidationFailed,
         WriteErrorCode.PreconditionRequired => PreconditionRequired,
         WriteErrorCode.ConcurrencyConflict => ConcurrencyConflict,
-        WriteErrorCode.WriteConflict => WriteConflict,
+        WriteErrorCode.ConstraintViolation => ConstraintViolation,
+        WriteErrorCode.PersistenceFailed => PersistenceFailed,
         WriteErrorCode.BulkNotEnabled => BulkNotEnabled,
         WriteErrorCode.NoWritePlan => NoWritePlan,
         _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown write error code."),

@@ -16,9 +16,11 @@ participating you agree to uphold it.
   to build against.
 - Git.
 
-No `sqlite3` CLI is required — the Northwind example ships a SQLite database in
-`src/Examples/DB` (extract `Northwind SQLite.zip` to `northwind.db` before running
-the example).
+No `sqlite3` CLI is required. The Northwind samples ship
+`src/Examples/DB/Northwind SQLite.zip`. `Northwind.sha256` beside it pins the zip and the
+extracted `northwind.db`. Building a sample host runs `ExtractNorthwindDatabase`, which
+fails if the zip is missing or a hash does not match, then copies that template to a
+per-run GUID directory and creates `VistaMemos` on the copy only.
 
 ## Build & test
 

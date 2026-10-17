@@ -36,6 +36,9 @@ jobs:
       - name: Restore
         run: dotnet restore src/a2n.Vista.slnx
 
+      # Northwind hosts extract src/Examples/DB/Northwind SQLite.zip via ExtractNorthwindDatabase
+      # during this build. The target checks src/Examples/DB/Northwind.sha256 and fails on a missing
+      # zip or a hash mismatch. tests/e2e/run.sh invokes that same target. northwind.db is not committed.
       - name: Build (Release)
         run: dotnet build src/a2n.Vista.slnx -c Release --no-restore
 

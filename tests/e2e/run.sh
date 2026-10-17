@@ -10,11 +10,14 @@ export DOTNET_CLI_TELEMETRY_OPTOUT=1
 export DOTNET_NOLOGO=1
 export DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1
 
-DB_DIR="$ROOT/src/Examples/DB"
-if [[ ! -f "$DB_DIR/northwind.db" ]]; then
-  echo "Extracting Northwind SQLite database..."
-  unzip -o "$DB_DIR/Northwind SQLite.zip" -d "$DB_DIR"
-fi
+# Same target the sample build and CI use. It checks src/Examples/DB/Northwind.sha256 and
+# fails on a missing zip or a hash mismatch. It does not create an empty database.
+echo "Extracting Northwind SQLite database (ExtractNorthwindDatabase)..."
+dotnet msbuild "$ROOT/src/Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" \
+  -t:ExtractNorthwindDatabase \
+  -p:ExtractNorthwindDatabase=true \
+  -nologo \
+  -v:m
 
 echo "Building sample hosts and the e2e project (net8.0)..."
 dotnet build "$ROOT/src/Examples/Northwind/a2n.Vista.Examples.Northwind.csproj" -c Debug --framework net8.0
