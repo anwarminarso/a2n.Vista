@@ -72,3 +72,99 @@ jobs:
 
       - name: a2n.Vista.Client.TypeScript.Tests
         run: dotnet run --project src/Tests/a2n.Vista.Client.TypeScript.Tests -c Release --framework ${{ matrix.tfm }}
+
+  # QA packages for the release branch. Packs the same projects as publish.yml PACK_PROJECTS
+  # and uploads the .nupkg and .snupkg files. This job does not push to a feed and uses no secrets.
+  # ContinuousIntegrationBuild stays off here: it rewrites CallerFilePath and is a publish.yml concern.
+  pack:
+    name: Pack shipping packages
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET (8 / 9 / 10)
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+            10.0.x
+
+      - name: Pack (Release)
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          # Keep this list identical to PACK_PROJECTS in .github/workflows/publish.yml.
+          projects=(
+            src/a2n.Vista.Core/a2n.Vista.Core.csproj
+            src/a2n.Vista.EntityFrameworkCore/a2n.Vista.EntityFrameworkCore.csproj
+            src/a2n.Vista.AspNetCore/a2n.Vista.AspNetCore.csproj
+            src/a2n.Vista.OpenApi/a2n.Vista.OpenApi.csproj
+            src/Adapters/a2n.Vista.EntityFrameworkCore.Npgsql/a2n.Vista.EntityFrameworkCore.Npgsql.csproj
+            src/Adapters/a2n.Vista.Adapters.DataTablesNet/a2n.Vista.Adapters.DataTablesNet.csproj
+            src/Adapters/a2n.Vista.Adapters.AgGrid/a2n.Vista.Adapters.AgGrid.csproj
+            src/Adapters/a2n.Vista.Adapters.TanStackTable/a2n.Vista.Adapters.TanStackTable.csproj
+            src/a2n.Vista.Client.TypeScript/a2n.Vista.Client.TypeScript.csproj
+          )
+          for proj in "${projects[@]}"; do
+            echo "==> packing $proj"
+            dotnet pack "$proj" -c Release -o artifacts
+          done
+          ls -l artifacts
+
+      - name: Verify license, README, and symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          missing=0
+          expected=(
+            a2n.Vista.Core
+            a2n.Vista.EntityFrameworkCore
+            a2n.Vista.AspNetCore
+            a2n.Vista.OpenApi
+            a2n.Vista.EntityFrameworkCore.Npgsql
+            a2n.Vista.Adapters.DataTablesNet
+            a2n.Vista.Adapters.AgGrid
+            a2n.Vista.Adapters.TanStackTable
+            a2n.Vista.Client.TypeScript
+          )
+          shopt -s nullglob
+          for id in "${expected[@]}"; do
+            pkgs=(artifacts/"${id}".*.nupkg)
+            if [ "${#pkgs[@]}" -ne 1 ]; then
+              echo "::error::expected one ${id} nupkg, found ${#pkgs[@]}."
+              missing=1
+              continue
+            fi
+            pkg="${pkgs[0]}"
+            name="$(basename "$pkg")"
+            if ! unzip -p "$pkg" '*.nuspec' | grep -q '<license type="expression">LGPL-3.0-or-later</license>'; then
+              echo "::error::$name declares no LGPL-3.0-or-later license expression."
+              missing=1
+            fi
+            if ! unzip -p "$pkg" '*.nuspec' | grep -q '<readme>README.md</readme>'; then
+              echo "::error::$name does not pack README.md."
+              missing=1
+            fi
+            if ! unzip -l "$pkg" | grep -q 'README.md'; then
+              echo "::error::$name has no README.md entry."
+              missing=1
+            fi
+            if [ ! -f "${pkg%.nupkg}.snupkg" ]; then
+              echo "::error::$name has no matching .snupkg symbol package."
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] && echo "All shipping packages carry a license, a README, and a symbol package."
+          exit "$missing"
+
+      - name: Upload NuGet packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: nuget-packages
+          if-no-files-found: error
+          path: |
+            artifacts/*.nupkg
+            artifacts/*.snupkg
