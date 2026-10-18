@@ -10,6 +10,7 @@ using a2n.Vista.Ports;
 using a2n.Vista.Results;
 using a2n.Vista.Write;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -97,6 +98,10 @@ public class EfViewExecutor : IViewExecutor
         typeof(EfViewExecutor).GetMethod(nameof(DeleteCoreAsync), BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException($"{nameof(EfViewExecutor)}.{nameof(DeleteCoreAsync)} was not found.");
 
+    private static readonly MethodInfo DetailAsyncMethod =
+        typeof(EfViewExecutor).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Single(method => method.Name == nameof(DetailAsync) && method.IsGenericMethodDefinition);
+
     private readonly FilterCompiler _filterCompiler;
     private readonly DbContext? _dbContext;
     private readonly IServiceProvider? _services;
@@ -176,6 +181,27 @@ public class EfViewExecutor : IViewExecutor
         _dbContext = dbContext;
         _services = services;
         _planRegistry = planRegistry;
+        _filterCompiler = filterCompiler;
+    }
+
+    /// <summary>
+    /// Initializes an executor that persists through <paramref name="dbContext"/> and resolves write
+    /// services from <paramref name="services"/>, with no execution-plan registry. A subclass uses this
+    /// when it overrides <see cref="ResolveScopedQueryable{TRow}"/> to supply the detail query itself.
+    /// It must also override <see cref="EnsureDetailReadPath"/>, or every update fails before save.
+    /// </summary>
+    /// <param name="dbContext">The active EF context used to load and save the write entity.</param>
+    /// <param name="services">The request <see cref="IServiceProvider"/> used to resolve the write mapper.</param>
+    /// <param name="filterCompiler">The compiler used to turn the neutral filter tree into a predicate.</param>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    protected EfViewExecutor(DbContext dbContext, IServiceProvider services, FilterCompiler filterCompiler)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(filterCompiler);
+
+        _dbContext = dbContext;
+        _services = services;
         _filterCompiler = filterCompiler;
     }
 
@@ -803,6 +829,7 @@ public class EfViewExecutor : IViewExecutor
         // skipped by the mapper itself (defense in depth), so identity is store-assigned, not client-set.
         var entity = new TEntity();
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(dbContext, entity, RequireWriteFacet(services, view), creating: true);
 
         dbContext.Add(entity);
 
@@ -973,6 +1000,11 @@ public class EfViewExecutor : IViewExecutor
             return false;
         }
 
+        // The body is a detail read. Resolve that path before any mutation is saved. A write facet
+        // with no generated invoker and no execution plan throws the same metadata-only error Detail
+        // throws, and the row stays as it was.
+        EnsureDetailReadPath(view);
+
         // Apply the whitelisted mapper first — the only channel client values reach the entity. Key/token
         // targets are skipped by the mapper, so the row identity stays the loaded entity's key, never the
         // body (R2.5, R5.2). The concurrency predicate is armed AFTER the mapper so nothing overwrites the
@@ -980,6 +1012,7 @@ public class EfViewExecutor : IViewExecutor
         var facet = RequireWriteFacet(services, view);
         var mapper = services.GetRequiredService<WriteMapperResolver>().Resolve(view);
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(RequireDbContext(view, nameof(UpdateAsync)), entity, facet, creating: false);
 
         // The check is the database predicate, not an in-memory compare-then-save. The client's token
         // becomes OriginalValue (WHERE token = @If-Match). An application token also gets a new
@@ -994,8 +1027,25 @@ public class EfViewExecutor : IViewExecutor
         await SaveWriteChangesAsync(RequireDbContext(view, nameof(UpdateAsync)), cancellationToken).ConfigureAwait(false);
 
         // Publish the token the row carries AFTER the write (D146, D159). This is the value the HTTP layer
-        // returns as ETag. It is never the request's If-Match.
+        // returns as ETag when the caller can still read the row. It is never the request's If-Match.
         PublishPostWriteToken<TEntity>(services, facet, entity);
+
+        // The body is the same scoped detail read GET uses (read plan, masks, this request's trusted
+        // scope, by key). A reflection copy of the entity is not the contract: a computed, renamed, or
+        // masked field would otherwise leak the raw entity value. The path was checked before save.
+        var row = await ReadUpdatedDetailAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+        var sink = services.GetService<IWriteTokenSink>();
+        if (row is null)
+        {
+            // The save moved the row out of the caller's read scope. 204, no body, no ETag.
+            sink?.SetPostWriteToken(null);
+            sink?.SetPostWriteNotVisible();
+        }
+        else
+        {
+            sink?.SetPostWriteRow(row);
+        }
+
         return true;
     }
 
@@ -1083,17 +1133,19 @@ public class EfViewExecutor : IViewExecutor
     /// <c>write-concurrency-conflict</c>, rolled back, Requirement R6.5, Decision Log D159); a
     /// <see cref="DbUpdateException"/> that is a database constraint violation (unique index, NOT NULL,
     /// foreign key, CHECK) becomes a <see cref="VistaConstraintViolationException"/> (HTTP 422
-    /// <c>write-constraint-violation</c>, not a conflict); a transient store lock becomes a
+    /// <c>write-constraint-violation</c>, not a conflict); a store lock recognized by
+    /// <see cref="DbUpdateFailureClassification.IsTransientLock"/> becomes a
     /// <see cref="VistaStoreBusyException"/> (HTTP 503 <c>write-busy</c>, Decision Log D160); every
-    /// other <see cref="DbUpdateException"/> — a missing table, a connection failure, or any
-    /// non-constraint provider error — becomes a <see cref="VistaPersistenceException"/> (HTTP 500
-    /// <c>write-persistence-failed</c>). A missing relation is not a constraint and is not a 412.
+    /// other <see cref="DbException"/> — a missing table, a connection failure, a transient exception
+    /// the lock probe does not recognize, or any non-constraint provider error — becomes a
+    /// <see cref="VistaPersistenceException"/> (HTTP 500 <c>write-persistence-failed</c>). A missing
+    /// relation is not a constraint and is not a 412.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// EF Core wraps a single <c>SaveChanges</c> in an implicit transaction, so a failed save commits no
-    /// rows: the pre-operation persisted state is preserved and no partial row remains (Requirements R1.7,
-    /// R3.8, R11.3, R11.4). The caller therefore never sees a success result for a failed persistence.
+    /// A failed save does not report success. A single-statement save may not open a transaction
+    /// (<c>AutoTransactionBehavior.WhenNeeded</c>); the statement itself is what commits or leaves the
+    /// previous row in place (Requirements R1.7, R3.8, R11.3, R11.4).
     /// </para>
     /// <para>
     /// The original provider exception is attached only as the <see cref="Exception.InnerException"/> of
@@ -1104,7 +1156,8 @@ public class EfViewExecutor : IViewExecutor
     /// </para>
     /// <para>
     /// <see cref="DbUpdateConcurrencyException"/> derives from <see cref="DbUpdateException"/>, so it is
-    /// caught first. A transient lock is next (D160), then constraint detection (Decision Log D158).
+    /// caught first. A probe-recognized lock is next (D160), then constraint detection (Decision Log
+    /// D158), then every other <see cref="DbUpdateException"/> and <see cref="DbException"/> as 500.
     /// None of those treats the base <see cref="DbUpdateException"/> itself as a conflict.
     /// </para>
     /// </remarks>
@@ -1148,8 +1201,15 @@ public class EfViewExecutor : IViewExecutor
         catch (DbUpdateException ex)
         {
             // Any other store failure (missing table, I/O, corruption, an unrecognized provider error).
-            // This is not a conflict with the current row and not a transient lock. Translate to a
+            // This is not a conflict with the current row and not a probe-recognized lock. Translate to a
             // leak-free 500; the provider detail stays on the inner exception only (D158, spec 05 §9.2, R9.6).
+            throw new VistaPersistenceException(innerException: ex);
+        }
+        catch (DbException ex)
+        {
+            // A DbException the lock probe does not recognize, including one with IsTransient set.
+            // A connection lost during COMMIT has an unknown outcome, so this is 500 with no Retry-After,
+            // not 503 (D160).
             throw new VistaPersistenceException(innerException: ex);
         }
     }
@@ -1409,6 +1469,161 @@ public class EfViewExecutor : IViewExecutor
                 $"'{typeof(TEntity).Name}' has no matching public instance property. Ensure the projected " +
                 "key field name matches the entity member for single-source writable views.");
     }
+
+    /// <summary>
+    /// Re-reads the saved row through the detail path <c>GET</c> uses: the generated invoker when one
+    /// is registered, otherwise <see cref="DetailAsync{TRow}"/> closed over <see cref="ViewMetadata.QueryType"/>.
+    /// Both routes apply the read plan, the masks, and <paramref name="scope"/>. There is no property-copy
+    /// fallback. A view with no execution plan fails with the same metadata-only error Detail already throws.
+    /// </summary>
+    private async Task<object?> ReadUpdatedDetailAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            return await invoker.DetailAsync(this, view, key, scope, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await DetailByQueryTypeAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Closes <see cref="DetailAsync{TRow}"/> over the view's query type. This is the same dispatch the
+    /// HTTP layer uses when no generated invoker is registered, and it still requires an execution plan.
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes DetailAsync<TRow> closed over the view's runtime query type; use the source generator path for AOT.")]
+    private async Task<object?> DetailByQueryTypeAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(this, [view, key, scope, cancellationToken])!;
+        await task.ConfigureAwait(false);
+        var result = task.GetType().GetProperty(nameof(Task<object>.Result))
+            ?? throw new InvalidOperationException("Expected DetailAsync to return Task<TRow>.");
+        return result.GetValue(task);
+    }
+
+    /// <summary>
+    /// Rejects a string that is longer than the EF property's <c>MaxLength</c>. The limit is read from
+    /// the model. The 422 detail names the writable view field, never an entity member, table, or column.
+    /// SQLite does not enforce <c>TEXT</c> length, so the check happens before <c>SaveChanges</c> and is
+    /// HTTP 422. On create, only mapped whitelist fields are checked. On update, only properties the write
+    /// mapper changed (<see cref="PropertyEntry.IsModified"/>) are checked, so a legacy over-long value in
+    /// a column the mapper does not set does not block the write.
+    /// </summary>
+    private static void EnforceDeclaredMaxLengths(
+        DbContext dbContext,
+        object entity,
+        CrudFacetDefinition facet,
+        bool creating)
+    {
+        if (!creating)
+        {
+            dbContext.ChangeTracker.DetectChanges();
+        }
+
+        HashSet<string>? whitelist = null;
+        if (creating)
+        {
+            whitelist = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var mapping in facet.WritableFields)
+            {
+                whitelist.Add(mapping.EntityMember);
+            }
+        }
+
+        foreach (var property in dbContext.Entry(entity).Properties)
+        {
+            if (creating)
+            {
+                if (!whitelist!.Contains(property.Metadata.Name))
+                {
+                    continue;
+                }
+            }
+            else if (!property.IsModified)
+            {
+                continue;
+            }
+
+            var max = property.Metadata.GetMaxLength();
+            if (max is null || property.CurrentValue is not string text || text.Length <= max.Value)
+            {
+                continue;
+            }
+
+            throw new VistaConstraintViolationException(MaxLengthDetail(facet, property.Metadata.Name));
+        }
+    }
+
+    /// <summary>
+    /// The 422 detail for a string over <c>MaxLength</c> (R9.6). The name is the writable view field
+    /// (<see cref="WritableFieldMapping.CrudMember"/>), never the entity member, table, or column.
+    /// A property with no mapping produces a generic message that names nothing.
+    /// </summary>
+    private static string MaxLengthDetail(CrudFacetDefinition facet, string entityMember)
+    {
+        foreach (var mapping in facet.WritableFields)
+        {
+            if (string.Equals(mapping.EntityMember, entityMember, StringComparison.Ordinal)
+                && mapping.CrudMember.Length > 0)
+            {
+                return $"Field '{mapping.CrudMember}' exceeds its maximum length and was not applied.";
+            }
+        }
+
+        return "A field exceeds its maximum length and was not applied.";
+    }
+
+    /// <summary>
+    /// Confirms the update can re-read the saved row before <c>SaveChanges</c>. The base
+    /// implementation requires a generated invoker or an execution plan, and otherwise throws the
+    /// same error <see cref="ResolveScopedQueryable{TRow}"/> throws for a metadata-only view.
+    /// A subclass that overrides <see cref="ResolveScopedQueryable{TRow}"/> must also override this
+    /// method. The re-read calls that override and does not consult the plan registry, so the base
+    /// check would reject the update before save.
+    /// </summary>
+    /// <param name="view">The writable view being updated.</param>
+    protected virtual void EnsureDetailReadPath(ViewMetadata view)
+    {
+        if (ViewInvokerStore.TryGet(view.Name, out _))
+        {
+            return;
+        }
+
+        if (_planRegistry is null || _dbContext is null || _services is null)
+        {
+            throw MissingPlanRegistry(view);
+        }
+
+        if (_planRegistry.Get(view.Name) is null)
+        {
+            throw MetadataOnly(view);
+        }
+    }
+
+    /// <summary>The error Detail throws when this executor has no execution-plan registry.</summary>
+    private static InvalidOperationException MissingPlanRegistry(ViewMetadata view) =>
+        new(
+            $"This {nameof(EfViewExecutor)} was constructed without an execution-plan registry, so it " +
+            $"cannot resolve a queryable for view '{view.Name}'. Use the constructor that takes a " +
+            $"{nameof(DbContext)}, {nameof(IServiceProvider)}, and {nameof(IViewExecutionPlanRegistry)} " +
+            "(the DI wiring path, Task 9.4), or override ResolveScopedQueryable<TRow> in a subclass.");
+
+    /// <summary>The error Detail throws when a view has no generated execution plan (R4.4 / DR5).</summary>
+    private static InvalidOperationException MetadataOnly(ViewMetadata view) =>
+        new(
+            $"View '{view.Name}' has no generated execution plan, so it is metadata-only (DR5) and " +
+            "cannot be executed. Reference the a2n.Vista source generator (a2n.Vista.SourceGenerators) " +
+            "so a compiled execution plan is generated for this typed Style B view, making it " +
+            "executable; until then List and Detail fail fast here before any query runs and no " +
+            "result is produced.");
 
     /// <summary>
     /// Binds <paramref name="ifMatch"/> as the original value of the concurrency property so EF emits
@@ -1743,24 +1958,15 @@ public class EfViewExecutor : IViewExecutor
     {
         if (_planRegistry is null || _dbContext is null || _services is null)
         {
-            throw new InvalidOperationException(
-                $"This {nameof(EfViewExecutor)} was constructed without an execution-plan registry, so it " +
-                $"cannot resolve a queryable for view '{view.Name}'. Use the constructor that takes a " +
-                $"{nameof(DbContext)}, {nameof(IServiceProvider)}, and {nameof(IViewExecutionPlanRegistry)} " +
-                "(the DI wiring path, Task 9.4), or override ResolveScopedQueryable<TRow> in a subclass.");
+            throw MissingPlanRegistry(view);
         }
 
         // Metadata-only fail-fast (R4.4 / DR5): a typed Style B view stays metadata-only when no plan was
         // generated for it. Throw before any query work — no source query is built, no count or
         // materialization runs — so no partial result is ever produced. The message names the view, states
         // that no generated execution plan exists, and instructs referencing the source generator (D118).
-        var plan = _planRegistry.Get(view.Name)
-            ?? throw new InvalidOperationException(
-                $"View '{view.Name}' has no generated execution plan, so it is metadata-only (DR5) and " +
-                "cannot be executed. Reference the a2n.Vista source generator (a2n.Vista.SourceGenerators) " +
-                "so a compiled execution plan is generated for this typed Style B view, making it " +
-                "executable; until then List and Detail fail fast here before any query runs and no " +
-                "result is produced.");
+        // Update uses the same exception, before SaveChanges, when it cannot re-read the row.
+        var plan = _planRegistry.Get(view.Name) ?? throw MetadataOnly(view);
 
         var queryable = plan.CreateScopedQueryable(_dbContext, _services, scope);
         if (queryable is IQueryable<TRow> typed)

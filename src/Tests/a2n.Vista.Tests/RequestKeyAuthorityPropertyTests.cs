@@ -190,7 +190,9 @@ public sealed class RequestKeyAuthorityPropertyTests
             // Register the writable Style B view: AddVista publishes its captured CRUD facet into the
             // IWriteFacetRegistry and wires the WriteMapperResolver the executor resolves its mapper from.
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<RequestKeyAuthorityView>());
+            services.AddVista(v => v.Register<RequestKeyAuthorityView>(ViewExecutionPlan.Split<SpoofSource, SpoofRow>(
+                ViewName,
+                s => new SpoofRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();

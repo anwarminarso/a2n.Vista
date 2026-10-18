@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Examples;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
@@ -166,12 +167,23 @@ public sealed class WritableConcurrencyRaceTests
         await Assert.That(app.Read().Subject).IsEqualTo("listed");
 
         var deleted = await app.DeleteAsync(list.ETag!);
-        await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(deleted.Status).IsEqualTo(HttpStatusCode.NoContent);
         var deleteSql = app.Commands.LastOrDefault(sql =>
             sql.Contains("DELETE", StringComparison.OrdinalIgnoreCase)
             && sql.Contains("WHERE", StringComparison.OrdinalIgnoreCase));
         await Assert.That(deleteSql).IsNotNull();
         await Assert.That(deleteSql!).Contains("RowVersion");
+    }
+
+    [Test]
+    public async Task Over_Length_Subject_Is_422_And_The_Limit_Is_Not_Hard_Coded()
+    {
+        await using var app = await RaceApp.StartAsync();
+        var created = await app.CreateAsync("ok");
+        var tooLong = await app.UpdateAsync(new string('x', 33), created.ETag!);
+        await Assert.That(tooLong.Status).IsEqualTo(HttpStatusCode.UnprocessableEntity);
+        await Assert.That(await tooLong.CodeAsync()).IsEqualTo(WriteErrorCodes.ConstraintViolation);
+        await Assert.That(app.Read().Subject).IsEqualTo("ok");
     }
 
     internal sealed class RaceMemo
@@ -231,6 +243,7 @@ public sealed class WritableConcurrencyRaceTests
         {
             var entity = modelBuilder.Entity<RaceMemo>();
             entity.HasKey(e => e.Id);
+            entity.Property(e => e.Subject).HasMaxLength(32);
             entity.Property(e => e.RowVersion).IsConcurrencyToken().ValueGeneratedNever();
         }
     }
@@ -314,7 +327,9 @@ public sealed class WritableConcurrencyRaceTests
                             SqliteVistaConnection.Use(options, databasePath)
                                 .AddInterceptors(sp.GetRequiredService<SqlCapture>()));
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<RaceContext>());
-                        services.AddVista(v => v.Register<RaceView>());
+                        services.AddVista(v => v.Register<RaceView>(ViewExecutionPlan.Split<RaceMemo, RaceRow>(
+                            "race-memo",
+                            m => new RaceRow { Id = m.Id, Subject = m.Subject, RowVersion = m.RowVersion })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>

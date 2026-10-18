@@ -386,6 +386,7 @@ public sealed class StartupBurstSmokeTests
             {
                 try
                 {
+                    DeleteWalSidecars(workingDirectory);
                     Directory.Delete(workingDirectory, recursive: true);
                 }
                 catch (IOException) when (attempt < 9)
@@ -396,6 +397,37 @@ public sealed class StartupBurstSmokeTests
                 {
                     Thread.Sleep(100);
                 }
+            }
+        }
+
+        private static void DeleteWalSidecars(string directory)
+        {
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                TryDelete(file + "-wal");
+                TryDelete(file + "-shm");
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
             }
         }
 

@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -103,11 +104,12 @@ public sealed class ConcurrencyAbortPropertyTests
 
                 if (shouldMatch)
                 {
-                    // Success path (R6.4): 200 and the ETag round-trips the token.
-                    if (status != HttpStatusCode.OK)
+                    // Success path (R6.4): update is 200 with the post-write ETag; delete is 204 with no body and no ETag.
+                    var expected = isDelete ? HttpStatusCode.NoContent : HttpStatusCode.OK;
+                    if (status != expected)
                     {
                         throw new Exception(
-                            $"Expected 200 for a matching If-Match on {(isDelete ? "delete" : "update")} " +
+                            $"Expected {(int)expected} for a matching If-Match on {(isDelete ? "delete" : "update")} " +
                             $"(token '{storedToken}'), got {(int)status} {status}.");
                     }
 
@@ -225,7 +227,9 @@ public sealed class ConcurrencyAbortPropertyTests
                         // the sibling write-path integration tests use). No fake executor is registered, so
                         // the REAL EfViewExecutor implements the write facet end to end.
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ConcurrencyContext>());
-                        services.AddVista(v => v.Register<ConcurrencyView>());
+                        services.AddVista(v => v.Register<ConcurrencyView>(ViewExecutionPlan.Split<ConcurrencySource, ConcurrencyRow>(
+                            ViewName,
+                            s => new ConcurrencyRow { Id = s.Id, Name = s.Name, Version = s.Version })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>

@@ -335,7 +335,9 @@ public sealed class WriteSaveChangesSemanticsTests
             // Register the writable view: AddVista populates the write-facet registry and the mapper
             // resolver the executor's write path resolves from the request IServiceProvider.
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<WriteSemanticsView>());
+            services.AddVista(v => v.Register<WriteSemanticsView>(ViewExecutionPlan.Split<WriteSource, WriteRow>(
+                ViewName,
+                s => new WriteRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();

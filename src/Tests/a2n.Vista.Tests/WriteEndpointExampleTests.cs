@@ -13,6 +13,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
@@ -128,22 +129,29 @@ public sealed class WriteEndpointExampleTests
         app.SeedPlain(1, "before");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/update", Json("{\"key\":1,\"model\":{\"name\":\"after\"}}"));
+        var body = await response.Content.ReadAsStringAsync();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(body);
+        await Assert.That(doc.RootElement.GetProperty("name").GetString()).IsEqualTo("after");
+        await Assert.That(doc.RootElement.GetProperty("id").GetInt32()).IsEqualTo(1);
         await Assert.That(app.ReadPlainName(1)).IsEqualTo("after");
     }
 
-    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 200.</summary>
+    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 204.</summary>
     [Test]
-    public async Task Delete_HappyPath_Returns_200_And_Removes_The_Row()
+    public async Task Delete_HappyPath_Returns_204_And_Removes_The_Row()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedPlain(1, "doomed");
         app.SeedPlain(2, "survivor");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/delete", Json("{\"key\":1}"));
+        var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(body).IsEmpty();
+        await Assert.That(Header(response, "ETag")).IsNull();
         await Assert.That(app.ReadPlainName(1)).IsNull();
         await Assert.That(app.ReadPlainName(2)).IsEqualTo("survivor");
     }
@@ -224,6 +232,10 @@ public sealed class WriteEndpointExampleTests
         await Assert.That(response.ETag!).StartsWith("\"");
         await Assert.That(response.ETag!).EndsWith("\"");
         await Assert.That(response.ETag).IsNotEqualTo("\"42\"");
+        using var updatedJson = JsonDocument.Parse(response.Body);
+        await Assert.That(updatedJson.RootElement.GetProperty("name").GetString()).IsEqualTo("changed");
+        await Assert.That(updatedJson.RootElement.GetProperty("version").GetInt32().ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
         await Assert.That(app.ReadTokenVersion(1).ToString(CultureInfo.InvariantCulture))
             .IsEqualTo(response.ETag!.Trim('"'));
@@ -596,9 +608,15 @@ public sealed class WriteEndpointExampleTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ExampleWriteContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<PlainWritableView>();
-                            v.Register<TokenWritableView>();
-                            v.Register<BulkWritableView>();
+                            v.Register<PlainWritableView>(ViewExecutionPlan.Split<PlainSource, PlainRow>(
+                                PlainView,
+                                s => new PlainRow { Id = s.Id, Name = s.Name }));
+                            v.Register<TokenWritableView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                                TokenView,
+                                s => new TokenRow { Id = s.Id, Name = s.Name, Version = s.Version }));
+                            v.Register<BulkWritableView>(ViewExecutionPlan.Split<BulkSource, BulkRow>(
+                                BulkView,
+                                s => new BulkRow { Id = s.Id, Name = s.Name }));
                         });
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
@@ -646,8 +664,8 @@ public sealed class WriteEndpointExampleTests
 
         public int BulkRowCount() => Read(ctx => ctx.Bulks.AsNoTracking().Count());
 
-        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status + ETag.</summary>
-        public (HttpStatusCode Status, string? ETag) SendWithIfMatch(string url, string json, string ifMatch)
+        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status, ETag, and body.</summary>
+        public (HttpStatusCode Status, string? ETag, string Body) SendWithIfMatch(string url, string json, string ifMatch)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
@@ -667,8 +685,9 @@ public sealed class WriteEndpointExampleTests
             }
 
             var status = response.StatusCode;
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             response.Dispose();
-            return (status, etag);
+            return (status, etag, body);
         }
 
         private void Mutate(Action<ExampleWriteContext> mutate)

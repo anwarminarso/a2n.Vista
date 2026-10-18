@@ -459,7 +459,9 @@ public sealed class WritePersistenceFailureIntegrationTests
             context.Database.EnsureCreated();
 
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<ConstraintView>());
+            services.AddVista(v => v.Register<ConstraintView>(ViewExecutionPlan.Split<UniqueSource, UniqueRow>(
+                ConstraintViewName,
+                s => new UniqueRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();
@@ -603,7 +605,9 @@ public sealed class WritePersistenceFailureIntegrationTests
             context.Database.EnsureCreated();
 
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<ConcurrencyView>());
+            services.AddVista(v => v.Register<ConcurrencyView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                ConcurrencyViewName,
+                s => new TokenRow { Id = s.Id, Name = s.Name, Token = s.Token })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();
@@ -759,7 +763,9 @@ public sealed class WritePersistenceFailureIntegrationTests
             context.Database.EnsureCreated();
 
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<ForeignKeyView>());
+            services.AddVista(v => v.Register<ForeignKeyView>(ViewExecutionPlan.Split<ChildSource, FkRow>(
+                ForeignKeyViewName,
+                s => new FkRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();

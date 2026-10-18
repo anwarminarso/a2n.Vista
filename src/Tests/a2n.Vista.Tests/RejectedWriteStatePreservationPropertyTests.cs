@@ -10,6 +10,7 @@ using System.Text;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Ports;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
@@ -206,9 +207,15 @@ public sealed class RejectedWriteStatePreservationPropertyTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<RejectContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<RejectPlainView>();
-                            v.Register<RejectTokenView>();
-                            v.Register<RejectDenyView>();
+                            v.Register<RejectPlainView>(ViewExecutionPlan.Split<RejectSource, RejectRow>(
+                                PlainView,
+                                s => new RejectRow { Id = s.Id, Name = s.Name, Quantity = s.Quantity, Version = s.Version }));
+                            v.Register<RejectTokenView>(ViewExecutionPlan.Split<RejectSource, RejectRow>(
+                                TokenView,
+                                s => new RejectRow { Id = s.Id, Name = s.Name, Quantity = s.Quantity, Version = s.Version }));
+                            v.Register<RejectDenyView>(ViewExecutionPlan.Split<RejectSource, RejectRow>(
+                                DenyView,
+                                s => new RejectRow { Id = s.Id, Name = s.Name, Quantity = s.Quantity, Version = s.Version }));
                         });
 
                         // AllowAnonymousAccess keeps startup from failing closed (no UseAuthorizer<T>()), while

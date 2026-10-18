@@ -356,8 +356,9 @@ public class NorthwindDbContext : DbContext
             entity.Property(e => e.MemoId)
                 .ValueGeneratedOnAdd()
                 .HasColumnName("MemoID");
-            entity.Property(e => e.Subject).IsRequired();
-            entity.Property(e => e.Body).IsRequired();
+            // Lengths live on the model. The write executor reads MaxLength; it does not hard-code them.
+            entity.Property(e => e.Subject).IsRequired().HasMaxLength(120);
+            entity.Property(e => e.Body).IsRequired().HasMaxLength(4000);
             // SQLite has no native rowversion. The column is an application Guid: EF includes the
             // previous value in UPDATE/DELETE WHERE, and the write executor mints a new Guid on every
             // successful insert and update (ValueGenerated.Never — the database does not assign it).

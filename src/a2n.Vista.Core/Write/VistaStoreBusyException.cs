@@ -1,8 +1,9 @@
 namespace a2n.Vista.Write;
 
 /// <summary>
-/// Thrown when <c>SaveChanges</c> fails because the store is briefly locked
-/// (<c>SQLITE_BUSY</c> / <c>SQLITE_LOCKED</c>, or a provider exception marked transient).
+/// Thrown when <c>SaveChanges</c> fails because a registered lock probe recognized a store lock
+/// (<c>SQLITE_BUSY</c> / <c>SQLITE_LOCKED</c> for the SQLite probe). <c>DbException.IsTransient</c>
+/// alone does not throw this.
 /// The AspNetCore layer maps this to HTTP 503 with <c>Retry-After</c> and the wire code
 /// <c>write-busy</c> (Decision Log D160). It is not a lost update and not a persistence defect.
 /// </summary>

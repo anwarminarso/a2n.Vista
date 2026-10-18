@@ -283,6 +283,7 @@ public sealed class NorthwindDatabaseTests
         var secondUnderParent = false;
         var firstDeleted = false;
         var secondDeleted = false;
+        var sidecarsDeleted = false;
         var templateRemains = false;
         var templateSurvivesDirectCleanup = false;
         var copiesExisted = false;
@@ -295,10 +296,18 @@ public sealed class NorthwindDatabaseTests
                 var first = NorthwindWorkingDatabase.CreateCopy(template);
                 var second = NorthwindWorkingDatabase.CreateCopy(template);
                 copiesExisted = File.Exists(first.DatabasePath) && File.Exists(second.DatabasePath);
+                File.WriteAllText(first.DatabasePath + "-wal", "wal");
+                File.WriteAllText(first.DatabasePath + "-shm", "shm");
+                File.WriteAllText(second.DatabasePath + "-wal", "wal");
+                File.WriteAllText(second.DatabasePath + "-shm", "shm");
                 NorthwindWorkingDatabase.Cleanup(first);
                 NorthwindWorkingDatabase.Cleanup(second);
                 firstDeleted = !Directory.Exists(first.DirectoryPath);
                 secondDeleted = !Directory.Exists(second.DirectoryPath);
+                sidecarsDeleted = !File.Exists(first.DatabasePath + "-wal")
+                    && !File.Exists(first.DatabasePath + "-shm")
+                    && !File.Exists(second.DatabasePath + "-wal")
+                    && !File.Exists(second.DatabasePath + "-shm");
                 templateRemains = File.Exists(template);
                 distinct = !string.Equals(first.DirectoryPath, second.DirectoryPath, StringComparison.OrdinalIgnoreCase);
                 firstGuid = Guid.TryParseExact(Path.GetFileName(first.DirectoryPath), "N", out _);
@@ -336,6 +345,7 @@ public sealed class NorthwindDatabaseTests
         await Assert.That(secondUnderParent).IsTrue();
         await Assert.That(firstDeleted).IsTrue();
         await Assert.That(secondDeleted).IsTrue();
+        await Assert.That(sidecarsDeleted).IsTrue();
         await Assert.That(templateRemains).IsTrue();
         await Assert.That(templateSurvivesDirectCleanup).IsTrue();
     }

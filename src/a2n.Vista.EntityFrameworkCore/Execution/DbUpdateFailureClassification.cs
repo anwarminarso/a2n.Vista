@@ -79,8 +79,10 @@ public static class DbUpdateFailureClassification
 
     /// <summary>
     /// Returns <see langword="true"/> when <paramref name="exception"/>, or one of its inner
-    /// exceptions, is a transient store lock: <see cref="DbException.IsTransient"/> or a probe
-    /// registered with <see cref="AddTransientLockProbe"/>.
+    /// exceptions, is a store lock recognized by a probe registered with
+    /// <see cref="AddTransientLockProbe"/>. <see cref="DbException.IsTransient"/> is not consulted:
+    /// a connection lost during commit has an unknown outcome, and treating it as retryable could
+    /// duplicate a create that has no token (Decision Log D160).
     /// </summary>
     /// <param name="exception">The provider failure raised by <c>SaveChanges</c>.</param>
     /// <returns><see langword="true"/> when the write should be retried (HTTP 503).</returns>
@@ -91,11 +93,6 @@ public static class DbUpdateFailureClassification
         var probes = _transientLockProbes;
         for (Exception? current = exception; current is not null; current = current.InnerException)
         {
-            if (current is DbException { IsTransient: true })
-            {
-                return true;
-            }
-
             foreach (var probe in probes)
             {
                 if (probe(current) is true)

@@ -23,10 +23,24 @@ While the version is `0.x`, anything may change between releases.
   and `VistaPersistenceException`.
 - `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
 - `WriteErrorCode.StoreBusy` / `WriteErrorCodes.StoreBusy` (`write-busy`) and `VistaStoreBusyException`.
-  A transient store lock (`SQLITE_BUSY`, `SQLITE_LOCKED`, or `DbException.IsTransient`) is HTTP 503
-  with `Retry-After: 2` and title "Service unavailable" (Decision Log D160). It is not 412 and not 500.
+  Only a lock recognized by a registered transient-lock probe is HTTP 503 with `Retry-After: 2`
+  (Decision Log D160). The SQLite probe recognizes `SQLITE_BUSY` (5) and `SQLITE_LOCKED` (6).
+  `DbException.IsTransient` alone is not a lock: a connection lost during COMMIT has an unknown
+  outcome, and inviting an automatic retry could create a duplicate row on a create without a token.
+  Any other `DbException` is HTTP 500 `write-persistence-failed` with no `Retry-After`.
 - The Northwind and AG Grid hosts open the working SQLite file through `SqliteVistaConnection`:
-  a 5 second busy timeout, WAL, and `BEGIN IMMEDIATE`. The file-database race tests use that same helper.
+  `PRAGMA busy_timeout = 5000`, connection `Default Timeout` of 5 seconds, and WAL. For a
+  single-statement create or update, EF opens no transaction (`AutoTransactionBehavior.WhenNeeded`),
+  so `BEGIN IMMEDIATE` does not run. Those writes wait on the busy timeout and the connection
+  timeout. `BEGIN IMMEDIATE` (the transaction interceptor) applies only when EF opens a transaction
+  (a multi-statement save or an explicit transaction). A losing single-statement update has been
+  observed to return 412 after about 1.0 s (1003–1005 ms) while the winner takes 3–6 ms. The cause
+  is unconfirmed (suspected busy-handler sleep granularity in the native SQLite build, or the
+  provider retry loop) and will be investigated in a separate cleanup PR. `Retry-After: 2` is an
+  open question: if a write still hits a lock after waiting up to 5 s, the store is heavily busy,
+  so a short pause before retry is reasonable. Review that value together with the N4 repro.
+  The file-database race tests use the same connection helper. They are not a regression guard for
+  the lock bug: they can pass with the old connection string.
 
 ### Fixed
 - **DateTime and DateTimeOffset concurrency tokens round-trip.** The wire form is invariant `"O"`.
@@ -81,6 +95,8 @@ While the version is `0.x`, anything may change between releases.
   exception type name, or treat the words `constraint failed` as a constraint. The Northwind hosts
   register that probe: `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`), and only after
   that type check the message `constraint failed`. Anything else is HTTP 500.
+- **An update with a write facet but no execution plan fails before `SaveChanges`.** The executor checks that the detail read path is resolvable (a generated invoker or an execution plan) and throws the same metadata-only error Detail throws. The row is not committed.
+- **A `MaxLength` 422 names the writable view field.** The detail uses the CRUD member from the whitelist mapping (`Title` when that member is mapped to `InternalSubjectCol`). It does not include an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing.
 - **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
   post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
   row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
@@ -129,12 +145,24 @@ While the version is `0.x`, anything may change between releases.
   one behavior change. Generated TypeScript clients map `precondition-failed` to HTTP 412.
 
   | Behavior | Old | New | Migration |
-  | --- | --- | --- | --- | --- | --- |
+  | --- | --- | --- | --- |
   | Missing `If-Match` | 428 `write-precondition-required`. Spec text said 412. | 428 `write-precondition-required` | Keep handling 428. Do not treat a missing token as 412. |
   | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
   | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |
   | `If-Match` parsing | Raw string compare | RFC 9110 quoted strong tags, including a list | Send a quoted strong tag. A single unquoted token is still accepted (legacy). `If-Match: *` and a weak-only `W/"…"` are 412. A comma-separated list matches when one strong tag equals the stored token; that tag is the `WHERE` value. |
-  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match` | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
+  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match`. That replacement overwrites a version the host stored on the entity. A store-generated token is not replaced by Vista | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
+
+  `If-Match: *` deviates from RFC 9110 §13.1.1. That section treats `*` as success when the resource has a current representation. Vista returns 412 `write-concurrency-conflict` (the wire code is not renamed) because a wildcard cannot be the `WHERE` token and would skip the lost-update check. A successful delete of an in-scope row is 204 with no body and no `ETag`.
+
+- **Breaking (0.0.5): write success and not-found bodies.** Each row is one behavior change.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- |
+  | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
+  | Update of a row the caller can still read | 200 with an empty body and an `ETag` | 200 with the detail body (same read plan, scope, and masks as GET) and the new `ETag` | Read the updated row from the body. It matches a following detail GET, including a masked or computed field. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Update that leaves the row outside the caller's read scope | 200 with the copied entity fields | 204 with no body and no `ETag` | Treat 204 as success. Do not read a body. A later GET or write is 404. |
+  | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | The check covers mapped whitelist fields on create and modified properties on update. A legacy over-long value in a column the write does not set does not block the update. The 422 detail names the writable view field from that mapping. It does not name an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
 
 ## [0.0.4] - 2026-08-11
 

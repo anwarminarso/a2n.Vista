@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Write;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
@@ -445,8 +446,12 @@ public sealed class ErrorEnvelopeConformancePropertyTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ErrorEnvContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<PlainWritableView>();
-                            v.Register<TokenWritableView>();
+                            v.Register<PlainWritableView>(ViewExecutionPlan.Split<PlainSource, PlainRow>(
+                                PlainView,
+                                s => new PlainRow { Id = s.Id, Name = s.Name }));
+                            v.Register<TokenWritableView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                                TokenView,
+                                s => new TokenRow { Id = s.Id, Name = s.Name }));
                         });
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
