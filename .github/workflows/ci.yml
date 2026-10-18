@@ -119,6 +119,14 @@ jobs:
         run: |
           set -euo pipefail
           missing=0
+          # Exact package id + version. A prefix glob (`${id}.*.nupkg`) also matches
+          # a2n.Vista.EntityFrameworkCore.Npgsql when id is a2n.Vista.EntityFrameworkCore.
+          VERSION="$(sed -n 's/^[[:space:]]*<Version>\([^<]*\)<\/Version>[[:space:]]*$/\1/p' Directory.Build.props)"
+          if [ -z "$VERSION" ] || [ "$(printf '%s\n' "$VERSION" | wc -l)" -ne 1 ]; then
+            echo "::error::expected exactly one <Version> in Directory.Build.props, got: ${VERSION:-<empty>}"
+            exit 1
+          fi
+          echo "Package version from Directory.Build.props: $VERSION"
           expected=(
             a2n.Vista.Core
             a2n.Vista.EntityFrameworkCore
@@ -130,16 +138,23 @@ jobs:
             a2n.Vista.Adapters.TanStackTable
             a2n.Vista.Client.TypeScript
           )
-          shopt -s nullglob
           for id in "${expected[@]}"; do
-            pkgs=(artifacts/"${id}".*.nupkg)
-            if [ "${#pkgs[@]}" -ne 1 ]; then
-              echo "::error::expected one ${id} nupkg, found ${#pkgs[@]}."
+            for other in "${expected[@]}"; do
+              if [ "$id" != "$other" ] && [[ "$other" == "$id."* ]]; then
+                if [ "${id}.${VERSION}.nupkg" = "${other}.${VERSION}.nupkg" ]; then
+                  echo "::error::${id} and ${other} resolve to the same nupkg name."
+                  missing=1
+                fi
+              fi
+            done
+            pkg="artifacts/${id}.${VERSION}.nupkg"
+            sym="artifacts/${id}.${VERSION}.snupkg"
+            name="$(basename "$pkg")"
+            if [ ! -f "$pkg" ]; then
+              echo "::error::missing ${name}."
               missing=1
               continue
             fi
-            pkg="${pkgs[0]}"
-            name="$(basename "$pkg")"
             if ! unzip -p "$pkg" '*.nuspec' | grep -q '<license type="expression">LGPL-3.0-or-later</license>'; then
               echo "::error::$name declares no LGPL-3.0-or-later license expression."
               missing=1
@@ -152,8 +167,8 @@ jobs:
               echo "::error::$name has no README.md entry."
               missing=1
             fi
-            if [ ! -f "${pkg%.nupkg}.snupkg" ]; then
-              echo "::error::$name has no matching .snupkg symbol package."
+            if [ ! -f "$sym" ]; then
+              echo "::error::$name has no matching $(basename "$sym") symbol package."
               missing=1
             fi
           done
