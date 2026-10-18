@@ -24,9 +24,9 @@ using TUnit.Core;
 namespace a2n.Vista.Tests;
 
 /// <summary>
-/// A deferred read-then-write on two plain SQLite connections is <c>SQLITE_BUSY</c>. The same
-/// contention through an endpoint that opens the file with <see cref="SqliteVistaConnection"/>
-/// waits out the lock and then misses the concurrency predicate (412).
+/// A deferred read-then-write on two plain SQLite connections is <c>SQLITE_BUSY</c>. Part (b) holds
+/// a write lock and checks that the endpoint waits on the busy timeout, then returns 412. It does
+/// not prove that the <c>BEGIN IMMEDIATE</c> interceptor ran.
 /// </summary>
 [SuppressMessage(
     "Trimming",
@@ -35,10 +35,40 @@ namespace a2n.Vista.Tests;
 public sealed class SqliteLockUpgradeTests
 {
     [Test]
-    public async Task Plain_Deferred_Upgrade_Is_Busy_And_Immediate_Begin_Reaches_412()
+    public async Task Plain_Deferred_Upgrade_Is_Busy_And_Held_Lock_Waits_On_Busy_Timeout_Then_412()
     {
         await AssertPlainDeferredUpgradeIsBusyAsync();
-        await AssertImmediateBeginReachesThePredicateAsync();
+        await AssertHeldLockWaitsOnBusyTimeoutThen412Async();
+    }
+
+    /// <summary>
+    /// Opening a file through <see cref="SqliteVistaConnection"/> sets <c>PRAGMA busy_timeout</c> to
+    /// 5000 and <c>journal_mode</c> to WAL. Removing either pragma fails this test.
+    /// </summary>
+    [Test]
+    public async Task SqliteVistaConnection_Sets_Busy_Timeout_5000_And_Wal()
+    {
+        var path = NewDatabase();
+        try
+        {
+            var options = new DbContextOptionsBuilder<LockContext>();
+            SqliteVistaConnection.Use(options, path);
+            await using var context = new LockContext(options.Options);
+            await context.Database.OpenConnectionAsync();
+            var connection = context.Database.GetDbConnection();
+            await using var command = connection.CreateCommand();
+            command.CommandText = "PRAGMA busy_timeout;";
+            var busy = await command.ExecuteScalarAsync();
+            command.CommandText = "PRAGMA journal_mode;";
+            var journal = await command.ExecuteScalarAsync();
+            await Assert.That(Convert.ToInt64(busy)).IsEqualTo(SqliteVistaConnection.BusyTimeoutMilliseconds);
+            await Assert.That(journal?.ToString()).IsEqualTo("wal");
+        }
+        finally
+        {
+            SqliteConnection.ClearAllPools();
+            TryDelete(path);
+        }
     }
 
     /// <summary>
@@ -107,14 +137,13 @@ public sealed class SqliteLockUpgradeTests
     }
 
     /// <summary>
-    /// The executor opens the file with <see cref="SqliteVistaConnection"/> (WAL, busy timeout).
-    /// A second connection holds <c>BEGIN IMMEDIATE</c> and a new token. The in-flight update stays
-    /// running while that lock is held, then the predicate matches nothing: 412
-    /// <c>write-concurrency-conflict</c>, not 500 and not 503. A one-statement save does not always
-    /// open an EF transaction (<c>AutoTransactionBehavior.WhenNeeded</c>); the wait is the provider
-    /// retrying the locked statement until <c>Default Timeout</c>.
+    /// Part (b). A second connection holds the write lock and a new token. The in-flight update is
+    /// one statement, so EF does not open a transaction and the <c>BEGIN IMMEDIATE</c> interceptor
+    /// does not run. The update waits on <c>PRAGMA busy_timeout</c> / the connection
+    /// <c>Default Timeout</c>, then the predicate misses: 412 <c>write-concurrency-conflict</c>,
+    /// not 500 and not 503.
     /// </summary>
-    private static async Task AssertImmediateBeginReachesThePredicateAsync()
+    private static async Task AssertHeldLockWaitsOnBusyTimeoutThen412Async()
     {
         SqliteConstraintProbe.Register();
         await using var app = await LockApp.StartAsync();

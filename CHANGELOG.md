@@ -23,10 +23,24 @@ While the version is `0.x`, anything may change between releases.
   and `VistaPersistenceException`.
 - `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
 - `WriteErrorCode.StoreBusy` / `WriteErrorCodes.StoreBusy` (`write-busy`) and `VistaStoreBusyException`.
-  A transient store lock (`SQLITE_BUSY`, `SQLITE_LOCKED`, or `DbException.IsTransient`) is HTTP 503
-  with `Retry-After: 2` and title "Service unavailable" (Decision Log D160). It is not 412 and not 500.
+  Only a lock recognized by a registered transient-lock probe is HTTP 503 with `Retry-After: 2`
+  (Decision Log D160). The SQLite probe recognizes `SQLITE_BUSY` (5) and `SQLITE_LOCKED` (6).
+  `DbException.IsTransient` alone is not a lock: a connection lost during COMMIT has an unknown
+  outcome, and inviting an automatic retry could create a duplicate row on a create without a token.
+  Any other `DbException` is HTTP 500 `write-persistence-failed` with no `Retry-After`.
 - The Northwind and AG Grid hosts open the working SQLite file through `SqliteVistaConnection`:
-  a 5 second busy timeout, WAL, and `BEGIN IMMEDIATE`. The file-database race tests use that same helper.
+  `PRAGMA busy_timeout = 5000`, connection `Default Timeout` of 5 seconds, and WAL. For a
+  single-statement create or update, EF opens no transaction (`AutoTransactionBehavior.WhenNeeded`),
+  so `BEGIN IMMEDIATE` does not run. Those writes wait on the busy timeout and the connection
+  timeout. `BEGIN IMMEDIATE` (the transaction interceptor) applies only when EF opens a transaction
+  (a multi-statement save or an explicit transaction). A losing single-statement update has been
+  observed to return 412 after about 1.0 s (1003–1005 ms) while the winner takes 3–6 ms. The cause
+  is unconfirmed (suspected busy-handler sleep granularity in the native SQLite build, or the
+  provider retry loop) and will be investigated in a separate cleanup PR. `Retry-After: 2` is an
+  open question: if a write still hits a lock after waiting up to 5 s, the store is heavily busy,
+  so a short pause before retry is reasonable. Review that value together with the N4 repro.
+  The file-database race tests use the same connection helper. They are not a regression guard for
+  the lock bug: they can pass with the old connection string.
 
 ### Fixed
 - **DateTime and DateTimeOffset concurrency tokens round-trip.** The wire form is invariant `"O"`.
@@ -129,7 +143,7 @@ While the version is `0.x`, anything may change between releases.
   one behavior change. Generated TypeScript clients map `precondition-failed` to HTTP 412.
 
   | Behavior | Old | New | Migration |
-  | --- | --- | --- | --- | --- | --- |
+  | --- | --- | --- | --- |
   | Missing `If-Match` | 428 `write-precondition-required`. Spec text said 412. | 428 `write-precondition-required` | Keep handling 428. Do not treat a missing token as 412. |
   | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
   | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |

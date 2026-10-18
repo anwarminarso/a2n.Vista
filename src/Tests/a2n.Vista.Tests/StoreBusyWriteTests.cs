@@ -50,7 +50,23 @@ public sealed class StoreBusyWriteTests
         await Assert.That(DbUpdateFailureClassification.IsTransientLock(new SqliteException("SQLITE_CONSTRAINT", 19)))
             .IsFalse();
         await Assert.That(DbUpdateFailureClassification.IsTransientLock(new TransientDbException()))
-            .IsTrue();
+            .IsFalse();
+    }
+
+    [Test]
+    public async Task A_Transient_DbException_The_Probe_Does_Not_Recognize_Is_500_Without_Retry_After()
+    {
+        SqliteConstraintProbe.Register();
+        await using var app = await BusyApp.StartAsync();
+        var created = await app.SendAsync("{\"model\":{\"subject\":\"created\"}}");
+        await Assert.That(created.Status).IsEqualTo(HttpStatusCode.OK);
+
+        app.ArmTransient();
+        var failed = await app.SendAsync("{\"key\":1,\"model\":{\"subject\":\"blocked\"}}", created.ETag);
+        await Assert.That(failed.Status).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(failed.RetryAfter).IsNull();
+        await Assert.That(await failed.CodeAsync()).IsEqualTo(WriteErrorCodes.PersistenceFailed);
+        await Assert.That(app.Subject()).IsEqualTo("created");
     }
 
     [Test]
@@ -137,6 +153,34 @@ public sealed class StoreBusyWriteTests
         }
     }
 
+    private sealed class ThrowTransientFailure : SaveChangesInterceptor
+    {
+        public bool Armed { get; set; }
+
+        public override InterceptionResult<int> SavingChanges(DbContextEventData eventData, InterceptionResult<int> result)
+        {
+            if (Armed)
+            {
+                throw new TransientDbException();
+            }
+
+            return base.SavingChanges(eventData, result);
+        }
+
+        public override ValueTask<InterceptionResult<int>> SavingChangesAsync(
+            DbContextEventData eventData,
+            InterceptionResult<int> result,
+            CancellationToken cancellationToken = default)
+        {
+            if (Armed)
+            {
+                throw new TransientDbException();
+            }
+
+            return base.SavingChangesAsync(eventData, result, cancellationToken);
+        }
+    }
+
     private sealed class ExclusiveLock : SaveChangesInterceptor
     {
         private readonly string _path;
@@ -199,12 +243,19 @@ public sealed class StoreBusyWriteTests
         private readonly IHost _host;
         private readonly string _directory;
         private readonly ExclusiveLock _lock;
+        private readonly ThrowTransientFailure _transient;
 
-        private BusyApp(IHost host, string directory, ExclusiveLock exclusiveLock, HttpClient client)
+        private BusyApp(
+            IHost host,
+            string directory,
+            ExclusiveLock exclusiveLock,
+            ThrowTransientFailure transientFailure,
+            HttpClient client)
         {
             _host = host;
             _directory = directory;
             _lock = exclusiveLock;
+            _transient = transientFailure;
             Client = client;
         }
 
@@ -216,6 +267,7 @@ public sealed class StoreBusyWriteTests
             Directory.CreateDirectory(directory);
             var databasePath = Path.Combine(directory, "busy.db");
             var exclusiveLock = new ExclusiveLock(databasePath);
+            var transient = new ThrowTransientFailure();
             var host = await new HostBuilder()
                 .ConfigureWebHost(web => web
                     .UseTestServer()
@@ -223,9 +275,12 @@ public sealed class StoreBusyWriteTests
                     {
                         services.AddRouting();
                         services.AddSingleton(exclusiveLock);
+                        services.AddSingleton(transient);
                         services.AddDbContext<BusyContext>((sp, options) =>
                             SqliteVistaConnection.Use(options, databasePath, busyTimeoutMilliseconds: 1000)
-                                .AddInterceptors(sp.GetRequiredService<ExclusiveLock>()));
+                                .AddInterceptors(
+                                    sp.GetRequiredService<ExclusiveLock>(),
+                                    sp.GetRequiredService<ThrowTransientFailure>()));
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<BusyContext>());
                         services.AddVista(v => v.Register<BusyView>());
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
@@ -243,10 +298,12 @@ public sealed class StoreBusyWriteTests
                 scope.ServiceProvider.GetRequiredService<BusyContext>().Database.EnsureCreated();
             }
 
-            return new BusyApp(host, directory, exclusiveLock, host.GetTestClient());
+            return new BusyApp(host, directory, exclusiveLock, transient, host.GetTestClient());
         }
 
         public void ArmLock() => _lock.Armed = true;
+
+        public void ArmTransient() => _transient.Armed = true;
 
         public async Task<BusyResponse> SendAsync(string json, string? ifMatch = null)
         {

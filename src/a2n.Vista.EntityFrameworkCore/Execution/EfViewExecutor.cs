@@ -1086,17 +1086,19 @@ public class EfViewExecutor : IViewExecutor
     /// <c>write-concurrency-conflict</c>, rolled back, Requirement R6.5, Decision Log D159); a
     /// <see cref="DbUpdateException"/> that is a database constraint violation (unique index, NOT NULL,
     /// foreign key, CHECK) becomes a <see cref="VistaConstraintViolationException"/> (HTTP 422
-    /// <c>write-constraint-violation</c>, not a conflict); a transient store lock becomes a
+    /// <c>write-constraint-violation</c>, not a conflict); a store lock recognized by
+    /// <see cref="DbUpdateFailureClassification.IsTransientLock"/> becomes a
     /// <see cref="VistaStoreBusyException"/> (HTTP 503 <c>write-busy</c>, Decision Log D160); every
-    /// other <see cref="DbUpdateException"/> — a missing table, a connection failure, or any
-    /// non-constraint provider error — becomes a <see cref="VistaPersistenceException"/> (HTTP 500
-    /// <c>write-persistence-failed</c>). A missing relation is not a constraint and is not a 412.
+    /// other <see cref="DbException"/> — a missing table, a connection failure, a transient exception
+    /// the lock probe does not recognize, or any non-constraint provider error — becomes a
+    /// <see cref="VistaPersistenceException"/> (HTTP 500 <c>write-persistence-failed</c>). A missing
+    /// relation is not a constraint and is not a 412.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// EF Core wraps a single <c>SaveChanges</c> in an implicit transaction, so a failed save commits no
-    /// rows: the pre-operation persisted state is preserved and no partial row remains (Requirements R1.7,
-    /// R3.8, R11.3, R11.4). The caller therefore never sees a success result for a failed persistence.
+    /// A failed save does not report success. A single-statement save may not open a transaction
+    /// (<c>AutoTransactionBehavior.WhenNeeded</c>); the statement itself is what commits or leaves the
+    /// previous row in place (Requirements R1.7, R3.8, R11.3, R11.4).
     /// </para>
     /// <para>
     /// The original provider exception is attached only as the <see cref="Exception.InnerException"/> of
@@ -1107,7 +1109,8 @@ public class EfViewExecutor : IViewExecutor
     /// </para>
     /// <para>
     /// <see cref="DbUpdateConcurrencyException"/> derives from <see cref="DbUpdateException"/>, so it is
-    /// caught first. A transient lock is next (D160), then constraint detection (Decision Log D158).
+    /// caught first. A probe-recognized lock is next (D160), then constraint detection (Decision Log
+    /// D158), then every other <see cref="DbUpdateException"/> and <see cref="DbException"/> as 500.
     /// None of those treats the base <see cref="DbUpdateException"/> itself as a conflict.
     /// </para>
     /// </remarks>
@@ -1151,8 +1154,15 @@ public class EfViewExecutor : IViewExecutor
         catch (DbUpdateException ex)
         {
             // Any other store failure (missing table, I/O, corruption, an unrecognized provider error).
-            // This is not a conflict with the current row and not a transient lock. Translate to a
+            // This is not a conflict with the current row and not a probe-recognized lock. Translate to a
             // leak-free 500; the provider detail stays on the inner exception only (D158, spec 05 §9.2, R9.6).
+            throw new VistaPersistenceException(innerException: ex);
+        }
+        catch (DbException ex)
+        {
+            // A DbException the lock probe does not recognize, including one with IsTransient set.
+            // A connection lost during COMMIT has an unknown outcome, so this is 500 with no Retry-After,
+            // not 503 (D160).
             throw new VistaPersistenceException(innerException: ex);
         }
     }

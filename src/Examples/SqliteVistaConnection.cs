@@ -10,7 +10,10 @@ namespace a2n.Vista.Examples;
 /// The SQLite connection the Northwind sample hosts open, and the one the file-database race tests
 /// reuse (Decision Log D160). A file database opened with only <c>Data Source</c> has no busy timeout
 /// the write path can rely on: a competing writer gets <c>SQLITE_BUSY</c> (5) or <c>SQLITE_LOCKED</c>
-/// (6) instead of waiting for the other transaction to commit and then losing the concurrency predicate.
+/// (6) instead of waiting for the other writer to finish and then losing the concurrency predicate.
+/// A single-statement save does not open an EF transaction, so the wait is <c>PRAGMA busy_timeout</c>
+/// plus the connection <c>Default Timeout</c>. <c>BEGIN IMMEDIATE</c> runs only when EF opens a
+/// transaction.
 /// </summary>
 internal static class SqliteVistaConnection
 {
@@ -19,7 +22,7 @@ internal static class SqliteVistaConnection
 
     /// <summary>
     /// Points <paramref name="options"/> at the file <paramref name="databasePath"/> with the sample
-    /// busy timeout, WAL, and an immediate write transaction.
+    /// busy timeout, WAL, and an immediate transaction when EF starts one.
     /// </summary>
     /// <param name="options">The context options being built.</param>
     /// <param name="databasePath">The file database to open.</param>

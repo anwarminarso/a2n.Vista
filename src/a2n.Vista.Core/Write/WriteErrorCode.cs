@@ -67,9 +67,10 @@ public enum WriteErrorCode
     NoWritePlan,
 
     /// <summary>
-    /// The store lock did not clear before the provider gave up (<c>SQLITE_BUSY</c>,
-    /// <c>SQLITE_LOCKED</c>, or <c>DbException.IsTransient</c>). HTTP 503 <c>write-busy</c> with
-    /// <c>Retry-After</c> (Decision Log D160). Not a lost update and not a 500.
+    /// The store lock did not clear before the provider gave up. Only a lock recognized by a
+    /// registered transient-lock probe (<c>SQLITE_BUSY</c> / <c>SQLITE_LOCKED</c> for SQLite) maps
+    /// here. HTTP 503 <c>write-busy</c> with <c>Retry-After</c> (Decision Log D160). Not a lost update
+    /// and not a 500. <c>DbException.IsTransient</c> alone is not this code.
     /// </summary>
     StoreBusy,
 }
