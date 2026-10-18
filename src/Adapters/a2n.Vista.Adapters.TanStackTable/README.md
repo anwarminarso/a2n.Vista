@@ -70,7 +70,7 @@ A two-element array is always `in`, never a range — a pair of ids would otherw
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.Adapters.TanStackTable
+dotnet add package a2n.Vista.Adapters.TanStackTable --version 0.0.5
 ```
 
 Depends on [`a2n.Vista.Core`](https://www.nuget.org/packages/a2n.Vista.Core).

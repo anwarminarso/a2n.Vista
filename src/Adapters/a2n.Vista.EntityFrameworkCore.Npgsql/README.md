@@ -11,7 +11,7 @@ Provides an `IQueryDialect` implementation that maps Vista search to PostgreSQL 
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.EntityFrameworkCore.Npgsql
+dotnet add package a2n.Vista.EntityFrameworkCore.Npgsql --version 0.0.5
 ```
 
 Depends on [`a2n.Vista.EntityFrameworkCore`](https://www.nuget.org/packages/a2n.Vista.EntityFrameworkCore). Register the Npgsql dialect alongside `AddVista` when your `DbContext` targets PostgreSQL.

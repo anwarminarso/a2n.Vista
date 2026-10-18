@@ -16,7 +16,7 @@ This package provides the core building blocks:
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.Core
+dotnet add package a2n.Vista.Core --version 0.0.5
 ```
 
 Core is the base dependency for the rest of the stack: add [`a2n.Vista.EntityFrameworkCore`](https://www.nuget.org/packages/a2n.Vista.EntityFrameworkCore) to execute views and [`a2n.Vista.AspNetCore`](https://www.nuget.org/packages/a2n.Vista.AspNetCore) to expose them over HTTP.
