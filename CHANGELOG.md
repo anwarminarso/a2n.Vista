@@ -157,9 +157,10 @@ While the version is `0.x`, anything may change between releases.
   | Behavior | Old | New | Migration |
   | --- | --- | --- | --- |
   | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
-  | Update of an in-scope row | 200 with an empty body and an `ETag` | 200 with the detail row and the new `ETag` | Read the updated row from the body. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Update of a row the caller can still read | 200 with an empty body and an `ETag` | 200 with the detail body (same read plan, scope, and masks as GET) and the new `ETag` | Read the updated row from the body. It matches a following detail GET, including a masked or computed field. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Update that leaves the row outside the caller's read scope | 200 with the copied entity fields | 204 with no body and no `ETag` | Treat 204 as success. Do not read a body. A later GET or write is 404. |
   | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
-  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | Read `MaxLength` from the model. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | The check covers mapped whitelist fields on create and modified properties on update. A legacy over-long value in a column the write does not set does not block the update. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
 
 ## [0.0.4] - 2026-08-11
 

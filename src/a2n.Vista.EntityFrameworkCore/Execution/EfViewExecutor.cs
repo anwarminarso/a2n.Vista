@@ -10,6 +10,7 @@ using a2n.Vista.Ports;
 using a2n.Vista.Results;
 using a2n.Vista.Write;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
 using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 
@@ -96,6 +97,10 @@ public class EfViewExecutor : IViewExecutor
     private static readonly MethodInfo DeleteCoreAsyncMethod =
         typeof(EfViewExecutor).GetMethod(nameof(DeleteCoreAsync), BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException($"{nameof(EfViewExecutor)}.{nameof(DeleteCoreAsync)} was not found.");
+
+    private static readonly MethodInfo DetailAsyncMethod =
+        typeof(EfViewExecutor).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Single(method => method.Name == nameof(DetailAsync) && method.IsGenericMethodDefinition);
 
     private readonly FilterCompiler _filterCompiler;
     private readonly DbContext? _dbContext;
@@ -803,7 +808,7 @@ public class EfViewExecutor : IViewExecutor
         // skipped by the mapper itself (defense in depth), so identity is store-assigned, not client-set.
         var entity = new TEntity();
         mapper(model, entity);
-        EnforceDeclaredMaxLengths(dbContext, entity);
+        EnforceDeclaredMaxLengths(dbContext, entity, RequireWriteFacet(services, view), creating: true);
 
         dbContext.Add(entity);
 
@@ -981,7 +986,7 @@ public class EfViewExecutor : IViewExecutor
         var facet = RequireWriteFacet(services, view);
         var mapper = services.GetRequiredService<WriteMapperResolver>().Resolve(view);
         mapper(model, entity);
-        EnforceDeclaredMaxLengths(RequireDbContext(view, nameof(UpdateAsync)), entity);
+        EnforceDeclaredMaxLengths(RequireDbContext(view, nameof(UpdateAsync)), entity, facet, creating: false);
 
         // The check is the database predicate, not an in-memory compare-then-save. The client's token
         // becomes OriginalValue (WHERE token = @If-Match). An application token also gets a new
@@ -996,9 +1001,26 @@ public class EfViewExecutor : IViewExecutor
         await SaveWriteChangesAsync(RequireDbContext(view, nameof(UpdateAsync)), cancellationToken).ConfigureAwait(false);
 
         // Publish the token the row carries AFTER the write (D146, D159). This is the value the HTTP layer
-        // returns as ETag. It is never the request's If-Match.
+        // returns as ETag when the caller can still read the row. It is never the request's If-Match.
         PublishPostWriteToken<TEntity>(services, facet, entity);
-        services.GetService<IWriteTokenSink>()?.SetPostWriteRow(ProjectUpdatedRow(view, entity));
+
+        // The body is the same scoped detail read GET uses (read plan, masks, this request's trusted
+        // scope, by key). A reflection copy of the entity is not the contract: a computed, renamed, or
+        // masked field would otherwise leak the raw entity value. A view with no execution plan fails
+        // here the same way Detail does; give that view a plan instead of copying properties.
+        var row = await ReadUpdatedDetailAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+        var sink = services.GetService<IWriteTokenSink>();
+        if (row is null)
+        {
+            // The save moved the row out of the caller's read scope. 204, no body, no ETag.
+            sink?.SetPostWriteToken(null);
+            sink?.SetPostWriteNotVisible();
+        }
+        else
+        {
+            sink?.SetPostWriteRow(row);
+        }
+
         return true;
     }
 
@@ -1424,47 +1446,86 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <summary>
-    /// Copies same-named public properties from the saved entity onto a new instance of the view's
-    /// query type. This is the update response body. It does not run the read plan, so a reflection
-    /// test view that has no generated plan still returns the row it just wrote.
+    /// Re-reads the saved row through the detail path <c>GET</c> uses: the generated invoker when one
+    /// is registered, otherwise <see cref="DetailAsync{TRow}"/> closed over <see cref="ViewMetadata.QueryType"/>.
+    /// Both routes apply the read plan, the masks, and <paramref name="scope"/>. There is no property-copy
+    /// fallback. A view with no execution plan fails with the same metadata-only error Detail already throws.
     /// </summary>
-    private static object? ProjectUpdatedRow(ViewMetadata view, object entity)
+    private async Task<object?> ReadUpdatedDetailAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
     {
-        var row = Activator.CreateInstance(view.QueryType);
-        if (row is null)
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
         {
-            return null;
+            return await invoker.DetailAsync(this, view, key, scope, cancellationToken).ConfigureAwait(false);
         }
 
-        const BindingFlags flags = BindingFlags.Instance | BindingFlags.Public;
-        foreach (var target in view.QueryType.GetProperties(flags))
-        {
-            if (!target.CanWrite || target.GetIndexParameters().Length != 0)
-            {
-                continue;
-            }
+        return await DetailByQueryTypeAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+    }
 
-            var source = entity.GetType().GetProperty(target.Name, flags);
-            if (source is null || source.PropertyType != target.PropertyType)
-            {
-                continue;
-            }
-
-            target.SetValue(row, source.GetValue(entity));
-        }
-
-        return row;
+    /// <summary>
+    /// Closes <see cref="DetailAsync{TRow}"/> over the view's query type. This is the same dispatch the
+    /// HTTP layer uses when no generated invoker is registered, and it still requires an execution plan.
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes DetailAsync<TRow> closed over the view's runtime query type; use the source generator path for AOT.")]
+    private async Task<object?> DetailByQueryTypeAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(this, [view, key, scope, cancellationToken])!;
+        await task.ConfigureAwait(false);
+        var result = task.GetType().GetProperty(nameof(Task<object>.Result))
+            ?? throw new InvalidOperationException("Expected DetailAsync to return Task<TRow>.");
+        return result.GetValue(task);
     }
 
     /// <summary>
     /// Rejects a string that is longer than the EF property's <c>MaxLength</c>. The limit is read from
     /// the model. Nothing in this method names a column size. SQLite does not enforce <c>TEXT</c> length,
-    /// so the check happens before <c>SaveChanges</c> and is HTTP 422.
+    /// so the check happens before <c>SaveChanges</c> and is HTTP 422. On create, only mapped whitelist
+    /// fields are checked. On update, only properties the write mapper changed (<see cref="PropertyEntry.IsModified"/>)
+    /// are checked, so a legacy over-long value in a column the mapper does not set does not block the write.
     /// </summary>
-    private static void EnforceDeclaredMaxLengths(DbContext dbContext, object entity)
+    private static void EnforceDeclaredMaxLengths(
+        DbContext dbContext,
+        object entity,
+        CrudFacetDefinition facet,
+        bool creating)
     {
+        if (!creating)
+        {
+            dbContext.ChangeTracker.DetectChanges();
+        }
+
+        HashSet<string>? whitelist = null;
+        if (creating)
+        {
+            whitelist = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var mapping in facet.WritableFields)
+            {
+                whitelist.Add(mapping.EntityMember);
+            }
+        }
+
         foreach (var property in dbContext.Entry(entity).Properties)
         {
+            if (creating)
+            {
+                if (!whitelist!.Contains(property.Metadata.Name))
+                {
+                    continue;
+                }
+            }
+            else if (!property.IsModified)
+            {
+                continue;
+            }
+
             var max = property.Metadata.GetMaxLength();
             if (max is null || property.CurrentValue is not string text || text.Length <= max.Value)
             {

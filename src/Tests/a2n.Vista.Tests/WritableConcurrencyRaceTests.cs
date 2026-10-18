@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Examples;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
@@ -326,7 +327,9 @@ public sealed class WritableConcurrencyRaceTests
                             SqliteVistaConnection.Use(options, databasePath)
                                 .AddInterceptors(sp.GetRequiredService<SqlCapture>()));
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<RaceContext>());
-                        services.AddVista(v => v.Register<RaceView>());
+                        services.AddVista(v => v.Register<RaceView>(ViewExecutionPlan.Split<RaceMemo, RaceRow>(
+                            "race-memo",
+                            m => new RaceRow { Id = m.Id, Subject = m.Subject, RowVersion = m.RowVersion })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>

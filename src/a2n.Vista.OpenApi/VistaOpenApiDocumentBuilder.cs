@@ -381,6 +381,16 @@ public sealed class VistaOpenApiDocumentBuilder
         var responses = OpenApiCollections.CreateMap<OpenApiResponse>();
         responses[facet.SuccessStatus.ToString(System.Globalization.CultureInfo.InvariantCulture)] = successResponse;
 
+        if (facet.Facet == Facet.Update)
+        {
+            // A save that leaves the row outside the caller's read scope is 204 with no body and no ETag.
+            responses["204"] = new OpenApiResponse
+            {
+                Description =
+                    "The row was saved and is no longer visible in the caller's read scope. No body and no ETag.",
+            };
+        }
+
         // A 304 Not Modified (no body) completes the conditional-GET contract for cached metadata.
         if (isCachedMetadata)
         {

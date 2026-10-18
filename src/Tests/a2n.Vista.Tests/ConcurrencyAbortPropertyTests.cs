@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -226,7 +227,9 @@ public sealed class ConcurrencyAbortPropertyTests
                         // the sibling write-path integration tests use). No fake executor is registered, so
                         // the REAL EfViewExecutor implements the write facet end to end.
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ConcurrencyContext>());
-                        services.AddVista(v => v.Register<ConcurrencyView>());
+                        services.AddVista(v => v.Register<ConcurrencyView>(ViewExecutionPlan.Split<ConcurrencySource, ConcurrencyRow>(
+                            ViewName,
+                            s => new ConcurrencyRow { Id = s.Id, Name = s.Name, Version = s.Version })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>

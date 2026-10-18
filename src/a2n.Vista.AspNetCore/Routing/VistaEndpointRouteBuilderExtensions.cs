@@ -553,9 +553,10 @@ public static class VistaEndpointRouteBuilderExtensions
     /// <summary>
     /// Handles <c>POST {route}/update</c>: bind the model and the request key, enforce the <c>428</c>
     /// precondition gate for a token view, update through the executor, and map the result — a generic
-    /// <c>404</c> problem when no row matched within scope, otherwise <c>200</c> with the detail row and
-    /// the post-write <c>ETag</c> when the view declares a token. The row identity is taken solely from
-    /// the request key, never the body (Requirements R2.1, R2.2, R2.3, R2.5, R2.8, R6.1, R6.2, R6.4, R6.6).
+    /// <c>404</c> problem when no row matched within scope, <c>204</c> with no body and no <c>ETag</c>
+    /// when the save moved the row out of the caller's read scope, otherwise <c>200</c> with the detail
+    /// row and the post-write <c>ETag</c> when the view declares a token. The row identity is taken solely
+    /// from the request key, never the body (Requirements R2.1, R2.2, R2.3, R2.5, R2.8, R6.1, R6.2, R6.4, R6.6).
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleUpdateAsync(
@@ -578,8 +579,15 @@ public static class VistaEndpointRouteBuilderExtensions
             return VistaProblemResults.ResourceNotFound();
         }
 
+        var sink = http.RequestServices.GetService<IWriteTokenSink>();
+        if (sink?.PostWriteNotVisible == true)
+        {
+            // The save moved the row out of the caller's read scope. No body and no ETag (D159).
+            return Results.NoContent();
+        }
+
         ApplyPostWriteETag(http, view.Name);
-        var row = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteRow;
+        var row = sink?.PostWriteRow;
         return row is null ? Results.Ok() : VistaJsonWriter.Json(row, row.GetType());
     }
 
