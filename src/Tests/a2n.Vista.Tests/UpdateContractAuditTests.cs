@@ -8,6 +8,8 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.Authoring;
 using a2n.Vista.EntityFrameworkCore.Execution;
+using a2n.Vista.Filter;
+using a2n.Vista.Metadata;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
@@ -16,6 +18,7 @@ using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Hosting;
 using TUnit.Assertions;
 using TUnit.Assertions.Extensions;
@@ -143,6 +146,25 @@ public sealed class UpdateContractAuditTests
         {
             connection.Dispose();
         }
+    }
+
+    /// <summary>
+    /// A subclass built with no plan registry overrides the detail query and the pre-save check.
+    /// The update returns 200 with that detail body.
+    /// </summary>
+    [Test]
+    public async Task Subclass_Without_A_Plan_Registry_Updates_With_The_Detail_Body()
+    {
+        await using var app = await OverrideApp.StartAsync();
+        app.Seed();
+
+        var updated = await app.SendAsync(
+            "/api/views/" + PlanlessView + "/update",
+            "{\"key\":1,\"model\":{\"name\":\"changed\"}}");
+
+        await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(updated.Body).Contains("changed");
+        await Assert.That(app.ReadName(1)).IsEqualTo("changed");
     }
 
     private static async Task AssertViewFieldProblem((HttpStatusCode Status, string Body) response)
@@ -277,6 +299,119 @@ public sealed class UpdateContractAuditTests
                 .Field(x => x.Id, f => f.PrimaryKey());
 
             builder.CrudOn<PlanlessEntity>().MapWritable(c => c.Name, e => e.Name);
+        }
+    }
+
+    /// <summary>
+    /// No plan registry. The detail query and the pre-save check are both overridden, so the
+    /// base registry check does not run.
+    /// </summary>
+    private sealed class QueryableOverrideExecutor : EfViewExecutor
+    {
+        private readonly PlanlessContext _db;
+
+        public QueryableOverrideExecutor(PlanlessContext db, IServiceProvider services)
+            : base(db, services, new FilterCompiler())
+        {
+            _db = db;
+        }
+
+        /// <inheritdoc />
+        protected override void EnsureDetailReadPath(ViewMetadata view)
+        {
+        }
+
+        /// <inheritdoc />
+        [RequiresUnreferencedCode("Test override returns a projected queryable.")]
+        protected override IQueryable<TRow> ResolveScopedQueryable<TRow>(ViewMetadata view, IViewScope scope)
+        {
+            IQueryable<PlanlessRow> rows = _db.Rows.Select(row => new PlanlessRow { Id = row.Id, Name = row.Name });
+            return (IQueryable<TRow>)(object)rows;
+        }
+    }
+
+    private sealed class OverrideApp : IAsyncDisposable
+    {
+        private readonly IHost _host;
+        private readonly SqliteConnection _connection;
+
+        private OverrideApp(IHost host, SqliteConnection connection, HttpClient client)
+        {
+            _host = host;
+            _connection = connection;
+            Client = client;
+        }
+
+        private HttpClient Client { get; }
+
+        public static async Task<OverrideApp> StartAsync()
+        {
+            var connection = new SqliteConnection("DataSource=:memory:");
+            connection.Open();
+
+            var host = await new HostBuilder()
+                .ConfigureWebHost(web => web
+                    .UseTestServer()
+                    .ConfigureServices(services =>
+                    {
+                        services.AddRouting();
+                        services.AddDbContext<PlanlessContext>(o => o.UseSqlite(connection));
+                        services.AddScoped<DbContext>(sp => sp.GetRequiredService<PlanlessContext>());
+                        services.AddVista(v => v.Register<PlanlessWriteView>());
+                        services.Replace(ServiceDescriptor.Scoped<IViewExecutor>(sp =>
+                            new QueryableOverrideExecutor(sp.GetRequiredService<PlanlessContext>(), sp)));
+                        services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
+                    })
+                    .Configure(app =>
+                    {
+                        app.UseVistaExceptionHandling();
+                        app.UseRouting();
+                        app.UseEndpoints(endpoints => endpoints.MapVistaViews());
+                    }))
+                .StartAsync();
+
+            using (var scope = host.Services.CreateScope())
+            {
+                scope.ServiceProvider.GetRequiredService<PlanlessContext>().Database.EnsureCreated();
+            }
+
+            return new OverrideApp(host, connection, host.GetTestClient());
+        }
+
+        public void Seed()
+        {
+            using var scope = _host.Services.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<PlanlessContext>();
+            db.Rows.Add(new PlanlessEntity { Id = 1, Name = "kept" });
+            db.SaveChanges();
+        }
+
+        public string ReadName(int id)
+        {
+            using var scope = _host.Services.CreateScope();
+            return scope.ServiceProvider.GetRequiredService<PlanlessContext>()
+                .Rows.AsNoTracking()
+                .Single(row => row.Id == id)
+                .Name;
+        }
+
+        public async Task<(HttpStatusCode Status, string Body)> SendAsync(string url, string json)
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Post, url)
+            {
+                Content = new StringContent(json, Encoding.UTF8, "application/json"),
+            };
+            var response = await Client.SendAsync(request);
+            var body = await response.Content.ReadAsStringAsync();
+            return (response.StatusCode, body);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            Client.Dispose();
+            await _host.StopAsync();
+            _host.Dispose();
+            _connection.Dispose();
         }
     }
 

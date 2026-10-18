@@ -184,6 +184,27 @@ public class EfViewExecutor : IViewExecutor
         _filterCompiler = filterCompiler;
     }
 
+    /// <summary>
+    /// Initializes an executor that persists through <paramref name="dbContext"/> and resolves write
+    /// services from <paramref name="services"/>, with no execution-plan registry. A subclass uses this
+    /// when it overrides <see cref="ResolveScopedQueryable{TRow}"/> to supply the detail query itself.
+    /// It must also override <see cref="EnsureDetailReadPath"/>, or every update fails before save.
+    /// </summary>
+    /// <param name="dbContext">The active EF context used to load and save the write entity.</param>
+    /// <param name="services">The request <see cref="IServiceProvider"/> used to resolve the write mapper.</param>
+    /// <param name="filterCompiler">The compiler used to turn the neutral filter tree into a predicate.</param>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    protected EfViewExecutor(DbContext dbContext, IServiceProvider services, FilterCompiler filterCompiler)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(filterCompiler);
+
+        _dbContext = dbContext;
+        _services = services;
+        _filterCompiler = filterCompiler;
+    }
+
     /// <summary>The filter compiler used by this executor; exposed to subclasses (Task 9.3).</summary>
     protected FilterCompiler FilterCompiler => _filterCompiler;
 
@@ -1561,11 +1582,15 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <summary>
-    /// The update body is the scoped detail read. A generated invoker or an execution plan must be
-    /// resolvable before <c>SaveChanges</c>. Otherwise this throws the same error
-    /// <see cref="ResolveScopedQueryable{TRow}"/> throws for a metadata-only view.
+    /// Confirms the update can re-read the saved row before <c>SaveChanges</c>. The base
+    /// implementation requires a generated invoker or an execution plan, and otherwise throws the
+    /// same error <see cref="ResolveScopedQueryable{TRow}"/> throws for a metadata-only view.
+    /// A subclass that overrides <see cref="ResolveScopedQueryable{TRow}"/> must also override this
+    /// method. The re-read calls that override and does not consult the plan registry, so the base
+    /// check would reject the update before save.
     /// </summary>
-    private void EnsureDetailReadPath(ViewMetadata view)
+    /// <param name="view">The writable view being updated.</param>
+    protected virtual void EnsureDetailReadPath(ViewMetadata view)
     {
         if (ViewInvokerStore.TryGet(view.Name, out _))
         {
