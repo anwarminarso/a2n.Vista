@@ -95,6 +95,8 @@ While the version is `0.x`, anything may change between releases.
   exception type name, or treat the words `constraint failed` as a constraint. The Northwind hosts
   register that probe: `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`), and only after
   that type check the message `constraint failed`. Anything else is HTTP 500.
+- **An update with a write facet but no execution plan fails before `SaveChanges`.** The executor checks that the detail read path is resolvable (a generated invoker or an execution plan) and throws the same metadata-only error Detail throws. The row is not committed.
+- **A `MaxLength` 422 names the writable view field.** The detail uses the CRUD member from the whitelist mapping (`Title` when that member is mapped to `InternalSubjectCol`). It does not include an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing.
 - **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
   post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
   row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
@@ -160,7 +162,7 @@ While the version is `0.x`, anything may change between releases.
   | Update of a row the caller can still read | 200 with an empty body and an `ETag` | 200 with the detail body (same read plan, scope, and masks as GET) and the new `ETag` | Read the updated row from the body. It matches a following detail GET, including a masked or computed field. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
   | Update that leaves the row outside the caller's read scope | 200 with the copied entity fields | 204 with no body and no `ETag` | Treat 204 as success. Do not read a body. A later GET or write is 404. |
   | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
-  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | The check covers mapped whitelist fields on create and modified properties on update. A legacy over-long value in a column the write does not set does not block the update. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | The check covers mapped whitelist fields on create and modified properties on update. A legacy over-long value in a column the write does not set does not block the update. The 422 detail names the writable view field from that mapping. It does not name an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
 
 ## [0.0.4] - 2026-08-11
 

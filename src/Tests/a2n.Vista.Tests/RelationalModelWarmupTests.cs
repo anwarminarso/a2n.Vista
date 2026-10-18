@@ -50,6 +50,8 @@ public sealed class RelationalModelWarmupTests
         new(typeof(RejectedWriteStatePreservationPropertyTests.RejectContext), OutsideSample),
         new(typeof(NotFoundIndistinguishabilityPropertyTests.ScopedContext), OutsideSample),
         new(typeof(UpdateDetailBodyTests.MaskContext), OutsideSample),
+        new(typeof(UpdateContractAuditTests.RenamedContext), OutsideSample),
+        new(typeof(UpdateContractAuditTests.PlanlessContext), OutsideSample),
         new(typeof(AuditWidgetContext), OutsideSample),
         new(typeof(WidgetContext), OutsideSample),
         new(typeof(FailFastContext), OutsideSample),
