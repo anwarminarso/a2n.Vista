@@ -176,7 +176,7 @@ public static class DocsEmitter
                 .Append(NewLine);
             builder.Append("// options.ifMatch; a missing token surfaces as \"precondition-required\" (428) and")
                 .Append(NewLine);
-            builder.Append("// a stale token as \"precondition-failed\" (409).").Append(NewLine);
+            builder.Append("// a stale token as \"precondition-failed\" (412).").Append(NewLine);
             builder.Append(
                     $"const updated = await {CamelCase(exampleView)}.update({{ /* TCrud fields */ }}, "
                     + "{ ifMatch: etag });")
@@ -216,7 +216,7 @@ public static class DocsEmitter
         builder.Append("  case \"unauthorized\":         // no credential available; request was not sent")
             .Append(NewLine);
         builder.Append("  case \"precondition-required\": // 428, missing concurrency token").Append(NewLine);
-        builder.Append("  case \"precondition-failed\":   // 409, stale concurrency token (write-concurrency-conflict)").Append(NewLine);
+        builder.Append("  case \"precondition-failed\":   // 412, stale concurrency token (write-concurrency-conflict)").Append(NewLine);
         builder.Append("  case \"constraint-violation\":  // 422, write-constraint-violation").Append(NewLine);
         builder.Append("  case \"persistence-failed\":    // 500, write-persistence-failed").Append(NewLine);
         builder.Append("  case \"transport-error\":       // the transport rejected; no retry was performed")

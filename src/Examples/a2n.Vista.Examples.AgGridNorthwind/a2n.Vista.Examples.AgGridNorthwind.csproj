@@ -37,6 +37,7 @@
   <ItemGroup>
     <!-- SQLite constraint probe. The EF library does not reference Microsoft.Data.Sqlite. -->
     <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <Compile Include="..\SqliteVistaConnection.cs" Link="SqliteVistaConnection.cs" />
     <Compile Include="..\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
   </ItemGroup>
 

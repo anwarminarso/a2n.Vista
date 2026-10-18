@@ -305,7 +305,9 @@ public sealed class ConcurrencyTokenGuardTests
             services.AddLogging(); // the sibling dialect validator resolves a logger when hosted services are enumerated
             services.AddSingleton(context.GetType(), context);
             services.AddSingleton(context);
-            services.AddVista(v => v.Register<GuardedTokenView>());
+            services.AddVista(v => v.Register<GuardedTokenView>(ViewExecutionPlan.Split<TokenSourceEntity, TokenRowModel>(
+                GuardedView,
+                s => new TokenRowModel { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();

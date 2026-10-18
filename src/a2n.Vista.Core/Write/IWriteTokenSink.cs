@@ -33,6 +33,26 @@ public interface IWriteTokenSink
     /// <summary>Publishes the post-write token for this request.</summary>
     /// <param name="token">The formatted token, or <see langword="null"/> to clear it.</param>
     void SetPostWriteToken(string? token);
+
+    /// <summary>
+    /// The row produced by the scoped detail read after a successful update, or <see langword="null"/>
+    /// when that read returned no row, and for create, delete, and a failed write. The instance is the
+    /// view's query type, run through the same read plan and masks as <c>GET</c> detail.
+    /// </summary>
+    object? PostWriteRow { get; }
+
+    /// <summary>Publishes the detail row for this request.</summary>
+    /// <param name="row">The row, or <see langword="null"/> to clear it.</param>
+    void SetPostWriteRow(object? row);
+
+    /// <summary>
+    /// <see langword="true"/> when the update saved and the following scoped detail read could not see
+    /// the row. The HTTP layer answers <c>204</c> with no body and no <c>ETag</c>.
+    /// </summary>
+    bool PostWriteNotVisible { get; }
+
+    /// <summary>Marks this request's update as saved but no longer visible to the caller.</summary>
+    void SetPostWriteNotVisible();
 }
 
 /// <summary>
@@ -45,4 +65,16 @@ public sealed class WriteTokenSink : IWriteTokenSink
 
     /// <inheritdoc />
     public void SetPostWriteToken(string? token) => PostWriteToken = token;
+
+    /// <inheritdoc />
+    public object? PostWriteRow { get; private set; }
+
+    /// <inheritdoc />
+    public void SetPostWriteRow(object? row) => PostWriteRow = row;
+
+    /// <inheritdoc />
+    public bool PostWriteNotVisible { get; private set; }
+
+    /// <inheritdoc />
+    public void SetPostWriteNotVisible() => PostWriteNotVisible = true;
 }

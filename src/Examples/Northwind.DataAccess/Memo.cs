@@ -18,16 +18,17 @@ public partial class Memo
     /// <summary>Store-assigned primary key.</summary>
     public int MemoId { get; set; }
 
-    /// <summary>A short subject line — a client-writable scalar field.</summary>
+    /// <summary>A short subject line. The EF model caps it at 120 characters.</summary>
     public string Subject { get; set; } = string.Empty;
 
-    /// <summary>The memo body — a client-writable scalar field.</summary>
+    /// <summary>The memo body. The EF model caps it at 4000 characters.</summary>
     public string Body { get; set; } = string.Empty;
 
     /// <summary>
-    /// Optimistic-concurrency token. A fresh value is assigned when the entity is created; the write
-    /// path compares it against the request's <c>If-Match</c> header and never lets a client assign it
-    /// directly (it is excluded from the writable whitelist).
+    /// Optimistic-concurrency token. The constructor assigns the insert value. Every successful Vista
+    /// update replaces it with a new <see cref="Guid"/> before save, and EF puts the previous value in
+    /// the <c>UPDATE</c>/<c>DELETE</c> <c>WHERE</c> clause. Clients never assign it (it is excluded from
+    /// the writable whitelist). SQLite does not generate this column.
     /// </summary>
     public Guid RowVersion { get; set; } = Guid.NewGuid();
 }

@@ -1,5 +1,4 @@
 using System.Diagnostics;
-using System.Net.Http.Headers;
 using System.Text;
 
 namespace a2n.Vista.E2E;
@@ -77,14 +76,16 @@ internal static class RepoPaths
 internal sealed class SampleHost : IAsyncDisposable
 {
     private readonly Process _process;
+    private readonly string _workingDirectory;
     private readonly StringBuilder _log = new();
     private readonly object _logGate = new();
 
-    private SampleHost(string name, Uri baseAddress, Process process)
+    private SampleHost(string name, Uri baseAddress, Process process, string workingDirectory)
     {
         Name = name;
         BaseAddress = baseAddress;
         _process = process;
+        _workingDirectory = workingDirectory;
     }
 
     public string Name { get; }
@@ -94,6 +95,13 @@ internal sealed class SampleHost : IAsyncDisposable
     public static async Task<SampleHost> StartAsync(string name, string projectDirectory, int port, CancellationToken cancellationToken)
     {
         var url = $"http://127.0.0.1:{port}";
+        // Kill does not run the host shutdown hook. Own the working-copy parent so dispose can
+        // delete the database and the WAL -wal/-shm files beside it.
+        var workingDirectory = Path.Combine(
+            Path.GetTempPath(),
+            "a2n-vista-northwind",
+            Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(workingDirectory);
         var start = new ProcessStartInfo("dotnet")
         {
             WorkingDirectory = projectDirectory,
@@ -111,10 +119,11 @@ internal sealed class SampleHost : IAsyncDisposable
         start.Environment["ASPNETCORE_ENVIRONMENT"] = "Development";
         start.Environment["ASPNETCORE_URLS"] = url;
         start.Environment["DOTNET_NOLOGO"] = "1";
+        start.Environment["NORTHWIND_WORKING_DIRECTORY"] = workingDirectory;
 
         var process = Process.Start(start)
             ?? throw new InvalidOperationException($"Failed to start {name}.");
-        var host = new SampleHost(name, new Uri(url), process);
+        var host = new SampleHost(name, new Uri(url), process, workingDirectory);
         process.OutputDataReceived += (_, e) => host.Append(e.Data);
         process.ErrorDataReceived += (_, e) => host.Append(e.Data);
         process.BeginOutputReadLine();
@@ -148,19 +157,73 @@ internal sealed class SampleHost : IAsyncDisposable
 
     public async ValueTask DisposeAsync()
     {
-        if (_process.HasExited)
+        if (!_process.HasExited)
         {
-            return;
+            try
+            {
+                _process.Kill(entireProcessTree: true);
+                await _process.WaitForExitAsync().ConfigureAwait(false);
+            }
+            catch (InvalidOperationException)
+            {
+                // Already exited.
+            }
         }
 
-        try
+        WorkingCopyFiles.Delete(_workingDirectory);
+    }
+
+    private static class WorkingCopyFiles
+    {
+        public static void Delete(string directory)
         {
-            _process.Kill(entireProcessTree: true);
-            await _process.WaitForExitAsync().ConfigureAwait(false);
+            for (var attempt = 0; attempt < 10 && Directory.Exists(directory); attempt++)
+            {
+                try
+                {
+                    DeleteSidecars(directory);
+                    Directory.Delete(directory, recursive: true);
+                }
+                catch (IOException) when (attempt < 9)
+                {
+                    Thread.Sleep(100);
+                }
+                catch (UnauthorizedAccessException) when (attempt < 9)
+                {
+                    Thread.Sleep(100);
+                }
+            }
         }
-        catch (InvalidOperationException)
+
+        private static void DeleteSidecars(string directory)
         {
-            // Already exited.
+            if (!Directory.Exists(directory))
+            {
+                return;
+            }
+
+            foreach (var file in Directory.EnumerateFiles(directory, "*", SearchOption.AllDirectories))
+            {
+                TryDelete(file + "-wal");
+                TryDelete(file + "-shm");
+            }
+        }
+
+        private static void TryDelete(string path)
+        {
+            try
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+            }
+            catch (IOException)
+            {
+            }
+            catch (UnauthorizedAccessException)
+            {
+            }
         }
     }
 
@@ -246,14 +309,12 @@ internal sealed class VistaClient
         using var response = await _http.SendAsync(request).ConfigureAwait(false);
         var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
         var type = response.Content.Headers.ContentType?.ToString() ?? string.Empty;
+        // Keep the raw header, quotes included. EntityTagHeaderValue.Tag strips them, and If-Match
+        // must be the bytes the server sent.
         string? etag = null;
-        if (response.Headers.ETag is EntityTagHeaderValue tag)
+        if (response.Headers.TryGetValues("ETag", out var values))
         {
-            etag = tag.Tag;
-        }
-        else if (response.Headers.TryGetValues("ETag", out var values))
-        {
-            etag = string.Join(",", values);
+            etag = string.Concat(values);
         }
 
         return new VistaResponse((int)response.StatusCode, type, bytes, etag);

@@ -47,20 +47,11 @@ The grids load AG Grid 32.3.9, DataTables 2.1.8, jQuery 3.7.1, and `@tanstack/ta
 
 UI assertions wait for the data POST whose body matches the action, fail immediately when that response is not 2xx, and then use Playwright's retrying `Expect(locator).ToHaveTextAsync`. They do not read cell text with `InnerTextAsync` once the response has arrived. AG Grid and DataTables insert the cell before the row text is painted, so a direct read can observe `""`. That flake is [issue #20](https://github.com/anwarminarso/a2n.Vista/issues/20) ([issue #18](https://github.com/anwarminarso/a2n.Vista/issues/18) was opened first); the 2026-10-16 note is [vista-aggrid-e2e-flake-2026-10-16.md](./vista-aggrid-e2e-flake-2026-10-16.md).
 
-## Known gap: `vWritableMemo`
+## `vWritableMemo` round trip
 
-`WritableMemoRoundTripTests` describes the HTTP round trip the live host should provide: list returns 200, create returns 200 with a key and an `ETag`, detail returns the new subject, update with `If-Match` returns 200, delete with `If-Match` returns 200, and a following detail returns 404.
+`WritableMemoRoundTripTests` runs against the live Northwind host. The host copies the extracted template and creates `VistaMemos` on that copy, so the old skip (missing table, create 409 `write-conflict`, no `ETag`) no longer applies.
 
-The test is skipped. On the shipped database it does not pass, and the skip reason is the bug:
-
-- `src/Examples/DB/northwind.db` (inside `Northwind SQLite.zip`) has no `VistaMemos` table.
-- `POST .../vWritableMemo/list`, `update`, and `delete` return **500** (`SQLiteException: no such table`). `VistaExceptionHandlingMiddleware` only maps exceptions that `VistaProblemResults.TryCreate` accepts, so this surfaces as the developer exception page.
-- `POST .../create` returns **409** `write-conflict`. `EfViewExecutor.SaveWriteChangesAsync` classifies every non-concurrency `DbUpdateException` as `VistaWriteConflictException`.
-- The sample self-test (`dotnet run -- selftest`) still passes. Its write check uses an isolated in-memory database, not `northwind.db`.
-
-There is a second gap in the same round trip, asserted by the skipped test so it stays visible: `HandleCreateAsync` returns the new key and does not emit an `ETag`. `MemoRow` also omits `RowVersion`. A client that only has the create response cannot form the `If-Match` header that update and delete require (a missing header is **428**). The in-memory self-test does not go through that HTTP response.
-
-Do not "fix" the skip by expecting 409 or 500. Unskip the test when a live host can persist a memo and hand back a concurrency token.
+The test lists the view, creates a memo, and requires a quoted strong `ETag`. It updates with that header, requires a different quoted `ETag`, and requires a second update that resends the original `ETag` to return 412 `write-concurrency-conflict` without changing the row. It then accepts the new token unquoted (legacy), rejects `If-Match: *` with 412, deletes with the latest token (204, empty body), and requires the following detail to be 404. The client stores the raw `ETag` header, quotes included.
 
 ## Run it
 

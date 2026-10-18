@@ -490,8 +490,8 @@ public static class WriteSelfTest
         string body,
         Action incrementFailures)
     {
-        // The If-Match token is the row's current RowVersion; a Guid renders invariantly, matching the
-        // executor's FormatToken so the optimistic-concurrency pre-check succeeds.
+        // The executor sees the bare token. HTTP quoting is checked by the endpoint tests. A Guid
+        // renders invariantly, matching ConcurrencyTokenFormat.ToWire.
         var ifMatch = await ReadTokenAsync(provider, memoId);
 
         bool updated;
@@ -516,10 +516,67 @@ public static class WriteSelfTest
             persisted = await ctx.Memos.AsNoTracking().SingleOrDefaultAsync(m => m.MemoId == memoId);
         }
 
-        var ok = updated && persisted is not null && persisted.Subject == subject && persisted.Body == body;
-        Console.WriteLine($"    Updated={updated}  Subject='{persisted?.Subject}'");
+        var rotated = persisted?.RowVersion.ToString();
+        var ok = updated
+            && persisted is not null
+            && persisted.Subject == subject
+            && persisted.Body == body
+            && rotated is not null
+            && !string.Equals(rotated, ifMatch, StringComparison.Ordinal);
+        Console.WriteLine($"    Updated={updated}  Subject='{persisted?.Subject}'  RowVersion={rotated}");
         Console.WriteLine($"    -> {(ok ? "PASS" : "FAIL")}");
         if (!ok)
+        {
+            incrementFailures();
+            return;
+        }
+
+        Console.WriteLine($"[2b] Reject the pre-update token (MemoId={memoId}, If-Match={ifMatch})");
+        try
+        {
+            using var scope = provider.CreateScope();
+            var executor = scope.ServiceProvider.GetRequiredService<IViewExecutor>();
+            await executor.UpdateAsync(
+                view,
+                memoId,
+                new MemoWriteModel { Subject = subject + " (stale)", Body = body },
+                new ViewScope(),
+                concurrencyToken: ifMatch,
+                CancellationToken.None);
+            Console.WriteLine("    -> FAIL: the old token was accepted");
+            incrementFailures();
+            return;
+        }
+        catch (VistaConcurrencyConflictException ex)
+        {
+            var code = ex.Code.ToWireCode();
+            if (code != WriteErrorCodes.ConcurrencyConflict)
+            {
+                Console.WriteLine($"    -> FAIL: code={code}");
+                incrementFailures();
+                return;
+            }
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"    -> FAIL: {ex.GetType().Name}: {ex.Message}");
+            incrementFailures();
+            return;
+        }
+
+        Memo? afterReject;
+        using (var scope = provider.CreateScope())
+        {
+            var ctx = scope.ServiceProvider.GetRequiredService<NorthwindDbContext>();
+            afterReject = await ctx.Memos.AsNoTracking().SingleOrDefaultAsync(m => m.MemoId == memoId);
+        }
+
+        var unchanged = afterReject is not null
+            && afterReject.Subject == subject
+            && afterReject.RowVersion.ToString() == rotated;
+        Console.WriteLine($"    Subject='{afterReject?.Subject}'  RowVersion={afterReject?.RowVersion}");
+        Console.WriteLine($"    -> {(unchanged ? "PASS" : "FAIL")}");
+        if (!unchanged)
         {
             incrementFailures();
         }

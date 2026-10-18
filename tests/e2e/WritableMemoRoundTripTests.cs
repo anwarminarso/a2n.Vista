@@ -1,32 +1,22 @@
 using System.Text;
 using System.Text.Json;
 using TUnit.Assertions;
+using TUnit.Assertions.Extensions;
 using TUnit.Core;
 
 namespace a2n.Vista.E2E;
 
 /// <summary>
-/// The HTTP create/update/delete round trip <c>vWritableMemo</c> should support.
-/// Skipped: the shipped <c>northwind.db</c> has no <c>VistaMemos</c> table, so the live host
-/// returns 409 on create and 500 on list/update/delete. The sample self-test hides this by
-/// using an isolated in-memory database. Do not remove the skip until that host can persist a memo.
+/// HTTP create/update/delete round trip for <c>vWritableMemo</c>: a quoted strong ETag, token
+/// rotation, rejection of the previous token, a legacy unquoted token, and rejection of <c>*</c>.
+/// Delete is 204 with no body. A missing row is problem+json.
 /// </summary>
 public sealed class WritableMemoRoundTripTests
 {
-    public const string KnownGap =
-        "Known failure: vWritableMemo is registered on the live Northwind and showcase hosts, " +
-        "but shipped northwind.db has no VistaMemos table. POST list/update/delete return 500 " +
-        "(SQLite 'no such table'), and POST create returns 409 write-conflict because every " +
-        "DbUpdateException is classified as a constraint conflict (EfViewExecutor.SaveWriteChangesAsync). " +
-        "The in-process self-test passes only against an isolated in-memory database. " +
-        "This test is the HTTP round trip the sample should provide, including an ETag on create " +
-        "so the client can form If-Match (HandleCreateAsync currently returns the key only). " +
-        "See docs/qa/e2e-playwright.md.";
-
     [Test]
-    [Skip(KnownGap)]
     public async Task Create_Update_Delete_Round_Trip()
     {
+        var subject = "e2e-memo-" + Guid.NewGuid().ToString("N");
         var list = await SampleSession.Http.PostJsonAsync(
             SampleSession.Northwind,
             "/api/views/vWritableMemo/list",
@@ -38,7 +28,7 @@ public sealed class WritableMemoRoundTripTests
             new Uri(SampleSession.Northwind, "/api/views/vWritableMemo/create"))
         {
             Content = new StringContent(
-                """{"model":{"subject":"e2e-memo","body":"round trip"}}""",
+                JsonSerializer.Serialize(new { model = new { subject, body = "round trip" } }),
                 Encoding.UTF8,
                 "application/json"),
         };
@@ -46,8 +36,10 @@ public sealed class WritableMemoRoundTripTests
         await Assert.That(create.Status).IsEqualTo(200);
         using var created = create.Json();
         var key = created.RootElement.GetProperty("key").GetInt32();
-        await Assert.That(create.ETag).IsNotNull();
-        var token = create.ETag!;
+        var token = create.ETag;
+        await Assert.That(token).IsNotNull();
+        await Assert.That(token!).StartsWith("\"");
+        await Assert.That(token!).EndsWith("\"");
 
         var detail = await SampleSession.Http.PostJsonAsync(
             SampleSession.Northwind,
@@ -55,33 +47,55 @@ public sealed class WritableMemoRoundTripTests
             $$"""{"key":{{key}}}""");
         await Assert.That(detail.Status).IsEqualTo(200);
         using var row = detail.Json();
-        await Assert.That(row.RootElement.GetProperty("subject").GetString()).IsEqualTo("e2e-memo");
+        await Assert.That(row.RootElement.GetProperty("subject").GetString()).IsEqualTo(subject);
+        await Assert.That(detail.ETag).IsEqualTo(token);
 
-        using var updateRequest = new HttpRequestMessage(
-            HttpMethod.Post,
-            new Uri(SampleSession.Northwind, "/api/views/vWritableMemo/update"))
-        {
-            Content = new StringContent(
-                JsonSerializer.Serialize(new
-                {
-                    key,
-                    model = new { subject = "e2e-memo-edited", body = "round trip" },
-                }),
-                Encoding.UTF8,
-                "application/json"),
-        };
-        updateRequest.Headers.TryAddWithoutValidation("If-Match", token);
-        var update = await SendAsync(updateRequest).ConfigureAwait(false);
+        var edited = subject + "-edited";
+        var update = await UpdateAsync(key, edited, token!).ConfigureAwait(false);
         await Assert.That(update.Status).IsEqualTo(200);
-        var nextToken = string.IsNullOrWhiteSpace(update.ETag) ? token : update.ETag!;
+        using var updateJson = update.Json();
+        await Assert.That(updateJson.RootElement.GetProperty("subject").GetString()).IsEqualTo(edited);
+        var nextToken = update.ETag;
+        await Assert.That(nextToken).IsNotNull();
+        await Assert.That(nextToken!).StartsWith("\"");
+        await Assert.That(nextToken).IsNotEqualTo(token);
 
-        var edited = await SampleSession.Http.PostJsonAsync(
+        var afterUpdate = await SampleSession.Http.PostJsonAsync(
             SampleSession.Northwind,
             "/api/views/vWritableMemo/detail",
             $$"""{"key":{{key}}}""");
-        await Assert.That(edited.Status).IsEqualTo(200);
-        using var editedJson = edited.Json();
-        await Assert.That(editedJson.RootElement.GetProperty("subject").GetString()).IsEqualTo("e2e-memo-edited");
+        await Assert.That(afterUpdate.Status).IsEqualTo(200);
+        using var editedJson = afterUpdate.Json();
+        await Assert.That(editedJson.RootElement.GetProperty("subject").GetString()).IsEqualTo(edited);
+
+        var stale = await UpdateAsync(key, edited + "-stale", token!).ConfigureAwait(false);
+        await Assert.That(stale.Status).IsEqualTo(412);
+        using var staleJson = stale.Json();
+        await Assert.That(staleJson.RootElement.GetProperty("code").GetString())
+            .IsEqualTo("write-concurrency-conflict");
+        var stillEdited = await SampleSession.Http.PostJsonAsync(
+            SampleSession.Northwind,
+            "/api/views/vWritableMemo/detail",
+            $$"""{"key":{{key}}}""");
+        using var stillEditedJson = stillEdited.Json();
+        await Assert.That(stillEditedJson.RootElement.GetProperty("subject").GetString()).IsEqualTo(edited);
+
+        var bare = nextToken!.Trim('"');
+        var legacy = await UpdateAsync(key, edited + "-legacy", bare).ConfigureAwait(false);
+        await Assert.That(legacy.Status).IsEqualTo(200);
+        var afterLegacy = legacy.ETag;
+        await Assert.That(afterLegacy).IsNotNull();
+        await Assert.That(afterLegacy).IsNotEqualTo(nextToken);
+
+        var star = await UpdateAsync(key, edited + "-star", "*").ConfigureAwait(false);
+        await Assert.That(star.Status).IsEqualTo(412);
+        var afterStar = await SampleSession.Http.PostJsonAsync(
+            SampleSession.Northwind,
+            "/api/views/vWritableMemo/detail",
+            $$"""{"key":{{key}}}""");
+        using var afterStarJson = afterStar.Json();
+        await Assert.That(afterStarJson.RootElement.GetProperty("subject").GetString())
+            .IsEqualTo(edited + "-legacy");
 
         using var deleteRequest = new HttpRequestMessage(
             HttpMethod.Post,
@@ -89,9 +103,10 @@ public sealed class WritableMemoRoundTripTests
         {
             Content = new StringContent($$"""{"key":{{key}}}""", Encoding.UTF8, "application/json"),
         };
-        deleteRequest.Headers.TryAddWithoutValidation("If-Match", nextToken);
+        deleteRequest.Headers.TryAddWithoutValidation("If-Match", afterLegacy);
         var deleted = await SendAsync(deleteRequest).ConfigureAwait(false);
-        await Assert.That(deleted.Status).IsEqualTo(200);
+        await Assert.That(deleted.Status).IsEqualTo(204);
+        await Assert.That(deleted.Body.Length).IsEqualTo(0);
 
         var gone = await SampleSession.Http.PostJsonAsync(
             SampleSession.Northwind,
@@ -100,13 +115,32 @@ public sealed class WritableMemoRoundTripTests
         await Assert.That(gone.Status).IsEqualTo(404);
     }
 
+    private static async Task<VistaResponse> UpdateAsync(int key, string subject, string ifMatch)
+    {
+        using var request = new HttpRequestMessage(
+            HttpMethod.Post,
+            new Uri(SampleSession.Northwind, "/api/views/vWritableMemo/update"))
+        {
+            Content = new StringContent(
+                JsonSerializer.Serialize(new
+                {
+                    key,
+                    model = new { subject, body = "round trip" },
+                }),
+                Encoding.UTF8,
+                "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", ifMatch);
+        return await SendAsync(request).ConfigureAwait(false);
+    }
+
     private static async Task<VistaResponse> SendAsync(HttpRequestMessage request)
     {
         using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
         using var response = await http.SendAsync(request).ConfigureAwait(false);
         var bytes = await response.Content.ReadAsByteArrayAsync().ConfigureAwait(false);
-        string? etag = response.Headers.ETag?.Tag;
-        if (etag is null && response.Headers.TryGetValues("ETag", out var values))
+        string? etag = null;
+        if (response.Headers.TryGetValues("ETag", out var values))
         {
             etag = string.Concat(values);
         }

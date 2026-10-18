@@ -67,7 +67,7 @@ if (created.kind === "success") {
 
 // update / delete — when the view declares a concurrency token, pass the ETag as
 // options.ifMatch; a missing token surfaces as "precondition-required" (428) and
-// a stale token as "precondition-failed" (409).
+// a stale token as "precondition-failed" (412).
 const updated = await customers.update({ /* TCrud fields */ }, { ifMatch: etag });
 const removed = await customers.delete({ ifMatch: etag });
 ```
@@ -88,7 +88,7 @@ switch (result.kind) {
   case "not-found":            // 404, a typed ProblemDetails
   case "unauthorized":         // no credential available; request was not sent
   case "precondition-required": // 428, missing concurrency token
-  case "precondition-failed":   // 409, stale concurrency token
+  case "precondition-failed":   // 412, stale concurrency token (write-concurrency-conflict)
   case "transport-error":       // the transport rejected; no retry was performed
   case "unexpected":            // non-2xx / undecodable body; raw body preserved
     break;

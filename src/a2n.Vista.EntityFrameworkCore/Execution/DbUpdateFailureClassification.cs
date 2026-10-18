@@ -11,8 +11,9 @@ namespace a2n.Vista.EntityFrameworkCore.Execution;
 /// <c>DbUpdateConcurrencyException</c> is a subclass of <c>DbUpdateException</c> and is classified by
 /// the caller before this helper runs. What remains is either a constraint breach (unique key, foreign
 /// key, NOT NULL, CHECK) or some other store failure (missing relation, I/O, lock, corruption). Only
-/// the former is HTTP 422 <c>write-constraint-violation</c>; the latter is HTTP 500
-/// <c>write-persistence-failed</c>. Neither is a concurrency conflict.
+/// the former is HTTP 422 <c>write-constraint-violation</c>; a transient lock
+/// (<see cref="IsTransientLock"/>) is HTTP 503 <c>write-busy</c>; the rest is HTTP 500
+/// <c>write-persistence-failed</c>. None of those is a concurrency conflict.
 /// </para>
 /// <para>
 /// The only built-in rule is trim-safe and reads <see cref="DbException.SqlState"/> (SQLSTATE class
@@ -35,6 +36,7 @@ public static class DbUpdateFailureClassification
 {
     private static readonly object Gate = new();
     private static Func<Exception, bool?>[] _probes = [];
+    private static Func<Exception, bool?>[] _transientLockProbes = [];
 
     /// <summary>
     /// Registers a trim-safe constraint probe. Probes run before the built-in rules, walking the
@@ -54,6 +56,53 @@ public static class DbUpdateFailureClassification
             next[^1] = probe;
             _probes = next;
         }
+    }
+
+    /// <summary>
+    /// Registers a trim-safe probe for a transient store lock (Decision Log D160). The probe lives in
+    /// the assembly that references the provider. Return <see langword="true"/> for a lock the caller
+    /// should map to HTTP 503, or <see langword="null"/> to defer. A <see langword="false"/> is ignored
+    /// so a constraint probe cannot hide a lock.
+    /// </summary>
+    /// <param name="probe">The provider-specific lock classifier.</param>
+    public static void AddTransientLockProbe(Func<Exception, bool?> probe)
+    {
+        ArgumentNullException.ThrowIfNull(probe);
+        lock (Gate)
+        {
+            var next = new Func<Exception, bool?>[_transientLockProbes.Length + 1];
+            Array.Copy(_transientLockProbes, next, _transientLockProbes.Length);
+            next[^1] = probe;
+            _transientLockProbes = next;
+        }
+    }
+
+    /// <summary>
+    /// Returns <see langword="true"/> when <paramref name="exception"/>, or one of its inner
+    /// exceptions, is a store lock recognized by a probe registered with
+    /// <see cref="AddTransientLockProbe"/>. <see cref="DbException.IsTransient"/> is not consulted:
+    /// a connection lost during commit has an unknown outcome, and treating it as retryable could
+    /// duplicate a create that has no token (Decision Log D160).
+    /// </summary>
+    /// <param name="exception">The provider failure raised by <c>SaveChanges</c>.</param>
+    /// <returns><see langword="true"/> when the write should be retried (HTTP 503).</returns>
+    public static bool IsTransientLock(Exception exception)
+    {
+        ArgumentNullException.ThrowIfNull(exception);
+
+        var probes = _transientLockProbes;
+        for (Exception? current = exception; current is not null; current = current.InnerException)
+        {
+            foreach (var probe in probes)
+            {
+                if (probe(current) is true)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

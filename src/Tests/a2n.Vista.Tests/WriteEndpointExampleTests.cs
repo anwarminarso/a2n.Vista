@@ -3,6 +3,7 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
 using System.Linq.Expressions;
 using System.Net;
@@ -12,6 +13,7 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
@@ -127,22 +129,29 @@ public sealed class WriteEndpointExampleTests
         app.SeedPlain(1, "before");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/update", Json("{\"key\":1,\"model\":{\"name\":\"after\"}}"));
+        var body = await response.Content.ReadAsStringAsync();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(body);
+        await Assert.That(doc.RootElement.GetProperty("name").GetString()).IsEqualTo("after");
+        await Assert.That(doc.RootElement.GetProperty("id").GetInt32()).IsEqualTo(1);
         await Assert.That(app.ReadPlainName(1)).IsEqualTo("after");
     }
 
-    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 200.</summary>
+    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 204.</summary>
     [Test]
-    public async Task Delete_HappyPath_Returns_200_And_Removes_The_Row()
+    public async Task Delete_HappyPath_Returns_204_And_Removes_The_Row()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedPlain(1, "doomed");
         app.SeedPlain(2, "survivor");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/delete", Json("{\"key\":1}"));
+        var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(body).IsEmpty();
+        await Assert.That(Header(response, "ETag")).IsNull();
         await Assert.That(app.ReadPlainName(1)).IsNull();
         await Assert.That(app.ReadPlainName(2)).IsEqualTo("survivor");
     }
@@ -207,11 +216,11 @@ public sealed class WriteEndpointExampleTests
     }
 
     /// <summary>
-    /// R6.1/R6.4: a non-empty If-Match matching the stored token is used as the expected token — the
-    /// update succeeds (200) and the ETag round-trips the token.
+    /// A matching unquoted If-Match succeeds, the stored token changes, and the ETag is that new token
+    /// as a strong quoted entity-tag. A second update that resends the old token is 412.
     /// </summary>
     [Test]
-    public async Task TokenView_Update_With_Correct_IfMatch_Returns_200_And_RoundTrips_ETag()
+    public async Task TokenView_Update_Rotates_The_Token_And_Rejects_The_Old_One()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedToken(1, "orig", 42);
@@ -219,16 +228,29 @@ public sealed class WriteEndpointExampleTests
         var response = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"changed\"}}", "42");
 
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.ETag).IsEqualTo("42");
+        await Assert.That(response.ETag).IsNotNull();
+        await Assert.That(response.ETag!).StartsWith("\"");
+        await Assert.That(response.ETag!).EndsWith("\"");
+        await Assert.That(response.ETag).IsNotEqualTo("\"42\"");
+        using var updatedJson = JsonDocument.Parse(response.Body);
+        await Assert.That(updatedJson.RootElement.GetProperty("name").GetString()).IsEqualTo("changed");
+        await Assert.That(updatedJson.RootElement.GetProperty("version").GetInt32().ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
+        await Assert.That(app.ReadTokenVersion(1).ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
+
+        var stale = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"lost\"}}", "\"42\"");
+        await Assert.That(stale.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
     }
 
     /// <summary>
-    /// D158: create on any token-bearing view returns the post-write token as <c>ETag</c>, and that value
-    /// is a valid <c>If-Match</c> for the following update.
+    /// D158/D159: create returns the post-write token as a quoted ETag. Sending that header back updates
+    /// the row and rotates the token. Sending it again is 412.
     /// </summary>
     [Test]
-    public async Task TokenView_Create_Returns_ETag_And_Update_Honors_It()
+    public async Task TokenView_Create_Returns_Quoted_ETag_And_Update_Honors_It()
     {
         await using var app = await TestApp.StartAsync();
 
@@ -236,20 +258,26 @@ public sealed class WriteEndpointExampleTests
         var etag = Header(created, "ETag");
 
         await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(etag).IsEqualTo("0");
+        await Assert.That(etag).IsNotNull();
+        await Assert.That(etag!).StartsWith("\"");
+        await Assert.That(etag!).EndsWith("\"");
 
         var updated = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"grown\"}}", etag!);
         await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(updated.ETag).IsEqualTo("0");
+        await Assert.That(updated.ETag).IsNotEqualTo(etag);
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
+
+        var replay = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"again\"}}", etag!);
+        await Assert.That(replay.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
     }
 
     /// <summary>
-    /// D158: a stale <c>If-Match</c> on a token view is 409 <c>write-concurrency-conflict</c>. The retired
+    /// D159: a stale <c>If-Match</c> on a token view is 412 <c>write-concurrency-conflict</c>. The retired
     /// <c>write-conflict</c> code is not emitted.
     /// </summary>
     [Test]
-    public async Task TokenView_Update_With_Stale_IfMatch_Returns_409_ConcurrencyConflict()
+    public async Task TokenView_Update_With_Stale_IfMatch_Returns_412_ConcurrencyConflict()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedToken(1, "orig", 42);
@@ -258,11 +286,11 @@ public sealed class WriteEndpointExampleTests
         {
             Content = new StringContent("{\"key\":1,\"model\":{\"name\":\"lost\"}}", Encoding.UTF8, "application/json"),
         };
-        request.Headers.TryAddWithoutValidation("If-Match", "0");
+        request.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
         var response = await app.Client.SendAsync(request);
         var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.Conflict);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
         using var doc = JsonDocument.Parse(body);
         var code = doc.RootElement.GetProperty("code").GetString();
         await Assert.That(code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
@@ -296,7 +324,7 @@ public sealed class WriteEndpointExampleTests
             projected,
             TokenView,
             new TokenRow { Id = 1, Name = "orig", Version = 42 });
-        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("42");
+        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("\"42\"");
 
         var unprojected = new DefaultHttpContext { RequestServices = provider };
         VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
@@ -580,9 +608,15 @@ public sealed class WriteEndpointExampleTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ExampleWriteContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<PlainWritableView>();
-                            v.Register<TokenWritableView>();
-                            v.Register<BulkWritableView>();
+                            v.Register<PlainWritableView>(ViewExecutionPlan.Split<PlainSource, PlainRow>(
+                                PlainView,
+                                s => new PlainRow { Id = s.Id, Name = s.Name }));
+                            v.Register<TokenWritableView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                                TokenView,
+                                s => new TokenRow { Id = s.Id, Name = s.Name, Version = s.Version }));
+                            v.Register<BulkWritableView>(ViewExecutionPlan.Split<BulkSource, BulkRow>(
+                                BulkView,
+                                s => new BulkRow { Id = s.Id, Name = s.Name }));
                         });
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
@@ -624,12 +658,14 @@ public sealed class WriteEndpointExampleTests
 
         public string? ReadTokenName(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Name).SingleOrDefault());
 
+        public int ReadTokenVersion(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Version).Single());
+
         public int PlainRowCount() => Read(ctx => ctx.Plains.AsNoTracking().Count());
 
         public int BulkRowCount() => Read(ctx => ctx.Bulks.AsNoTracking().Count());
 
-        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status + ETag.</summary>
-        public (HttpStatusCode Status, string? ETag) SendWithIfMatch(string url, string json, string ifMatch)
+        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status, ETag, and body.</summary>
+        public (HttpStatusCode Status, string? ETag, string Body) SendWithIfMatch(string url, string json, string ifMatch)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
@@ -649,8 +685,9 @@ public sealed class WriteEndpointExampleTests
             }
 
             var status = response.StatusCode;
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             response.Dispose();
-            return (status, etag);
+            return (status, etag, body);
         }
 
         private void Mutate(Action<ExampleWriteContext> mutate)

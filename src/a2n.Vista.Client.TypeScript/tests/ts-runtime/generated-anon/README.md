@@ -74,7 +74,7 @@ switch (result.kind) {
   case "not-found":            // 404, a typed ProblemDetails
   case "unauthorized":         // no credential available; request was not sent
   case "precondition-required": // 428, missing concurrency token
-  case "precondition-failed":   // 409, stale concurrency token
+  case "precondition-failed":   // 412, stale concurrency token (write-concurrency-conflict)
   case "transport-error":       // the transport rejected; no retry was performed
   case "unexpected":            // non-2xx / undecodable body; raw body preserved
     break;

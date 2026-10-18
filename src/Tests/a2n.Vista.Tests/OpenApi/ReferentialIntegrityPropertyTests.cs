@@ -11,9 +11,10 @@
 // inherently present at most once. The property therefore adds the operative half — that operations
 // REFERENCE those shared schemas by $ref rather than duplicating their shape inline. Concretely, every
 // request-body content schema and every JSON success/error response content schema (envelopes, DTOs,
-// ProblemDetails) must be a $ref, never an inline object carrying its own Properties. (Bodyless success
-// responses — the update/delete NoContentOr200 — carry no content and are trivially compliant; header
-// schemas such as ETag/If-None-Match are inline scalars by design and are not shared-schema references.)
+// ProblemDetails) must be a $ref, never an inline object carrying its own Properties. (A bodyless success
+// response — delete's 204 — carries no content and is trivially compliant. Update's 200 body is the row
+// schema, referenced rather than inlined. Header schemas such as ETag/If-None-Match are inline scalars
+// by design and are not shared-schema references.)
 //
 // On any violation the property throws a descriptive message (the dangling ref name, or the inlined body
 // location) so CsCheck shrinks to a minimal counterexample.
@@ -294,8 +295,8 @@ public sealed class ReferentialIntegrityPropertyTests
         }
 
         // Every response that carries content (JSON success bodies and problem+json error bodies) must
-        // reference a shared component. A bodyless response (update/delete 200/204, metadata 304) carries
-        // no content and is trivially compliant.
+        // reference a shared component. A bodyless response (delete 204, metadata 304) carries no content
+        // and is trivially compliant. Update's 200 body is the row schema.
         if (operation.Responses is not null)
         {
             foreach (var (code, response) in operation.Responses)
