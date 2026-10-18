@@ -64,6 +64,10 @@
          of a README.md next to the csproj. Images in this file must use absolute URLs
          (nuget.org does not render repository-relative image paths). -->
     <PackageReadmeFile Condition="Exists('$(MSBuildProjectDirectory)/README.md')">README.md</PackageReadmeFile>
+    <!-- Fail the build on any unsuppressed NuGet advisory, including transitive packages.
+         GHSA-2m69-gcr7-jv3q stays suppressed below. -->
+    <NuGetAuditMode>all</NuGetAuditMode>
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
@@ -81,10 +85,5 @@
     <!-- Transitive advisory acknowledged and suppressed for the audit (was declared in the former
          stray src/Directory.Packages.props, moved here so it applies solution-wide). -->
     <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-2m69-gcr7-jv3q" />
-    <!-- Microsoft.OpenApi 2.0.0 arrives transitively via the official Microsoft.AspNetCore.OpenApi 10.0.0
-         (net10 built-in OpenAPI pipeline; spec openapi-emitter task 7.2). It is the version the shipped
-         ASP.NET Core package pins, so the advisory is acknowledged and suppressed until the framework
-         package advances its transitive pin. Only affects net10 of a2n.Vista.OpenApi and its consumers. -->
-    <NuGetAuditSuppress Include="https://github.com/advisories/GHSA-v5pm-xwqc-g5wc" />
   </ItemGroup>
 </Project>
