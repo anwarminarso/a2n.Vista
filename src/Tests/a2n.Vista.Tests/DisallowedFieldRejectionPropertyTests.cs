@@ -182,7 +182,7 @@ public sealed class DisallowedFieldRejectionPropertyTests
     /// executes (reader / scalar / non-query, sync and async). The disallowed-field property asserts this
     /// list is empty for a rejected request.
     /// </summary>
-    private sealed class P4SqlSpyInterceptor : DbCommandInterceptor
+    internal sealed class P4SqlSpyInterceptor : DbCommandInterceptor
     {
         private readonly List<string> _executed = new();
 
@@ -239,11 +239,11 @@ public sealed class DisallowedFieldRejectionPropertyTests
     }
 
     /// <summary>The EF source entity for <see cref="P4PersonView"/>, exposed by <see cref="P4TestDbContext"/>.</summary>
-    private sealed class P4TestDbContext : DbContext
+    internal sealed class P4TestDbContext : DbContext
     {
         private readonly P4SqlSpyInterceptor _spy;
 
-        public P4TestDbContext(DbContextOptions<P4TestDbContext> options, P4SqlSpyInterceptor spy)
+        internal P4TestDbContext(DbContextOptions<P4TestDbContext> options, P4SqlSpyInterceptor spy)
             : base(options) => _spy = spy;
 
         public DbSet<P4PersonSource> People => Set<P4PersonSource>();

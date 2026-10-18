@@ -1,4 +1,6 @@
 using System.Diagnostics.CodeAnalysis;
+using System.Linq;
+using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Security.Cryptography;
 using System.Text;
@@ -7,6 +9,7 @@ using System.Threading;
 using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.AspNetCore.Configuration;
+using a2n.Vista.AspNetCore.Diagnostics;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.AspNetCore.Serialization;
 using a2n.Vista.Export;
@@ -58,11 +61,12 @@ namespace Microsoft.AspNetCore.Builder;
 /// <para>
 /// <b>Write execution (M12).</b> For a writable view the write handlers bind the request, authorize the
 /// write facet fail-closed, forward to the Core <c>IViewExecutor</c> write facet, and map the outcome to
-/// HTTP: <c>200</c> with the created row's primary key (create) or an <c>ETag</c> header carrying the
-/// current concurrency token (update/delete on a token view), <c>404</c> for a no-match / read-only /
-/// unregistered / no-plan target (indistinguishable), <c>428</c> when a token view omits <c>If-Match</c>,
-/// and <c>409</c> / <c>4xx</c> / <c>5xx</c> for the typed write failures (Requirements R1.2, R2.2, R3.2,
-/// R6.x, R12.x, R16.6).
+/// HTTP: <c>200</c> with the created row's primary key and, when the view declares a concurrency token,
+/// an <c>ETag</c> carrying that token (create); <c>200</c> with the detail row and the post-write
+/// <c>ETag</c> on update; <c>204</c> with no body and no <c>ETag</c> on delete; a generic
+/// <c>404</c> problem (same body, naming no view and no key) for a no-match / read-only / unregistered /
+/// no-plan target; <c>428</c> when a token view omits <c>If-Match</c>; and <c>412</c> / <c>4xx</c> /
+/// <c>5xx</c> for the typed write failures (Requirements R1.2, R2.2, R3.2, R6.x, R12.x, R16.6).
 /// </para>
 /// <para>
 /// <b>AOT hygiene (R11.4).</b> Mapping drives the reflection bridge in <see cref="ViewRequestExecutor"/>
@@ -95,7 +99,30 @@ public static class VistaEndpointRouteBuilderExtensions
             MapSingleView(endpoints, view);
         }
 
+        // Unmapped paths under a registered view prefix use the same problem body as a missing row,
+        // so a read-only or unknown view cannot be told apart from a key that is not there (R12.3).
+        // The fallback is not the whole app: a global fallback matches "/" before UseDefaultFiles can
+        // rewrite it to index.html, and the showcase pages never issue their data POST.
+        foreach (var prefix in registry.All
+            .Select(view => ViewRoutePrefix(view.Route))
+            .Where(prefix => prefix.Length > 0)
+            .Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            endpoints.MapFallback(prefix + "/{*path}", () => VistaProblemResults.ResourceNotFound());
+        }
+
         return endpoints;
+    }
+
+    /// <summary>
+    /// The parent of a view route (<c>/api/views/vProductCategory</c> → <c>/api/views</c>). An empty
+    /// result means the route has no directory, and no fallback is registered for it.
+    /// </summary>
+    private static string ViewRoutePrefix(string route)
+    {
+        var trimmed = route.TrimEnd('/');
+        var slash = trimmed.LastIndexOf('/');
+        return slash <= 0 ? string.Empty : trimmed[..slash];
     }
 
     /// <summary>
@@ -235,7 +262,15 @@ public static class VistaEndpointRouteBuilderExtensions
 
         // A missing row keeps the 404 contract; a present row is serialized through the seam by its
         // runtime row type (D124), preserving the 200 status and byte-for-byte body (R5.2).
-        return row is null ? Results.NotFound() : VistaJsonWriter.Json(row, row.GetType());
+        // When the row projects the view's concurrency token, the same wire string is the ETag so a
+        // client can send it back as If-Match (D158).
+        if (row is null)
+        {
+            return VistaProblemResults.ResourceNotFound();
+        }
+
+        TryApplyDetailETag(http, viewName, row);
+        return VistaJsonWriter.Json(row, row.GetType());
     }
 
     /// <summary>Handles <c>GET {route}/metadata</c>: authorize, then return the serializable metadata.</summary>
@@ -464,7 +499,7 @@ public static class VistaEndpointRouteBuilderExtensions
         // are only mapped for a writable view, so these are unreachable through normal mapping.
         if (view is null || view.IsReadOnly || view.CrudType is null)
         {
-            return Results.NotFound();
+            return VistaProblemResults.ResourceNotFound();
         }
 
         var executor = http.RequestServices.GetRequiredService<ViewRequestExecutor>();
@@ -484,22 +519,23 @@ public static class VistaEndpointRouteBuilderExtensions
                 ViewFacet.Create => await HandleCreateAsync(http, view, body, executor).ConfigureAwait(false),
                 ViewFacet.Update => await HandleUpdateAsync(http, view, body, executor).ConfigureAwait(false),
                 ViewFacet.Delete => await HandleDeleteAsync(http, view, body, executor).ConfigureAwait(false),
-                _ => Results.NotFound(),
+                _ => VistaProblemResults.ResourceNotFound(),
             };
         }
         catch (VistaWriteException ex) when (ex.Code == WriteErrorCode.NoWritePlan)
         {
             // R12.3/R12.4: a writable view registered as metadata-only (no executable write plan) is
-            // rendered as a plain 404 — indistinguishable from a genuinely nonexistent view, never a
-            // coded body that would disclose the view exists.
-            return Results.NotFound();
+            // the same generic 404 problem as a missing view or a missing key. The body names neither.
+            return VistaProblemResults.ResourceNotFound();
         }
     }
 
     /// <summary>
     /// Handles <c>POST {route}/create</c>: bind the write model, insert through the executor, and return
     /// <c>200</c> with a minimal <see cref="VistaWriteResponse"/> carrying only the new primary key
-    /// (Requirements R1.1, R1.2, R10.1).
+    /// (Requirements R1.1, R1.2, R10.1). A view that declares a concurrency token also returns that
+    /// token as <c>ETag</c>, the value the client must send as <c>If-Match</c> on a later update or
+    /// delete (D146, D158).
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleCreateAsync(
@@ -510,15 +546,17 @@ public static class VistaEndpointRouteBuilderExtensions
     {
         var model = VistaWriteBinding.BindModel(body, view.CrudType!);
         var key = await executor.CreateAsync(http, view.Name, model).ConfigureAwait(false);
+        ApplyPostWriteETag(http, view.Name);
         return Results.Ok(new VistaWriteResponse(key));
     }
 
     /// <summary>
     /// Handles <c>POST {route}/update</c>: bind the model and the request key, enforce the <c>428</c>
-    /// precondition gate for a token view, update through the executor, and map the result — <c>404</c>
-    /// when no row matched within scope, otherwise <c>200</c> (with the round-tripped <c>ETag</c> when the
-    /// view declares a token). The row identity is taken solely from the request key, never the body
-    /// (Requirements R2.1, R2.2, R2.3, R2.5, R2.8, R6.1, R6.2, R6.4, R6.6).
+    /// precondition gate for a token view, update through the executor, and map the result — a generic
+    /// <c>404</c> problem when no row matched within scope, <c>204</c> with no body and no <c>ETag</c>
+    /// when the save moved the row out of the caller's read scope, otherwise <c>200</c> with the detail
+    /// row and the post-write <c>ETag</c> when the view declares a token. The row identity is taken solely
+    /// from the request key, never the body (Requirements R2.1, R2.2, R2.3, R2.5, R2.8, R6.1, R6.2, R6.4, R6.6).
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleUpdateAsync(
@@ -536,14 +574,28 @@ public static class VistaEndpointRouteBuilderExtensions
             .UpdateAsync(http, view.Name, key, model, ifMatch)
             .ConfigureAwait(false);
 
-        return updated ? UpdateOk(http, hasToken, ifMatch) : Results.NotFound();
+        if (!updated)
+        {
+            return VistaProblemResults.ResourceNotFound();
+        }
+
+        var sink = http.RequestServices.GetService<IWriteTokenSink>();
+        if (sink?.PostWriteNotVisible == true)
+        {
+            // The save moved the row out of the caller's read scope. No body and no ETag (D159).
+            return Results.NoContent();
+        }
+
+        ApplyPostWriteETag(http, view.Name);
+        var row = sink?.PostWriteRow;
+        return row is null ? Results.Ok() : VistaJsonWriter.Json(row, row.GetType());
     }
 
     /// <summary>
     /// Handles <c>POST {route}/delete</c>: read the request key, enforce the <c>428</c> precondition gate
-    /// for a token view, delete through the executor, and map the result — <c>404</c> when no row matched
-    /// within scope, otherwise <c>200</c> (with the round-tripped <c>ETag</c> when the view declares a
-    /// token) (Requirements R3.1, R3.2, R3.3, R6.1, R6.2, R6.4, R6.6).
+    /// for a token view, delete through the executor, and map the result — a generic <c>404</c> problem
+    /// when no row matched within scope, otherwise <c>204</c> with no body and no <c>ETag</c>
+    /// (Requirements R3.1, R3.2, R3.3, R6.1, R6.2, R6.4, R6.6).
     /// </summary>
     [RequiresUnreferencedCode(AotMessage)]
     private static async Task<IResult> HandleDeleteAsync(
@@ -560,7 +612,7 @@ public static class VistaEndpointRouteBuilderExtensions
             .DeleteAsync(http, view.Name, key, ifMatch)
             .ConfigureAwait(false);
 
-        return deleted ? DeleteOk() : Results.NotFound();
+        return deleted ? Results.NoContent() : VistaProblemResults.ResourceNotFound();
     }
 
     /// <summary>
@@ -583,39 +635,57 @@ public static class VistaEndpointRouteBuilderExtensions
     }
 
     /// <summary>
-    /// Produces the <c>200</c> success result for an <b>update</b>, emitting the <b>post-write</b>
-    /// concurrency token as the <c>ETag</c> response header when the view declares one (Requirement R6.4,
-    /// Decision Log D146).
+    /// Emits the post-write concurrency token as <c>ETag</c> when the view declares one. Create uses
+    /// this so the client can form the next <c>If-Match</c> without a follow-up read (D158).
     /// </summary>
-    /// <remarks>
-    /// The token comes from the request-scoped <see cref="IWriteTokenSink"/> the execution layer published it
-    /// into, not from the request's own <c>If-Match</c>. Echoing the request value made a store-generated
-    /// <c>rowversion</c> ETag stale the instant it was sent, so the client's next update was guaranteed to
-    /// 409. The <c>If-Match</c> value remains the fallback for a view whose token is client-assigned and
-    /// therefore unchanged by the write (and for an executor that publishes nothing).
-    /// </remarks>
-    private static IResult UpdateOk(HttpContext http, bool hasToken, string? ifMatch)
+    private static void ApplyPostWriteETag(HttpContext http, string viewName)
     {
-        if (!hasToken)
+        if (!ViewDeclaresConcurrencyToken(http, viewName))
         {
-            return Results.Ok();
+            return;
         }
 
-        var postWrite = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
-        var token = postWrite ?? ifMatch;
+        var token = http.RequestServices.GetService<IWriteTokenSink>()?.PostWriteToken;
         if (token is not null)
         {
-            http.Response.Headers.ETag = token;
+            http.Response.Headers.ETag = IfMatchHeader.ToStrongEntityTag(token);
         }
-
-        return Results.Ok();
     }
 
     /// <summary>
-    /// Produces the <c>200</c> success result for a <b>delete</b>. No <c>ETag</c> is emitted: the row no
-    /// longer exists, so any entity-tag for it is meaningless (Decision Log D146).
+    /// When the detail row projects the concurrency-token member, sets <c>ETag</c> to that member's
+    /// wire value. A row that does not project the token leaves the header unset.
     /// </summary>
-    private static IResult DeleteOk() => Results.Ok();
+    [UnconditionalSuppressMessage(
+        "Trimming",
+        "IL2075:Members annotated with DynamicallyAccessedMembersAttribute may break when trimming",
+        Justification = "Detail is on the RUC HTTP path. The token member name comes from the authored selector; the property is read only when the projected row actually declares it.")]
+    internal static void TryApplyDetailETag(HttpContext http, string viewName, object row)
+    {
+        var facets = http.RequestServices.GetService<IWriteFacetRegistry>();
+        if (facets is null || !facets.TryGet(viewName, out var facet))
+        {
+            return;
+        }
+
+        var name = ConcurrencyTokenMember.TryGetName(facet.ConcurrencyToken);
+        if (name is null)
+        {
+            return;
+        }
+
+        var property = row.GetType().GetProperty(name, BindingFlags.Instance | BindingFlags.Public);
+        if (property is null || property.GetIndexParameters().Length != 0)
+        {
+            return;
+        }
+
+        var token = ConcurrencyTokenFormat.ToWire(property.GetValue(row));
+        if (token is not null)
+        {
+            http.Response.Headers.ETag = IfMatchHeader.ToStrongEntityTag(token);
+        }
+    }
 
     /// <summary>
     /// Returns <see langword="true"/> when the view declares an optimistic-concurrency token, consulting

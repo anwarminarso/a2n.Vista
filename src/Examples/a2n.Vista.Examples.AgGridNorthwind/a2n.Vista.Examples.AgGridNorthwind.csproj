@@ -17,6 +17,8 @@
     <!-- Example app, never packaged. -->
     <IsPackable>false</IsPackable>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <!-- Extract src/Examples/DB/Northwind SQLite.zip during build. See Directory.Build.targets. -->
+    <ExtractNorthwindDatabase>true</ExtractNorthwindDatabase>
   </PropertyGroup>
 
   <ItemGroup>
@@ -33,6 +35,13 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- SQLite constraint probe. The EF library does not reference Microsoft.Data.Sqlite. -->
+    <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <Compile Include="..\SqliteVistaConnection.cs" Link="SqliteVistaConnection.cs" />
+    <Compile Include="..\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Standalone EF model (entities + DbContext) for the Northwind sample database. -->
     <ProjectReference Include="..\Northwind.DataAccess\Northwind.DataAccess.csproj" />
 
@@ -42,6 +51,7 @@
     <ProjectReference Include="..\..\a2n.Vista.OpenApi\a2n.Vista.OpenApi.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.DataTablesNet\a2n.Vista.Adapters.DataTablesNet.csproj" />
     <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.AgGrid\a2n.Vista.Adapters.AgGrid.csproj" />
+    <ProjectReference Include="..\..\Adapters\a2n.Vista.Adapters.TanStackTable\a2n.Vista.Adapters.TanStackTable.csproj" />
 
     <!--
       Reference the Phase 3 source generator as an ANALYZER only (no runtime assembly dependency) — the

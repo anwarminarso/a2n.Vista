@@ -180,6 +180,18 @@ public sealed class OpenApiOptionsAndFacetTableTests
     }
 
     [Test]
+    public async Task Constraint_And_Persistence_Statuses_Only_On_Create_Update_Delete()
+    {
+        foreach (var operation in FacetOperations.All)
+        {
+            var expects = operation.Facet is Facet.Create or Facet.Update or Facet.Delete;
+            await Assert.That(operation.AlwaysErrorCodes.Contains(422)).IsEqualTo(expects);
+            await Assert.That(operation.AlwaysErrorCodes.Contains(500)).IsEqualTo(expects);
+            await Assert.That(operation.AlwaysErrorCodes.Contains(503)).IsEqualTo(expects);
+        }
+    }
+
+    [Test]
     public async Task Concurrency_Errors_Gated_Only_On_Update_And_Delete()
     {
         foreach (var operation in FacetOperations.All)

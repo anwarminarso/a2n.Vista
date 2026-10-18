@@ -190,7 +190,9 @@ public sealed class RequestKeyAuthorityPropertyTests
             // Register the writable Style B view: AddVista publishes its captured CRUD facet into the
             // IWriteFacetRegistry and wires the WriteMapperResolver the executor resolves its mapper from.
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<RequestKeyAuthorityView>());
+            services.AddVista(v => v.Register<RequestKeyAuthorityView>(ViewExecutionPlan.Split<SpoofSource, SpoofRow>(
+                ViewName,
+                s => new SpoofRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();
@@ -232,7 +234,7 @@ public sealed class RequestKeyAuthorityPropertyTests
     }
 
     /// <summary>The EF source entity the writable view projects from (single-source, Id-keyed).</summary>
-    private sealed class SpoofSource
+    internal sealed class SpoofSource
     {
         public int Id { get; set; }
 
@@ -260,14 +262,14 @@ public sealed class RequestKeyAuthorityPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class SpoofContext : DbContext
+    internal sealed class SpoofContext : DbContext
     {
         public SpoofContext(DbContextOptions<SpoofContext> options)
             : base(options)
         {
         }
 
-        public DbSet<SpoofSource> Sources => Set<SpoofSource>();
+        internal DbSet<SpoofSource> Sources => Set<SpoofSource>();
     }
 
     /// <summary>

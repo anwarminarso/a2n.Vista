@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using System.Globalization;
 using a2n.Vista.Adapters;
 using a2n.Vista.AspNetCore.Execution;
 using a2n.Vista.Filter;
@@ -53,6 +54,21 @@ internal static class VistaProblemResults
 {
     /// <summary>The stable problem-detail <c>type</c> URN prefix for Vista errors.</summary>
     private const string TypePrefix = "urn:a2n.vista:error:";
+
+    /// <summary>
+    /// A 404 whose body is identical for a missing row, an out-of-scope row, a read-only route, and an
+    /// unmapped route. The body names no view and no key, so it does not reveal that a target exists.
+    /// </summary>
+    public static IResult ResourceNotFound() =>
+        HttpResults.Problem(
+            statusCode: StatusCodes.Status404NotFound,
+            title: "Not found",
+            type: TypePrefix + "not-found",
+            detail: "The requested resource was not found.",
+            extensions: new Dictionary<string, object?>
+            {
+                ["code"] = "not-found",
+            });
 
     /// <summary>
     /// Attempts to map <paramref name="exception"/> to an RFC 7807 <see cref="IResult"/>. Returns
@@ -173,12 +189,40 @@ internal static class VistaProblemResults
     /// </summary>
     private static IResult CreateWriteProblem(VistaWriteException write)
     {
-        return HttpResults.Problem(
+        var problem = HttpResults.Problem(
             statusCode: MapWriteStatus(write.Code),
             title: WriteTitle(write.Code),
             type: TypePrefix + write.ErrorCode,
             detail: write.Message,
             extensions: BuildWriteExtensions(write));
+
+        if (write.Code == WriteErrorCode.StoreBusy)
+        {
+            return new RetryAfterResult(problem, VistaStoreBusyException.RetryAfterSeconds);
+        }
+
+        return problem;
+    }
+
+    /// <summary>
+    /// Sets <c>Retry-After</c> before the problem body is written (Decision Log D160).
+    /// </summary>
+    private sealed class RetryAfterResult : IResult
+    {
+        private readonly IResult _inner;
+        private readonly int _seconds;
+
+        public RetryAfterResult(IResult inner, int seconds)
+        {
+            _inner = inner;
+            _seconds = seconds;
+        }
+
+        public async Task ExecuteAsync(HttpContext httpContext)
+        {
+            httpContext.Response.Headers.RetryAfter = _seconds.ToString(CultureInfo.InvariantCulture);
+            await _inner.ExecuteAsync(httpContext).ConfigureAwait(false);
+        }
     }
 
     /// <summary>Maps a <see cref="WriteErrorCode"/> to its HTTP status code (design "Error Handling").</summary>
@@ -191,8 +235,10 @@ internal static class VistaProblemResults
         WriteErrorCode.ValidationFailed => StatusCodes.Status400BadRequest,
         WriteErrorCode.BulkNotEnabled => StatusCodes.Status400BadRequest,
         WriteErrorCode.PreconditionRequired => StatusCodes.Status428PreconditionRequired,
-        WriteErrorCode.ConcurrencyConflict => StatusCodes.Status409Conflict,
-        WriteErrorCode.WriteConflict => StatusCodes.Status409Conflict,
+        WriteErrorCode.ConcurrencyConflict => StatusCodes.Status412PreconditionFailed,
+        WriteErrorCode.ConstraintViolation => StatusCodes.Status422UnprocessableEntity,
+        WriteErrorCode.PersistenceFailed => StatusCodes.Status500InternalServerError,
+        WriteErrorCode.StoreBusy => StatusCodes.Status503ServiceUnavailable,
         // NoWritePlan is rendered as an indistinguishable 404 by the endpoint (never via a coded body);
         // if one ever reaches here, fall back to 404 so no existence signal leaks.
         WriteErrorCode.NoWritePlan => StatusCodes.Status404NotFound,
@@ -209,8 +255,10 @@ internal static class VistaProblemResults
         WriteErrorCode.ValidationFailed => "Validation failed",
         WriteErrorCode.BulkNotEnabled => "Bulk writes not enabled",
         WriteErrorCode.PreconditionRequired => "Precondition required",
-        WriteErrorCode.ConcurrencyConflict => "Concurrency conflict",
-        WriteErrorCode.WriteConflict => "Write conflict",
+        WriteErrorCode.ConcurrencyConflict => "Precondition failed",
+        WriteErrorCode.ConstraintViolation => "Constraint violation",
+        WriteErrorCode.PersistenceFailed => "Persistence failed",
+        WriteErrorCode.StoreBusy => "Service unavailable",
         WriteErrorCode.NoWritePlan => "Not found",
         _ => "Write rejected",
     };

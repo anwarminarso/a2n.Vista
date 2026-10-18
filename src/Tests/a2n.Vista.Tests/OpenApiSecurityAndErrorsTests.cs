@@ -328,7 +328,7 @@ public sealed class OpenApiSecurityAndErrorsTests
     public async Task Every_Error_Response_Uses_ProblemJson_Referencing_The_Single_ProblemDetails()
     {
         var document = Build(anonymous: false);
-        var errorCodes = new[] { "400", "403", "404", "409", "428" };
+        var errorCodes = new[] { "400", "403", "404", "409", "412", "422", "428", "500" };
 
         foreach (var (_, _, operation) in Operations(document))
         {
@@ -358,15 +358,45 @@ public sealed class OpenApiSecurityAndErrorsTests
     {
         var document = Build(anonymous: false, includeToken: true, writeFacets: TokenFacets());
 
-        foreach (var suffix in new[] { "update", "delete" })
-        {
-            var operation = document.Paths![TokenRoute + "/" + suffix].Post!;
-            await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
+        var update = document.Paths![TokenRoute + "/update"].Post!;
+        await Assert.That(update.Responses!.ContainsKey("428")).IsTrue();
+        await Assert.That(update.Responses!.ContainsKey("412")).IsTrue();
+        await Assert.That(update.Responses!.ContainsKey("409")).IsFalse();
+        await Assert.That(update.Responses!["412"].Description).Contains("write-concurrency-conflict");
+        await Assert.That(update.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(update.Responses!["422"].Description).Contains("write-constraint-violation");
+        await Assert.That(update.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(update.Responses!["500"].Description).Contains("write-persistence-failed");
+        await Assert.That(update.Responses!.ContainsKey("503")).IsTrue();
+        await Assert.That(update.Responses!["503"].Description).Contains("write-busy");
+        await Assert.That(update.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        await Assert.That(update.Responses!["200"].Content!.ContainsKey("application/json")).IsTrue();
 
-            // The success (200) response carries an ETag header for the token-bearing view (R3.5).
-            await Assert.That(operation.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
-        }
+        var delete = document.Paths![TokenRoute + "/delete"].Post!;
+        await Assert.That(delete.Responses!.ContainsKey("428")).IsTrue();
+        await Assert.That(delete.Responses!.ContainsKey("412")).IsTrue();
+        await Assert.That(delete.Responses!.ContainsKey("409")).IsFalse();
+        await Assert.That(delete.Responses!["412"].Description).Contains("write-concurrency-conflict");
+        await Assert.That(delete.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(delete.Responses!["422"].Description).Contains("write-constraint-violation");
+        await Assert.That(delete.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(delete.Responses!["500"].Description).Contains("write-persistence-failed");
+        await Assert.That(delete.Responses!.ContainsKey("503")).IsTrue();
+        await Assert.That(delete.Responses!["503"].Description).Contains("write-busy");
+        await Assert.That(delete.Responses!.ContainsKey("200")).IsFalse();
+        await Assert.That(delete.Responses!.ContainsKey("204")).IsTrue();
+        await Assert.That(delete.Responses!["204"].Headers).IsNull();
+        await Assert.That(delete.Responses!["204"].Content).IsNull();
+
+        var create = document.Paths![TokenRoute + "/create"].Post!;
+        await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("503")).IsTrue();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("422")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("500")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/list"].Post!.Responses!.ContainsKey("503")).IsFalse();
+        await Assert.That(document.Paths![ReadRoute + "/detail"].Post!.Responses!.ContainsKey("422")).IsFalse();
     }
 
     [Test]
@@ -376,13 +406,14 @@ public sealed class OpenApiSecurityAndErrorsTests
         // A writable view whose facet declares no token (and no registry at all) must not emit 428/409.
         var document = Build(anonymous: false, writeFacets: TokenFacets());
 
-        foreach (var suffix in new[] { "update", "delete" })
-        {
-            var operation = document.Paths![WriteRoute + "/" + suffix].Post!;
-            await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
-            await Assert.That(operation.Responses!["200"].Headers).IsNull();
-        }
+        var updated = document.Paths![WriteRoute + "/update"].Post!;
+        await Assert.That(updated.Responses!.ContainsKey("428")).IsFalse();
+        await Assert.That(updated.Responses!.ContainsKey("412")).IsFalse();
+        await Assert.That(updated.Responses!["200"].Headers).IsNull();
+        var deleted = document.Paths![WriteRoute + "/delete"].Post!;
+        await Assert.That(deleted.Responses!.ContainsKey("428")).IsFalse();
+        await Assert.That(deleted.Responses!.ContainsKey("412")).IsFalse();
+        await Assert.That(deleted.Responses!["204"].Headers).IsNull();
     }
 
     [Test]
@@ -400,6 +431,7 @@ public sealed class OpenApiSecurityAndErrorsTests
                 var operation = document.Paths![route + "/" + suffix].Post!;
                 await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
                 await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+                await Assert.That(operation.Responses!.ContainsKey("412")).IsFalse();
             }
         }
     }

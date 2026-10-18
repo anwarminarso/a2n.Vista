@@ -3,7 +3,9 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
+using System.Globalization;
 using System.Linq;
+using System.Linq.Expressions;
 using System.Net;
 using System.Net.Http;
 using System.Text;
@@ -11,9 +13,11 @@ using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.AspNetCore.Authorization;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Ports;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
+using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.TestHost;
 using Microsoft.Data.Sqlite;
@@ -61,6 +65,40 @@ public sealed class WriteEndpointExampleTests
 
     // ---- Happy paths ---------------------------------------------------------------------------------
 
+    /// <summary>
+    /// D158: a create whose table was dropped is a non-constraint <c>DbUpdateException</c>. The HTTP
+    /// response is 500 <c>write-persistence-failed</c> problem+json, not 409 <c>write-conflict</c>, and
+    /// the body does not repeat the provider's SQL or table name.
+    /// </summary>
+    [Test]
+    public async Task Create_When_Store_Table_Is_Missing_Returns_500_PersistenceFailed_Not_WriteConflict()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.DropPlainTable();
+
+        var response = await app.Client.PostAsync(
+            $"{PlainRoute}/create",
+            Json("{\"model\":{\"name\":\"missing-table\"}}"));
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.InternalServerError);
+        await Assert.That(response.Content.Headers.ContentType?.MediaType)
+            .IsEqualTo("application/problem+json");
+
+        using var doc = JsonDocument.Parse(body);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        await Assert.That(code).IsEqualTo(WriteErrorCodes.PersistenceFailed);
+        await Assert.That(doc.RootElement.GetProperty("status").GetInt32()).IsEqualTo(500);
+
+        foreach (var forbidden in new[]
+                 {
+                     "Plains", "PlainSource", "SQLite", "no such table", "Exception", "UNIQUE", "SELECT ",
+                 })
+        {
+            await Assert.That(body.Contains(forbidden, StringComparison.OrdinalIgnoreCase)).IsFalse();
+        }
+    }
+
     /// <summary>R1.1/R1.2/R10.1: a create returns 200 with a body carrying ONLY the new primary key.</summary>
     [Test]
     public async Task Create_HappyPath_Returns_200_With_PrimaryKey_Only()
@@ -91,22 +129,29 @@ public sealed class WriteEndpointExampleTests
         app.SeedPlain(1, "before");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/update", Json("{\"key\":1,\"model\":{\"name\":\"after\"}}"));
+        var body = await response.Content.ReadAsStringAsync();
 
         await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        using var doc = JsonDocument.Parse(body);
+        await Assert.That(doc.RootElement.GetProperty("name").GetString()).IsEqualTo("after");
+        await Assert.That(doc.RootElement.GetProperty("id").GetInt32()).IsEqualTo(1);
         await Assert.That(app.ReadPlainName(1)).IsEqualTo("after");
     }
 
-    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 200.</summary>
+    /// <summary>R3.1/R3.2: a delete of an in-scope keyed row removes exactly that row and returns 204.</summary>
     [Test]
-    public async Task Delete_HappyPath_Returns_200_And_Removes_The_Row()
+    public async Task Delete_HappyPath_Returns_204_And_Removes_The_Row()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedPlain(1, "doomed");
         app.SeedPlain(2, "survivor");
 
         var response = await app.Client.PostAsync($"{PlainRoute}/delete", Json("{\"key\":1}"));
+        var body = await response.Content.ReadAsStringAsync();
 
-        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.NoContent);
+        await Assert.That(body).IsEmpty();
+        await Assert.That(Header(response, "ETag")).IsNull();
         await Assert.That(app.ReadPlainName(1)).IsNull();
         await Assert.That(app.ReadPlainName(2)).IsEqualTo("survivor");
     }
@@ -171,11 +216,11 @@ public sealed class WriteEndpointExampleTests
     }
 
     /// <summary>
-    /// R6.1/R6.4: a non-empty If-Match matching the stored token is used as the expected token — the
-    /// update succeeds (200) and the ETag round-trips the token.
+    /// A matching unquoted If-Match succeeds, the stored token changes, and the ETag is that new token
+    /// as a strong quoted entity-tag. A second update that resends the old token is 412.
     /// </summary>
     [Test]
-    public async Task TokenView_Update_With_Correct_IfMatch_Returns_200_And_RoundTrips_ETag()
+    public async Task TokenView_Update_Rotates_The_Token_And_Rejects_The_Old_One()
     {
         await using var app = await TestApp.StartAsync();
         app.SeedToken(1, "orig", 42);
@@ -183,8 +228,122 @@ public sealed class WriteEndpointExampleTests
         var response = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"changed\"}}", "42");
 
         await Assert.That(response.Status).IsEqualTo(HttpStatusCode.OK);
-        await Assert.That(response.ETag).IsEqualTo("42");
+        await Assert.That(response.ETag).IsNotNull();
+        await Assert.That(response.ETag!).StartsWith("\"");
+        await Assert.That(response.ETag!).EndsWith("\"");
+        await Assert.That(response.ETag).IsNotEqualTo("\"42\"");
+        using var updatedJson = JsonDocument.Parse(response.Body);
+        await Assert.That(updatedJson.RootElement.GetProperty("name").GetString()).IsEqualTo("changed");
+        await Assert.That(updatedJson.RootElement.GetProperty("version").GetInt32().ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
         await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
+        await Assert.That(app.ReadTokenVersion(1).ToString(CultureInfo.InvariantCulture))
+            .IsEqualTo(response.ETag!.Trim('"'));
+
+        var stale = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"lost\"}}", "\"42\"");
+        await Assert.That(stale.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("changed");
+    }
+
+    /// <summary>
+    /// D158/D159: create returns the post-write token as a quoted ETag. Sending that header back updates
+    /// the row and rotates the token. Sending it again is 412.
+    /// </summary>
+    [Test]
+    public async Task TokenView_Create_Returns_Quoted_ETag_And_Update_Honors_It()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var created = await app.Client.PostAsync($"{TokenRoute}/create", Json("{\"model\":{\"name\":\"born\"}}"));
+        var etag = Header(created, "ETag");
+
+        await Assert.That(created.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(etag).IsNotNull();
+        await Assert.That(etag!).StartsWith("\"");
+        await Assert.That(etag!).EndsWith("\"");
+
+        var updated = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"grown\"}}", etag!);
+        await Assert.That(updated.Status).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(updated.ETag).IsNotEqualTo(etag);
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
+
+        var replay = app.SendWithIfMatch($"{TokenRoute}/update", "{\"key\":1,\"model\":{\"name\":\"again\"}}", etag!);
+        await Assert.That(replay.Status).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("grown");
+    }
+
+    /// <summary>
+    /// D159: a stale <c>If-Match</c> on a token view is 412 <c>write-concurrency-conflict</c>. The retired
+    /// <c>write-conflict</c> code is not emitted.
+    /// </summary>
+    [Test]
+    public async Task TokenView_Update_With_Stale_IfMatch_Returns_412_ConcurrencyConflict()
+    {
+        await using var app = await TestApp.StartAsync();
+        app.SeedToken(1, "orig", 42);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, $"{TokenRoute}/update")
+        {
+            Content = new StringContent("{\"key\":1,\"model\":{\"name\":\"lost\"}}", Encoding.UTF8, "application/json"),
+        };
+        request.Headers.TryAddWithoutValidation("If-Match", "\"0\"");
+        var response = await app.Client.SendAsync(request);
+        var body = await response.Content.ReadAsStringAsync();
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.PreconditionFailed);
+        using var doc = JsonDocument.Parse(body);
+        var code = doc.RootElement.GetProperty("code").GetString();
+        await Assert.That(code).IsEqualTo(WriteErrorCodes.ConcurrencyConflict);
+        await Assert.That(code).IsNotEqualTo("write-conflict");
+        await Assert.That(app.ReadTokenName(1)).IsEqualTo("orig");
+    }
+
+    /// <summary>
+    /// D158: detail sets <c>ETag</c> from the projected token member, and leaves it unset when the row
+    /// does not project that member. The inline test views have no generated read plan, so this drives
+    /// the mapper directly.
+    /// </summary>
+    [Test]
+    public async Task Detail_ETag_Uses_Projected_Token_And_Skips_A_Row_Without_It()
+    {
+        Expression<Func<TokenSource, int>> token = e => e.Version;
+        var registry = new WriteFacetRegistry();
+        registry.Register(TokenView, new CrudFacetDefinition(
+            typeof(NameCrud),
+            typeof(TokenSource),
+            Array.Empty<WritableFieldMapping>(),
+            token,
+            false));
+
+        var services = new ServiceCollection();
+        services.AddSingleton<IWriteFacetRegistry>(registry);
+        var provider = services.BuildServiceProvider();
+
+        var projected = new DefaultHttpContext { RequestServices = provider };
+        VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
+            projected,
+            TokenView,
+            new TokenRow { Id = 1, Name = "orig", Version = 42 });
+        await Assert.That(projected.Response.Headers.ETag.ToString()).IsEqualTo("\"42\"");
+
+        var unprojected = new DefaultHttpContext { RequestServices = provider };
+        VistaEndpointRouteBuilderExtensions.TryApplyDetailETag(
+            unprojected,
+            TokenView,
+            new PlainRow { Id = 1, Name = "orig" });
+        await Assert.That(unprojected.Response.Headers.ETag.Count).IsEqualTo(0);
+    }
+
+    /// <summary>A tokenless create does not emit <c>ETag</c>.</summary>
+    [Test]
+    public async Task TokenlessView_Create_Omits_ETag()
+    {
+        await using var app = await TestApp.StartAsync();
+
+        var response = await app.Client.PostAsync($"{PlainRoute}/create", Json("{\"model\":{\"name\":\"plain\"}}"));
+
+        await Assert.That(response.StatusCode).IsEqualTo(HttpStatusCode.OK);
+        await Assert.That(Header(response, "ETag")).IsNull();
     }
 
     /// <summary>R6.6: a tokenless view ignores a present If-Match (harmless) — the update still returns 200.</summary>
@@ -280,6 +439,9 @@ public sealed class WriteEndpointExampleTests
 
     private static StringContent Json(string json) => new(json, Encoding.UTF8, "application/json");
 
+    private static string? Header(HttpResponseMessage response, string name) =>
+        response.Headers.TryGetValues(name, out var values) ? values.FirstOrDefault() : null;
+
     /// <summary>Reads the RFC 7807 <c>code</c> extension member from a problem response body.</summary>
     private static async Task<string?> CodeOf(HttpResponseMessage response)
     {
@@ -290,14 +452,14 @@ public sealed class WriteEndpointExampleTests
 
     // ---- Fixtures ------------------------------------------------------------------------------------
 
-    private sealed class PlainSource
+    internal sealed class PlainSource
     {
         public int Id { get; set; }
 
         public string Name { get; set; } = string.Empty;
     }
 
-    private sealed class TokenSource
+    internal sealed class TokenSource
     {
         public int Id { get; set; }
 
@@ -306,7 +468,7 @@ public sealed class WriteEndpointExampleTests
         public int Version { get; set; }
     }
 
-    private sealed class BulkSource
+    internal sealed class BulkSource
     {
         public int Id { get; set; }
 
@@ -342,7 +504,7 @@ public sealed class WriteEndpointExampleTests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class ExampleWriteContext : DbContext
+    internal sealed class ExampleWriteContext : DbContext
     {
         public ExampleWriteContext(DbContextOptions<ExampleWriteContext> options)
             : base(options)
@@ -446,9 +608,15 @@ public sealed class WriteEndpointExampleTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ExampleWriteContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<PlainWritableView>();
-                            v.Register<TokenWritableView>();
-                            v.Register<BulkWritableView>();
+                            v.Register<PlainWritableView>(ViewExecutionPlan.Split<PlainSource, PlainRow>(
+                                PlainView,
+                                s => new PlainRow { Id = s.Id, Name = s.Name }));
+                            v.Register<TokenWritableView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                                TokenView,
+                                s => new TokenRow { Id = s.Id, Name = s.Name, Version = s.Version }));
+                            v.Register<BulkWritableView>(ViewExecutionPlan.Split<BulkSource, BulkRow>(
+                                BulkView,
+                                s => new BulkRow { Id = s.Id, Name = s.Name }));
                         });
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
@@ -470,6 +638,19 @@ public sealed class WriteEndpointExampleTests
 
         public void SeedPlain(int id, string name) => Mutate(ctx => ctx.Plains.Add(new PlainSource { Id = id, Name = name }));
 
+        /// <summary>Drops the plain view's table so the next create fails with a non-constraint store error.</summary>
+        public void DropPlainTable()
+        {
+            using var scope = _host.Services.CreateScope();
+            var ctx = scope.ServiceProvider.GetRequiredService<ExampleWriteContext>();
+            var table = ctx.Model.FindEntityType(typeof(PlainSource))?.GetTableName()
+                ?? throw new InvalidOperationException("PlainSource has no mapped table.");
+            // The identifier comes from the EF model for this fixture, not from a request.
+#pragma warning disable EF1003
+            ctx.Database.ExecuteSqlRaw("DROP TABLE \"" + table.Replace("\"", "\"\"", StringComparison.Ordinal) + "\";");
+#pragma warning restore EF1003
+        }
+
         public void SeedToken(int id, string name, int version) =>
             Mutate(ctx => ctx.Tokens.Add(new TokenSource { Id = id, Name = name, Version = version }));
 
@@ -477,12 +658,14 @@ public sealed class WriteEndpointExampleTests
 
         public string? ReadTokenName(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Name).SingleOrDefault());
 
+        public int ReadTokenVersion(int id) => Read(ctx => ctx.Tokens.AsNoTracking().Where(s => s.Id == id).Select(s => s.Version).Single());
+
         public int PlainRowCount() => Read(ctx => ctx.Plains.AsNoTracking().Count());
 
         public int BulkRowCount() => Read(ctx => ctx.Bulks.AsNoTracking().Count());
 
-        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status + ETag.</summary>
-        public (HttpStatusCode Status, string? ETag) SendWithIfMatch(string url, string json, string ifMatch)
+        /// <summary>Posts a body with a raw (unvalidated) <c>If-Match</c> header; returns the status, ETag, and body.</summary>
+        public (HttpStatusCode Status, string? ETag, string Body) SendWithIfMatch(string url, string json, string ifMatch)
         {
             using var request = new HttpRequestMessage(HttpMethod.Post, url)
             {
@@ -502,8 +685,9 @@ public sealed class WriteEndpointExampleTests
             }
 
             var status = response.StatusCode;
+            var body = response.Content.ReadAsStringAsync().GetAwaiter().GetResult();
             response.Dispose();
-            return (status, etag);
+            return (status, etag, body);
         }
 
         private void Mutate(Action<ExampleWriteContext> mutate)

@@ -39,8 +39,8 @@ public class NorthwindDbContext : DbContext
 
     /// <summary>
     /// Purpose-made writable table used by the Vista write-path demo (see <see cref="Memo"/>). It is not
-    /// part of the real Northwind schema; the write self-test creates and exercises it in an isolated
-    /// database so the read-only sample data is never mutated.
+    /// part of the real Northwind schema. Hosts create it on the per-run copy, not on the extracted
+    /// template.
     /// </summary>
     public virtual DbSet<Memo> Memos { get; set; }
 
@@ -356,9 +356,15 @@ public class NorthwindDbContext : DbContext
             entity.Property(e => e.MemoId)
                 .ValueGeneratedOnAdd()
                 .HasColumnName("MemoID");
-            entity.Property(e => e.Subject).IsRequired();
-            entity.Property(e => e.Body).IsRequired();
-            entity.Property(e => e.RowVersion).IsConcurrencyToken();
+            // Lengths live on the model. The write executor reads MaxLength; it does not hard-code them.
+            entity.Property(e => e.Subject).IsRequired().HasMaxLength(120);
+            entity.Property(e => e.Body).IsRequired().HasMaxLength(4000);
+            // SQLite has no native rowversion. The column is an application Guid: EF includes the
+            // previous value in UPDATE/DELETE WHERE, and the write executor mints a new Guid on every
+            // successful insert and update (ValueGenerated.Never — the database does not assign it).
+            entity.Property(e => e.RowVersion)
+                .IsConcurrencyToken()
+                .ValueGeneratedNever();
         });
 
         modelBuilder.Entity<SalesByCategory>(entity =>

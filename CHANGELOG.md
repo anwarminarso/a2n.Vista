@@ -8,7 +8,252 @@ While the version is `0.x`, anything may change between releases.
 
 ## [Unreleased]
 
-Nothing yet.
+## [0.0.5] - 2026-10-18
+
+### Added
+- **TanStack Table adapter** (`a2n.Vista.Adapters.TanStackTable`, Decision Log D154–D157,
+  [#21](https://github.com/anwarminarso/a2n.Vista/pull/21)). The third real grid adapter.
+  `POST {route}/tanstack` binds TanStack Table's manual state — `pagination`, `sorting`,
+  `columnFilters`, `globalFilter`, `columnVisibility` — into Vista's query (absolute offset, sort,
+  Filter, Search, `SelectFields`) and returns `{ rows, rowCount, pageCount }`. `columnVisibility` /
+  `SelectFields` only hides a column in the table UI. Hidden fields are still sent to the client; it
+  is not an access-control mechanism. Core-only, source-generated JSON, same host glue as DataTables
+  and AG Grid. The Northwind showcase gains a TanStack Table page next to the AG Grid and DataTables
+  pages. The package is published to NuGet with this release: `publish.yml` lists
+  `a2n.Vista.Adapters.TanStackTable` in `PACK_PROJECTS`, and the package depends on `a2n.Vista.Core`
+  at the same version.
+- `WriteErrorCode.ConstraintViolation` / `WriteErrorCodes.ConstraintViolation`
+  (`write-constraint-violation`) and `VistaConstraintViolationException`.
+- `WriteErrorCode.PersistenceFailed` / `WriteErrorCodes.PersistenceFailed` (`write-persistence-failed`)
+  and `VistaPersistenceException`.
+- `DbUpdateFailureClassification` and `AddConstraintProbe` for trim-safe provider constraint probes.
+- `WriteErrorCode.StoreBusy` / `WriteErrorCodes.StoreBusy` (`write-busy`) and `VistaStoreBusyException`.
+  Only a lock recognized by a registered transient-lock probe is HTTP 503 with `Retry-After: 2`
+  (Decision Log D160). The SQLite probe recognizes `SQLITE_BUSY` (5) and `SQLITE_LOCKED` (6).
+  `DbException.IsTransient` alone is not a lock: a connection lost during COMMIT has an unknown
+  outcome, and inviting an automatic retry could create a duplicate row on a create without a token.
+  Any other `DbException` is HTTP 500 `write-persistence-failed` with no `Retry-After`.
+- The Northwind and AG Grid hosts open the working SQLite file through `SqliteVistaConnection`:
+  `PRAGMA busy_timeout = 5000`, connection `Default Timeout` of 5 seconds, and WAL. For a
+  single-statement create or update, EF opens no transaction (`AutoTransactionBehavior.WhenNeeded`),
+  so `BEGIN IMMEDIATE` does not run. Those writes wait on the busy timeout and the connection
+  timeout. `BEGIN IMMEDIATE` (the transaction interceptor) applies only when EF opens a transaction
+  (a multi-statement save or an explicit transaction). A losing single-statement update has been
+  observed to return 412 after about 1.0 s (1003–1005 ms) while the winner takes 3–6 ms. The cause
+  is unconfirmed (suspected busy-handler sleep granularity in the native SQLite build, or the
+  provider retry loop) and will be investigated in a separate cleanup PR. `Retry-After: 2` is an
+  open question: if a write still hits a lock after waiting up to 5 s, the store is heavily busy,
+  so a short pause before retry is reasonable. Review that value together with the N4 repro.
+  The file-database race tests use the same connection helper. They are not a regression guard for
+  the lock bug: they can pass with the old connection string.
+
+### Fixed
+- **DateTime and DateTimeOffset concurrency tokens round-trip.** The wire form is invariant `"O"`.
+  A `DateTime` with `Kind` Unspecified is labeled UTC with `DateTime.SpecifyKind` (no clock shift);
+  `Kind` Local is converted with `ToUniversalTime`. A `DateTimeOffset` keeps its offset. The wire
+  form is checked before `SaveChanges`, so an entity-tag that cannot be quoted does not commit.
+  `byte[]` tokens are standard Base64, not base64url. The create, update, and detail `ETag` values
+  for the same row match byte for byte, including a `DateTimeOffset` stored at a non-zero offset.
+- **`ForeignKeyContext` stays outside the relational-model warmup.** The foreign-key fixture in
+  `WritePersistenceFailureIntegrationTests` is built by a per-test harness, not inside a CsCheck
+  sample, so `RelationalModelWarmup` does not finalize it. The context is `internal` and listed in
+  `RelationalModelWarmupTests` exclusions with the existing `OutsideSample` reason, next to
+  `UniqueContext` and `TokenContext`.
+- **`ExtractNorthwindDatabase` is safe when several builds extract at once.** Each run unzips into
+  its own directory beside `northwind.db` (a GUID name), checks the extracted file's SHA-256 there,
+  and only then moves that file onto `northwind.db`. If the destination already has the pinned hash,
+  the run leaves it in place. A run that loses the race and finds a pinned file already there accepts
+  that file and deletes only its own temp file. A correct `northwind.db` is never deleted. A missing
+  zip, a missing checksum, an empty pin, a zip hash mismatch, a zip with no `northwind.db`, or a
+  database hash mismatch still fails the build. A database hash mismatch deletes only the temp file.
+  The target still does not create an empty database and does not call `EnsureCreated`.
+  `tests/e2e/run.sh`, `tests/e2e/run-startup-burst.sh`, CI, and `RepoPaths.EnsureDatabase` still call
+  only this target.
+- **Northwind `vWritableMemo` works against a per-run copy of the extracted database**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8)). The Microsoft
+  sample had no `VistaMemos` table, so a live list/update/delete returned 500 (`no such table:
+  VistaMemos`) and create returned 409 `write-conflict`. `src/Examples/DB/Northwind SQLite.zip` stays
+  the shipped database (11,096,792 bytes). `src/Examples/DB/Northwind.sha256` pins the SHA-256 of that
+  zip and of the extracted `northwind.db`. `ExtractNorthwindDatabase` is the only extraction path: the
+  sample build, `tests/e2e/run.sh`, `tests/e2e/run-startup-burst.sh`, `RepoPaths.EnsureDatabase`, and CI
+  all run that target. A missing zip
+  or a hash mismatch fails the build with the expected and actual hashes. The target does not create an
+  empty database and does not call `EnsureCreated`. The extracted file is a read-only template and is not
+  committed. On startup each Northwind host refuses to start when that template is missing or its hash is
+  not the pin, then copies it into a per-run directory whose name is a GUID (under the temp directory, or
+  under `NORTHWIND_WORKING_DIRECTORY`) and runs one `CREATE TABLE IF NOT EXISTS VistaMemos` against the
+  copy only. The copy is deleted on shutdown. Memo create/update/delete and the
+  self-tests write only to the copy, which is deleted when the process stops. The host self-test
+  asserts the connection is that copy, that the copy's `sqlite_master` contains `VistaMemos`, that a
+  stale `If-Match` is `write-concurrency-conflict` (HTTP 412), and that the extracted template's SHA-256 is
+  unchanged from before the copy through the write round trip. The isolated self-test still runs
+  Create/Update/Delete on an in-memory database. Both delete the memo they inserted.
+- **Save failures are three distinct outcomes**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8), Decision Log D158, HTTP status corrected by D159
+  in [#23](https://github.com/anwarminarso/a2n.Vista/pull/23)). A genuine concurrency failure
+  (`DbUpdateConcurrencyException`, including the `If-Match` mismatch that raises
+  `VistaConcurrencyConflictException`) is HTTP 412 `write-concurrency-conflict`. A unique, foreign-key,
+  NOT NULL, or CHECK breach is HTTP 422 `write-constraint-violation`
+  (`VistaConstraintViolationException`). Every other `DbUpdateException` — a missing table, a connection
+  error, an unrecognized provider error — is HTTP 500 `write-persistence-failed`
+  (`VistaPersistenceException`). The client message stays fixed and leak-free; the provider exception
+  remains the inner exception for server logs. A missing `VistaMemos` table was the case that used to
+  come back as 409 `write-conflict`. Core classifies a constraint only from SQLSTATE class `23` or a
+  host probe registered with `AddConstraintProbe`. It does not reference a database provider, match an
+  exception type name, or treat the words `constraint failed` as a constraint. The Northwind hosts
+  register that probe: `SqliteException.SqliteErrorCode == 19` (`SQLITE_CONSTRAINT`), and only after
+  that type check the message `constraint failed`. Anything else is HTTP 500.
+- **An update checks the detail read path before `SaveChanges`**
+  ([#24](https://github.com/anwarminarso/a2n.Vista/pull/24), Decision Log D159). After the in-scope row
+  is loaded, and before the mapper or `SaveChanges`, `EnsureDetailReadPath` runs. The base check accepts
+  a generated invoker or a registered execution plan. Otherwise it throws the same
+  `InvalidOperationException` Detail throws for a metadata-only view: the message contains
+  `metadata-only` and the view name, and the database row is unchanged
+  (`UpdateContractAuditTests.Update_Without_An_Execution_Plan_Fails_Before_Save`). The method is
+  `protected virtual`. A subclass that supplies the detail query by overriding
+  `ResolveScopedQueryable<TRow>` must also override `EnsureDetailReadPath`. The re-read calls that
+  override and does not consult the plan registry, so the base check would reject the update before
+  save. A subclass that overrides both can be constructed without a plan registry; that update returns
+  200 with the detail body and the row is saved
+  (`UpdateContractAuditTests.Subclass_Without_A_Plan_Registry_Updates_With_The_Detail_Body`).
+- **A `MaxLength` 422 names the writable view field.** The detail uses the CRUD member from the whitelist mapping (`Title` when that member is mapped to `InternalSubjectCol`). It does not include an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing.
+- **Create and detail return `ETag` on a token-bearing view.** `HandleCreateAsync` publishes the
+  post-write token for any view that declares a concurrency token. Detail sets `ETag` when the projected
+  row exposes that member. `vWritableMemo` projects `RowVersion`, so a client can form `If-Match`. A
+  mismatch is 412 `write-concurrency-conflict`. The `ETag` is a quoted strong entity-tag, and a
+  successful update replaces an application-generated token.
+
+### Changed
+- **Breaking (0.x): `write-conflict` is retired**
+  ([#8](https://github.com/anwarminarso/a2n.Vista/pull/8), Decision Log D158). It previously meant a
+  constraint violation and is no longer emitted. Concurrency keeps `write-concurrency-conflict`. Its HTTP
+  status is 412 (Decision Log D159, [#23](https://github.com/anwarminarso/a2n.Vista/pull/23)); it is not 409.
+
+  | Outcome | HTTP | Wire code | Exception |
+  | --- | --- | --- | --- |
+  | Concurrency conflict (`DbUpdateConcurrencyException`, stale `If-Match`) | 412 | `write-concurrency-conflict` | `VistaConcurrencyConflictException` (unchanged) |
+  | Constraint violation (unique, foreign key, NOT NULL, CHECK), when recognized | 422 | `write-constraint-violation` | `VistaConstraintViolationException` |
+  | Other `DbUpdateException` (missing table, I/O, unrecognized provider error) | 500 | `write-persistence-failed` | `VistaPersistenceException` |
+  | Probe-recognized store lock (D160, [#23](https://github.com/anwarminarso/a2n.Vista/pull/23)) | 503 | `write-busy` | `VistaStoreBusyException` |
+
+  Clients that matched the wire string `write-conflict` as a constraint violation must match
+  `write-constraint-violation` (HTTP 422). `write-concurrency-conflict` keeps its wire code; its HTTP
+  status is 412, and the problem title is "Precondition failed". `WriteErrorCode.WriteConflict` and
+  `WriteErrorCodes.WriteConflict` are removed. They are not obsolete aliases.
+
+  **`VistaWriteConflictException` is removed.** It is not an obsolete alias. Catch sites, `is` tests,
+  and `switch` arms on that type must change. Its two replacements are:
+
+  - `VistaConstraintViolationException` (`WriteErrorCode.ConstraintViolation`) — a recognized unique,
+    foreign-key, NOT NULL, or CHECK breach. HTTP 422 `write-constraint-violation`. The default message
+    is "The write violates a database constraint and was not applied."
+  - `VistaPersistenceException` (`WriteErrorCode.PersistenceFailed`) — every other non-concurrency
+    `DbUpdateException`, including a missing table, a connection failure, and a constraint the
+    classifier does not recognize. HTTP 500 `write-persistence-failed`. The default message is
+    "The write could not be saved."
+
+  Concurrency stays `VistaConcurrencyConflictException`. That type was not `VistaWriteConflictException`.
+  The provider exception remains `InnerException` and is not copied into the client response.
+
+  **`WriteErrorCode` values shifted, and code that switches on them must be updated.** `WriteConflict`
+  (7) was removed. `ConstraintViolation` now occupies 7 and `PersistenceFailed` is the new 8, so
+  `BulkNotEnabled` moved from 8 to 9 and `NoWritePlan` moved from 9 to 10. A `switch` on the 0.0.4
+  integer — or a stored integer compared against these values — selects a different member:
+  `7` is `ConstraintViolation` (it was `WriteConflict`), `8` is `PersistenceFailed` (it was
+  `BulkNotEnabled`), and `9` is `BulkNotEnabled` (it was `NoWritePlan`). `10` is `NoWritePlan`.
+  `StoreBusy` is new at 11 (D160) and does not move `NoWritePlan`. A `switch` that names
+  `WriteConflict` no longer compiles. A `switch` that lists the members by name must drop
+  `WriteConflict` and handle `ConstraintViolation`, `PersistenceFailed`, and `StoreBusy`. Names that remain
+  (`MalformedBody` through `ConcurrencyConflict`, `BulkNotEnabled`, `NoWritePlan`) still mean the same
+  outcome; only their integers moved where the table says so.
+
+  | Member | Previous value | Current value |
+  | --- | --- | --- |
+  | `MalformedBody` | 0 | 0 |
+  | `MissingKey` | 1 | 1 |
+  | `KeyTypeCoercion` | 2 | 2 |
+  | `IncompleteKey` | 3 | 3 |
+  | `ValidationFailed` | 4 | 4 |
+  | `PreconditionRequired` | 5 | 5 |
+  | `ConcurrencyConflict` | 6 | 6 |
+  | `WriteConflict` | 7 | removed |
+  | `ConstraintViolation` | not present | 7 |
+  | `PersistenceFailed` | not present | 8 |
+  | `BulkNotEnabled` | 8 | 9 |
+  | `NoWritePlan` | 9 | 10 |
+  | `StoreBusy` | not present | 11 |
+
+  **Unique and foreign-key violations on providers without SQLSTATE class `23` are HTTP 500 unless the
+  host registers a probe.** Core's only built-in rule reads `DbException.SqlState` and treats class
+  `23` as a constraint (PostgreSQL, and any driver that surfaces SQLSTATE). It does not reference a
+  provider, match an exception type name, or treat the words `constraint failed` as a constraint.
+  SQLite, SQL Server, and MySQL do not set that SQLSTATE, so a unique or foreign-key violation on
+  those providers — and a NOT NULL or CHECK violation the same way — is
+  `VistaPersistenceException`, HTTP 500 `write-persistence-failed`, until the host registers
+  `DbUpdateFailureClassification.AddConstraintProbe`. Register the probe once at startup, in the
+  assembly that references the provider, so the trimmer can see the type test. The delegate is
+  `Func<Exception, bool?>`: return `true` for a constraint, `false` for a definite non-constraint
+  (`false` stops the walk), or `null` to leave the exception to later probes and the SQLSTATE rule.
+  Probes run before the built-in rule and walk the exception and its inner exceptions. The Northwind
+  hosts call `SqliteConstraintProbe.Register()` before the host is built, which registers the constraint
+  probe and the transient-lock probe. The constraint probe is:
+
+  ```csharp
+  DbUpdateFailureClassification.AddConstraintProbe(static exception =>
+  {
+      if (exception is not SqliteException sqlite)
+      {
+          return null;
+      }
+
+      if (sqlite.SqliteErrorCode == 19) // SQLITE_CONSTRAINT
+      {
+          return true;
+      }
+
+      return sqlite.Message.Contains("constraint failed", StringComparison.OrdinalIgnoreCase);
+  });
+  ```
+
+  SQL Server and MySQL use the same method against the provider's own exception type. The
+  classification remarks name SQL Server 2601, 2627, 547, and 515, and MySQL 1062, 1451, and 1452.
+  The library does not ship those probes. An unrecognized provider error stays HTTP 500.
+
+- **Breaking (0.0.5): optimistic concurrency on a token-bearing write**
+  ([#23](https://github.com/anwarminarso/a2n.Vista/pull/23), Decision Log D159). Each row is
+  one behavior change. Generated TypeScript clients map `precondition-failed` to HTTP 412.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- |
+  | Missing `If-Match` | 428 `write-precondition-required`. Spec text said 412. | 428 `write-precondition-required` | Keep handling 428. Do not treat a missing token as 412. |
+  | Stale or mismatched `If-Match`, and `DbUpdateConcurrencyException` | 409 `write-concurrency-conflict`, title "Concurrency conflict" | 412 `write-concurrency-conflict`, title "Precondition failed" | Branch on HTTP 412. The wire `code` is unchanged. Stop treating 409 as the lost-update response. |
+  | `ETag` on create, update, and detail | Unquoted token | Strong quoted entity-tag `"<token>"` | Store the `ETag` header exactly as received, including the quotes, and send those bytes as `If-Match`. |
+  | `If-Match` parsing | Raw string compare | RFC 9110 quoted strong tags, including a list | Send a quoted strong tag. A single unquoted token is still accepted (legacy). `If-Match: *` and a weak-only `W/"…"` are 412. A comma-separated list matches when one strong tag equals the stored token; that tag is the `WHERE` value. |
+  | Token after a successful update | The same token, so a second write with the old `If-Match` could succeed | A new application token. The response `ETag` is the value on the row after save, never the request `If-Match`. That replacement overwrites a version the host stored on the entity. A store-generated token is not replaced by Vista | The next write must use the `ETag` from that response. Reusing the previous token is 412. |
+
+  `If-Match: *` deviates from RFC 9110 §13.1.1. That section treats `*` as success when the resource has a current representation. Vista returns 412 `write-concurrency-conflict` (the wire code is not renamed) because a wildcard cannot be the `WHERE` token and would skip the lost-update check. A successful delete of an in-scope row is 204 with no body and no `ETag`.
+
+- **Breaking (0.0.5): write success and not-found bodies**
+  ([#24](https://github.com/anwarminarso/a2n.Vista/pull/24)). Each row is one behavior change.
+
+  | Behavior | Old | New | Migration |
+  | --- | --- | --- | --- |
+  | Delete of an in-scope row | 200 with an empty body | 204 with no body and no `ETag` | Treat 204 as success. Do not call `res.json()` on the response. |
+  | Update of a row the caller can still read | 200 with an empty body and an `ETag` | 200 with the detail body (same read plan, scope, and masks as GET) and the new `ETag` | Read the updated row from the body. It matches a following detail GET, including a masked or computed field. Keep sending the `ETag` header, quotes included, as the next `If-Match`. |
+  | Update that leaves the row outside the caller's read scope | 200 with the copied entity fields | 204 with no body and no `ETag` | Treat 204 as success. Do not read a body. A later GET or write is 404. The write is applied. |
+  | Missing row, out-of-scope row, read-only route, and unmapped route under the view prefix | 404 with an empty body | 404 `application/problem+json`, code `not-found` | The body is the same for all four, and it names no view and no key. Branch on status 404. Paths outside the view prefix, including `/`, stay with the host. |
+  | String longer than the EF property `MaxLength` | Accepted (SQLite `TEXT` has no length) | 422 `write-constraint-violation`, and the row is unchanged | The check covers mapped whitelist fields on create and modified properties on update. A legacy over-long value in a column the write does not set does not block the update. The 422 detail names the writable view field from that mapping. It does not name an entity member, a table, or a column. A property with no mapping uses a generic message that names nothing. `vWritableMemo` `Subject` is 120 and `Body` is 4000. The endpoint does not hard-code those numbers. |
+
+  **HTTP 204 when a write leaves the row outside the caller's read scope.** After `SaveChanges`
+  succeeds, the executor re-reads the row with the same scoped detail path a detail GET uses (the read
+  plan, masks, this request's trusted scope, by key). When that read returns no row, the HTTP response
+  is 204 with an empty body and no `ETag`. The write is already applied. A later detail or update of
+  that key is 404. `UpdateDetailBodyTests.Update_That_Leaves_The_Read_Scope_Is_204_And_A_Later_Read_Is_404`
+  moves `Bucket` from `in` to `out`, saves `bucket = out`, returns 204 with an empty body and no
+  `ETag`, and the following detail and update are 404 while the saved name stays `after`.
+
+### Security
+- **net10 `a2n.Vista.OpenApi` no longer restores `Microsoft.OpenApi` 2.0.0** (GHSA-v5pm-xwqc-g5wc, high). The advisory covers `Microsoft.OpenApi` `>= 2.0.0-preview.11` and `<= 2.7.4`, and is fixed in 2.7.5. `Microsoft.AspNetCore.OpenApi` 10.0.0 through 10.0.10 depend on `Microsoft.OpenApi` 2.0.0. The net10 pin is now **10.0.13**, whose nuspec depends on `Microsoft.OpenApi` `[2.12.2, 3.0.0)`. net8 has no OpenAPI pipeline package. net9 stays on `Microsoft.AspNetCore.OpenApi` 9.0.6, which pulls `Microsoft.OpenApi` 1.6.x, outside the affected range. The solution-wide `NuGetAuditSuppress` for this advisory is removed.
 
 ## [0.0.4] - 2026-08-11
 
@@ -633,7 +878,8 @@ adapters. Because this is `0.x`, anything may still change between releases.
   case-insensitive serialization seam so the `model`/`key` members bind correctly,
   restoring the `403`-before-`400` ordering for denied writes.
 
-[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.4...HEAD
+[Unreleased]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.5...HEAD
+[0.0.5]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.4...v0.0.5
 [0.0.4]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.3...v0.0.4
 [0.0.3]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.2...v0.0.3
 [0.0.2]: https://github.com/anwarminarso/a2n.Vista/compare/v0.0.1...v0.0.2

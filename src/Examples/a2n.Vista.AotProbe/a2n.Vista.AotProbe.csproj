@@ -122,6 +122,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- The Northwind SQLite probe, analyzed here so SqliteErrorCode access is trim-visible. -->
+    <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- SQLite provider for the self-contained probe DbContext (net8.0 → EF Core 8.0.x, centrally pinned). -->
     <PackageReference Include="Microsoft.EntityFrameworkCore.Sqlite" />
   </ItemGroup>

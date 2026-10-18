@@ -115,7 +115,7 @@ public sealed class OpenApiServingTests
 
     // ---- Fixtures ----------------------------------------------------------------------------------
 
-    private sealed class WidgetSource
+    internal sealed class WidgetSource
     {
         public int Id { get; set; }
 
@@ -129,7 +129,7 @@ public sealed class OpenApiServingTests
         public string Name { get; init; } = string.Empty;
     }
 
-    private sealed class WidgetContext : DbContext
+    internal sealed class WidgetContext : DbContext
     {
         public WidgetContext(DbContextOptions<WidgetContext> options)
             : base(options)

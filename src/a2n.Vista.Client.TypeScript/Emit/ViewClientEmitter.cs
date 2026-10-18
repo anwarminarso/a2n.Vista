@@ -295,9 +295,9 @@ public static class ViewClientEmitter
 
     // Renders one gated write-facet method (Requirements 5.2, 5.4–5.6). create/update take the view's typed
     // TCrud model and send it as the JSON body (Requirements 5.4, 5.5); delete takes no model
-    // (Requirement 5.5). A token-bearing write (documented 428/409) additionally accepts a caller-supplied
+    // (Requirement 5.5). A token-bearing write (documented 428/412) additionally accepts a caller-supplied
     // ETag/If-Match through an options object and threads it to the send helper, which surfaces the distinct
-    // precondition-required (428) and precondition-failed (409) outcomes via the shared classifier
+    // precondition-required (428) and precondition-failed (412) outcomes via the shared classifier
     // (Requirement 5.6). The success type comes verbatim from the facet model, so create returns the
     // document's VistaWriteResponse (Requirement 5.4). Every outcome is a typed ClientResult; no method
     // throws (Requirements 5.4, 5.5).
@@ -346,7 +346,16 @@ public static class ViewClientEmitter
             builder.Append(Indent)
                 .Append(" * missing token surfaces as `precondition-required` (428) and a stale token as")
                 .Append(NewLine);
-            builder.Append(Indent).Append(" * `precondition-failed` (409).").Append(NewLine);
+            builder.Append(Indent).Append(" * `precondition-failed` (412, `write-concurrency-conflict`). Send the")
+                .Append(NewLine);
+            builder.Append(Indent).Append(" * `ETag` header value exactly as received, quotes included. A")
+                .Append(NewLine);
+            builder.Append(Indent)
+                .Append(" * constraint breach is `constraint-violation` (422), a transient store lock is")
+                .Append(NewLine);
+            builder.Append(Indent).Append(" * `write-busy` (503, `Retry-After`), and another save failure is")
+                .Append(NewLine);
+            builder.Append(Indent).Append(" * `persistence-failed` (500).").Append(NewLine);
         }
 
         builder.Append(Indent).Append(" */").Append(NewLine);

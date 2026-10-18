@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Write;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
@@ -68,7 +69,8 @@ public sealed class ErrorEnvelopeConformancePropertyTests
         WriteErrorCodes.ValidationFailed,
         WriteErrorCodes.PreconditionRequired,
         WriteErrorCodes.ConcurrencyConflict,
-        WriteErrorCodes.WriteConflict,
+        WriteErrorCodes.ConstraintViolation,
+        WriteErrorCodes.PersistenceFailed,
         WriteErrorCodes.BulkNotEnabled,
     };
 
@@ -296,13 +298,13 @@ public sealed class ErrorEnvelopeConformancePropertyTests
                 HttpStatusCode.PreconditionRequired,
                 WriteErrorCodes.PreconditionRequired),
 
-            // R6.3: a token view whose If-Match differs from the stored token → concurrency conflict (409).
+            // R6.3/D159: a token view whose If-Match differs from the stored token → 412.
             Branch.ConcurrencyConflict => new Case(
                 TokenRoute,
                 keyAction,
                 useUpdate ? "{\"key\":1,\"model\":{\"name\":\"x\"}}" : "{\"key\":1}",
                 IfMatch: mismatch,
-                HttpStatusCode.Conflict,
+                HttpStatusCode.PreconditionFailed,
                 WriteErrorCodes.ConcurrencyConflict),
 
             _ => throw new ArgumentOutOfRangeException(nameof(branch), branch, "Unknown branch."),
@@ -315,7 +317,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     /// <summary>Tokenless backing entity: a projected key + name, plus a non-projected server-only secret.</summary>
-    private sealed class PlainSource
+    internal sealed class PlainSource
     {
         public int Id { get; set; }
 
@@ -325,7 +327,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     }
 
     /// <summary>Token backing entity: adds a concurrency-token member (absent from the read projection).</summary>
-    private sealed class TokenSource
+    internal sealed class TokenSource
     {
         public int Id { get; set; }
 
@@ -359,7 +361,7 @@ public sealed class ErrorEnvelopeConformancePropertyTests
     }
 
     /// <summary>Single EF context backing both writable Style B views.</summary>
-    private sealed class ErrorEnvContext : DbContext
+    internal sealed class ErrorEnvContext : DbContext
     {
         public ErrorEnvContext(DbContextOptions<ErrorEnvContext> options)
             : base(options)
@@ -444,8 +446,12 @@ public sealed class ErrorEnvelopeConformancePropertyTests
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ErrorEnvContext>());
                         services.AddVista(v =>
                         {
-                            v.Register<PlainWritableView>();
-                            v.Register<TokenWritableView>();
+                            v.Register<PlainWritableView>(ViewExecutionPlan.Split<PlainSource, PlainRow>(
+                                PlainView,
+                                s => new PlainRow { Id = s.Id, Name = s.Name }));
+                            v.Register<TokenWritableView>(ViewExecutionPlan.Split<TokenSource, TokenRow>(
+                                TokenView,
+                                s => new TokenRow { Id = s.Id, Name = s.Name }));
                         });
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })

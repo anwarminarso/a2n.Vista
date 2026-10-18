@@ -163,7 +163,7 @@ public sealed class WriteSaveChangesSemanticsTests
     // ---- Fixtures ------------------------------------------------------------------------------------
 
     /// <summary>EF source entity the writable Style B view projects from (single-source, Id-keyed).</summary>
-    private sealed class WriteSource
+    internal sealed class WriteSource
     {
         public int Id { get; set; }
 
@@ -185,7 +185,7 @@ public sealed class WriteSaveChangesSemanticsTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class WriteContext : DbContext
+    internal sealed class WriteContext : DbContext
     {
         public WriteContext(DbContextOptions<WriteContext> options)
             : base(options)
@@ -335,7 +335,9 @@ public sealed class WriteSaveChangesSemanticsTests
             // Register the writable view: AddVista populates the write-facet registry and the mapper
             // resolver the executor's write path resolves from the request IServiceProvider.
             var services = new ServiceCollection();
-            services.AddVista(v => v.Register<WriteSemanticsView>());
+            services.AddVista(v => v.Register<WriteSemanticsView>(ViewExecutionPlan.Split<WriteSource, WriteRow>(
+                ViewName,
+                s => new WriteRow { Id = s.Id, Name = s.Name })));
             var provider = services.BuildServiceProvider();
 
             var registry = provider.GetRequiredService<IViewRegistry>();

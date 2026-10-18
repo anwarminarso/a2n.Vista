@@ -205,11 +205,12 @@ public sealed class OpenApiFixedShapeExampleTests
     {
         var document = RepresentativeDocument();
 
-        foreach (var suffix in new[] { "update", "delete" })
-        {
-            var operation = document.Paths![EmitterFixtures.SubscriptionRoute + "/" + suffix].Post!;
-            await Assert.That(operation.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
-        }
+        var update = document.Paths![EmitterFixtures.SubscriptionRoute + "/update"].Post!;
+        await Assert.That(update.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        var delete = document.Paths![EmitterFixtures.SubscriptionRoute + "/delete"].Post!;
+        await Assert.That(delete.Responses!.ContainsKey("204")).IsTrue();
+        await Assert.That(delete.Responses!.ContainsKey("200")).IsFalse();
+        await Assert.That(delete.Responses!["204"].Headers).IsNull();
     }
 
     // =====================================================================================================
@@ -265,7 +266,7 @@ public sealed class OpenApiFixedShapeExampleTests
         var document = RepresentativeDocument();
         await Assert.That(document.Components!.Schemas!.ContainsKey("ProblemDetails")).IsTrue();
 
-        var errorCodes = new[] { "400", "403", "404", "409", "428" };
+        var errorCodes = new[] { "400", "403", "404", "409", "412", "422", "428", "500" };
         foreach (var (_, _, operation) in Operations(document))
         {
             foreach (var code in errorCodes)
@@ -293,8 +294,22 @@ public sealed class OpenApiFixedShapeExampleTests
         {
             var operation = document.Paths![EmitterFixtures.SubscriptionRoute + "/" + suffix].Post!;
             await Assert.That(operation.Responses!.ContainsKey("428")).IsTrue();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsTrue();
+            await Assert.That(operation.Responses!.ContainsKey("412")).IsTrue();
+            await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
+            await Assert.That(operation.Responses!["412"].Description).Contains("write-concurrency-conflict");
+            await Assert.That(operation.Responses!.ContainsKey("422")).IsTrue();
+            await Assert.That(operation.Responses!["422"].Description).Contains("write-constraint-violation");
+            await Assert.That(operation.Responses!.ContainsKey("500")).IsTrue();
+            await Assert.That(operation.Responses!["500"].Description).Contains("write-persistence-failed");
+            await Assert.That(operation.Responses!.ContainsKey("503")).IsTrue();
+            await Assert.That(operation.Responses!["503"].Description).Contains("write-busy");
         }
+
+        var create = document.Paths![EmitterFixtures.SubscriptionRoute + "/create"].Post!;
+        await Assert.That(create.Responses!["200"].Headers!.ContainsKey("ETag")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("422")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("500")).IsTrue();
+        await Assert.That(create.Responses!.ContainsKey("503")).IsTrue();
     }
 
     [Test]
@@ -326,13 +341,14 @@ public sealed class OpenApiFixedShapeExampleTests
 
         var document = builder.Build();
 
-        foreach (var suffix in new[] { "update", "delete" })
-        {
-            var operation = document.Paths!["/api/views/tokenlessWidgets/" + suffix].Post!;
-            await Assert.That(operation.Responses!.ContainsKey("428")).IsFalse();
-            await Assert.That(operation.Responses!.ContainsKey("409")).IsFalse();
-            await Assert.That(operation.Responses!["200"].Headers).IsNull();
-        }
+        var updated = document.Paths!["/api/views/tokenlessWidgets/update"].Post!;
+        await Assert.That(updated.Responses!.ContainsKey("428")).IsFalse();
+        await Assert.That(updated.Responses!.ContainsKey("412")).IsFalse();
+        await Assert.That(updated.Responses!["200"].Headers).IsNull();
+        var deleted = document.Paths!["/api/views/tokenlessWidgets/delete"].Post!;
+        await Assert.That(deleted.Responses!.ContainsKey("428")).IsFalse();
+        await Assert.That(deleted.Responses!.ContainsKey("412")).IsFalse();
+        await Assert.That(deleted.Responses!["204"].Headers).IsNull();
     }
 
     // =====================================================================================================

@@ -9,6 +9,7 @@ using System.Net;
 using System.Net.Http;
 using System.Text;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using CsCheck;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -103,11 +104,12 @@ public sealed class ConcurrencyAbortPropertyTests
 
                 if (shouldMatch)
                 {
-                    // Success path (R6.4): 200 and the ETag round-trips the token.
-                    if (status != HttpStatusCode.OK)
+                    // Success path (R6.4): update is 200 with the post-write ETag; delete is 204 with no body and no ETag.
+                    var expected = isDelete ? HttpStatusCode.NoContent : HttpStatusCode.OK;
+                    if (status != expected)
                     {
                         throw new Exception(
-                            $"Expected 200 for a matching If-Match on {(isDelete ? "delete" : "update")} " +
+                            $"Expected {(int)expected} for a matching If-Match on {(isDelete ? "delete" : "update")} " +
                             $"(token '{storedToken}'), got {(int)status} {status}.");
                     }
 
@@ -129,8 +131,8 @@ public sealed class ConcurrencyAbortPropertyTests
                     }
                     else
                     {
-                        // The row is updated; its current token is unchanged (the token is not writable and
-                        // is not auto-bumped), so the ETag equals the row's current token AFTER the write.
+                        // The row is updated and its token changed. The ETag is that post-write token,
+                        // quoted as a strong entity-tag.
                         var row = harness.ReadRow(RowKey)
                             ?? throw new Exception($"Row {RowKey} vanished after a successful update.");
 
@@ -140,8 +142,19 @@ public sealed class ConcurrencyAbortPropertyTests
                                 $"Update did not apply the whitelisted field: Name='{row.Name}', expected 'updated'.");
                         }
 
+                        if (row.Version == version)
+                        {
+                            throw new Exception(
+                                $"Update left the concurrency token at {version}; a successful write must renew it.");
+                        }
+
                         var currentToken = row.Version.ToString(CultureInfo.InvariantCulture);
-                        if (!string.Equals(etag, currentToken, StringComparison.Ordinal))
+                        if (etag is null || etag.Length < 2 || etag[0] != '"' || etag[^1] != '"')
+                        {
+                            throw new Exception($"Update ETag '{etag}' is not a quoted strong entity-tag.");
+                        }
+
+                        if (!string.Equals(etag.Trim('"'), currentToken, StringComparison.Ordinal))
                         {
                             throw new Exception(
                                 $"Update ETag '{etag}' did not equal the row's current token '{currentToken}' after the write.");
@@ -150,11 +163,11 @@ public sealed class ConcurrencyAbortPropertyTests
                 }
                 else
                 {
-                    // Mismatch path (R6.3): 409 and the row is unchanged (no persisted effect).
-                    if (status != HttpStatusCode.Conflict)
+                    // Mismatch path (R6.3/D159): 412 and the row is unchanged (no persisted effect).
+                    if (status != HttpStatusCode.PreconditionFailed)
                     {
                         throw new Exception(
-                            $"Expected 409 for a mismatching If-Match ('{ifMatch}' vs stored '{storedToken}') on " +
+                            $"Expected 412 for a mismatching If-Match ('{ifMatch}' vs stored '{storedToken}') on " +
                             $"{(isDelete ? "delete" : "update")}, got {(int)status} {status}.");
                     }
 
@@ -214,7 +227,9 @@ public sealed class ConcurrencyAbortPropertyTests
                         // the sibling write-path integration tests use). No fake executor is registered, so
                         // the REAL EfViewExecutor implements the write facet end to end.
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<ConcurrencyContext>());
-                        services.AddVista(v => v.Register<ConcurrencyView>());
+                        services.AddVista(v => v.Register<ConcurrencyView>(ViewExecutionPlan.Split<ConcurrencySource, ConcurrencyRow>(
+                            ViewName,
+                            s => new ConcurrencyRow { Id = s.Id, Name = s.Name, Version = s.Version })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>
@@ -304,7 +319,7 @@ public sealed class ConcurrencyAbortPropertyTests
     }
 
     /// <summary>EF source entity the writable Style B view projects from; Id-keyed with an int token.</summary>
-    private sealed class ConcurrencySource
+    internal sealed class ConcurrencySource
     {
         public int Id { get; set; }
 
@@ -330,7 +345,7 @@ public sealed class ConcurrencyAbortPropertyTests
     }
 
     /// <summary>Minimal EF context backing the writable Style B view.</summary>
-    private sealed class ConcurrencyContext : DbContext
+    internal sealed class ConcurrencyContext : DbContext
     {
         public ConcurrencyContext(DbContextOptions<ConcurrencyContext> options)
             : base(options)

@@ -2,7 +2,7 @@
   "name": "agGrid-northwind-showcase-client",
   "version": "1.0.0",
   "private": true,
-  "description": "TypeScript front-end for the Vista Northwind sample showcase: three static HTML pages (Simple Wiring, View Browser, Custom Renderer) driving the landed AG Grid / DataTables / QueryBuilder adapter endpoints. Compiled with tsc (no bundler) to ES modules under ../wwwroot/js.",
+  "description": "TypeScript front-end for the Vista Northwind sample showcase: static HTML pages (Simple Wiring, View Browser, Custom Renderer, TanStack Table) driving the AG Grid / DataTables / QueryBuilder / TanStack adapter endpoints. Compiled with tsc (no bundler) to ES modules under ../wwwroot/js.",
   "type": "module",
   "scripts": {
     "build": "tsc",
@@ -10,6 +10,7 @@
     "test": "vitest run"
   },
   "devDependencies": {
+    "@tanstack/table-core": "^8.21.3",
     "ag-grid-community": "^32.2.0",
     "fast-check": "^3.23.1",
     "typescript": "^5.5.4",

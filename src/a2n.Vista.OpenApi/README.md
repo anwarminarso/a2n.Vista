@@ -13,7 +13,7 @@ An opt-in **OpenAPI v3.x** emitter for [a2n.Vista](https://github.com/anwarminar
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.OpenApi
+dotnet add package a2n.Vista.OpenApi --version 0.0.5
 ```
 
 Depends on [`a2n.Vista.AspNetCore`](https://www.nuget.org/packages/a2n.Vista.AspNetCore). Feed the emitted document to [`a2n.Vista.Client.TypeScript`](https://www.nuget.org/packages/a2n.Vista.Client.TypeScript) to generate a typed client.

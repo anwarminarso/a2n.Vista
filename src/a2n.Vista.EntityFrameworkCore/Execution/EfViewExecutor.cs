@@ -1,5 +1,5 @@
+using System.Data.Common;
 using System.Diagnostics.CodeAnalysis;
-using System.Globalization;
 using System.Linq.Expressions;
 using System.Reflection;
 using a2n.Vista.Authoring;
@@ -10,6 +10,8 @@ using a2n.Vista.Ports;
 using a2n.Vista.Results;
 using a2n.Vista.Write;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.ChangeTracking;
+using Microsoft.EntityFrameworkCore.Metadata;
 using Microsoft.Extensions.DependencyInjection;
 
 namespace a2n.Vista.EntityFrameworkCore.Execution;
@@ -96,6 +98,10 @@ public class EfViewExecutor : IViewExecutor
         typeof(EfViewExecutor).GetMethod(nameof(DeleteCoreAsync), BindingFlags.Instance | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException($"{nameof(EfViewExecutor)}.{nameof(DeleteCoreAsync)} was not found.");
 
+    private static readonly MethodInfo DetailAsyncMethod =
+        typeof(EfViewExecutor).GetMethods(BindingFlags.Instance | BindingFlags.Public)
+            .Single(method => method.Name == nameof(DetailAsync) && method.IsGenericMethodDefinition);
+
     private readonly FilterCompiler _filterCompiler;
     private readonly DbContext? _dbContext;
     private readonly IServiceProvider? _services;
@@ -175,6 +181,27 @@ public class EfViewExecutor : IViewExecutor
         _dbContext = dbContext;
         _services = services;
         _planRegistry = planRegistry;
+        _filterCompiler = filterCompiler;
+    }
+
+    /// <summary>
+    /// Initializes an executor that persists through <paramref name="dbContext"/> and resolves write
+    /// services from <paramref name="services"/>, with no execution-plan registry. A subclass uses this
+    /// when it overrides <see cref="ResolveScopedQueryable{TRow}"/> to supply the detail query itself.
+    /// It must also override <see cref="EnsureDetailReadPath"/>, or every update fails before save.
+    /// </summary>
+    /// <param name="dbContext">The active EF context used to load and save the write entity.</param>
+    /// <param name="services">The request <see cref="IServiceProvider"/> used to resolve the write mapper.</param>
+    /// <param name="filterCompiler">The compiler used to turn the neutral filter tree into a predicate.</param>
+    /// <exception cref="ArgumentNullException">Any argument is <see langword="null"/>.</exception>
+    protected EfViewExecutor(DbContext dbContext, IServiceProvider services, FilterCompiler filterCompiler)
+    {
+        ArgumentNullException.ThrowIfNull(dbContext);
+        ArgumentNullException.ThrowIfNull(services);
+        ArgumentNullException.ThrowIfNull(filterCompiler);
+
+        _dbContext = dbContext;
+        _services = services;
         _filterCompiler = filterCompiler;
     }
 
@@ -790,10 +817,11 @@ public class EfViewExecutor : IViewExecutor
         where TEntity : class, new()
     {
         var dbContext = RequireDbContext(view, nameof(CreateAsync));
+        var services = RequireServices(view, nameof(CreateAsync));
 
         // Resolve the write mapper once for this write (generated preferred, reflection fallback) so the
         // executor never branches on which implementation produced it (Requirements R13.1, R13.2).
-        var mapper = RequireServices(view, nameof(CreateAsync))
+        var mapper = services
             .GetRequiredService<WriteMapperResolver>()
             .Resolve(view);
 
@@ -801,13 +829,23 @@ public class EfViewExecutor : IViewExecutor
         // skipped by the mapper itself (defense in depth), so identity is store-assigned, not client-set.
         var entity = new TEntity();
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(dbContext, entity, RequireWriteFacet(services, view), creating: true);
 
         dbContext.Add(entity);
 
+        // SQLite has no native rowversion. An application token (ValueGenerated.Never) is minted here so
+        // the inserted row carries a real concurrency value. A store-generated token (IsRowVersion /
+        // ValueGenerated.OnAddOrUpdate) is left for the database.
+        MintApplicationConcurrencyToken(dbContext, services, view, entity);
+
         // Exactly one SaveChanges for the operation (Requirements R1.3, R11.1). A provider persistence
-        // failure (constraint or concurrency violation) is translated to a typed, leak-free Vista write
-        // exception and the implicit transaction leaves no partial row (Requirements R1.7, R9.4, R11.3).
+        // failure is translated to a typed, leak-free Vista write exception (concurrency, constraint, or
+        // any other store failure) and the implicit transaction leaves no partial row (R1.7, R11.3, D158).
         await SaveWriteChangesAsync(dbContext, cancellationToken).ConfigureAwait(false);
+
+        // The created row's token is what the client must send as If-Match. Publish it so the HTTP
+        // layer can return it as ETag (D146, D158). A tokenless view publishes nothing.
+        PublishPostWriteToken<TEntity>(services, RequireWriteFacet(services, view), entity);
 
         // Read back the store-assigned PK from the tracked entity (Requirements R1.1, R1.2).
         return ReadEntityKey(view, entity);
@@ -927,7 +965,7 @@ public class EfViewExecutor : IViewExecutor
     /// (<see cref="ResolveEntityForWriteAsync{TEntity}"/>); a <see langword="null"/> result — no in-scope
     /// row — returns <see langword="false"/> (HTTP 404, Requirements R2.3, R8.2). It then enforces the
     /// optimistic-concurrency precondition <em>before</em> any mutation (Requirement R6.3): a token
-    /// mismatch throws <see cref="VistaConcurrencyConflictException"/> (HTTP 409) with the row untouched.
+    /// mismatch throws <see cref="VistaConcurrencyConflictException"/> (HTTP 412) with the row untouched.
     /// The whitelisted <see cref="WriteMapper"/> is the only channel client values reach the tracked
     /// entity; the mapper skips key/token targets, so the row's identity always comes from the loaded
     /// entity's key and never from the request body (Requirements R2.5, R5.2). A single
@@ -962,34 +1000,52 @@ public class EfViewExecutor : IViewExecutor
             return false;
         }
 
-        // Enforce the optimistic-concurrency precondition BEFORE any mutation: a mismatch aborts with 409
-        // and leaves the row untouched (R6.3). A tokenless view is a no-op here (R6.6).
+        // The body is a detail read. Resolve that path before any mutation is saved. A write facet
+        // with no generated invoker and no execution plan throws the same metadata-only error Detail
+        // throws, and the row stays as it was.
+        EnsureDetailReadPath(view);
+
+        // Apply the whitelisted mapper first — the only channel client values reach the entity. Key/token
+        // targets are skipped by the mapper, so the row identity stays the loaded entity's key, never the
+        // body (R2.5, R5.2). The concurrency predicate is armed AFTER the mapper so nothing overwrites the
+        // original value the database will test.
         var facet = RequireWriteFacet(services, view);
-        EnforceConcurrencyToken<TEntity>(facet, entity, concurrencyToken);
-
-        // The application-level check above is a read-then-compare and therefore NOT atomic on its own.
-        // Pinning the entry's original token value makes the database do the real check: EF emits
-        // UPDATE ... WHERE <token> = @original, so a row changed by a concurrent writer between our load and
-        // our save matches zero rows and surfaces as DbUpdateConcurrencyException → 409 (D146). The startup
-        // validator guarantees the member really is a model concurrency token, which is what makes EF include
-        // it in the predicate.
-        PinOriginalConcurrencyToken<TEntity>(view, facet, entity);
-
-        // Apply the whitelisted mapper — the only channel client values reach the entity. Key/token targets
-        // are skipped by the mapper, so the row identity stays the loaded entity's key, never the body
-        // (R2.5, R5.2). Resolve the mapper once (generated preferred, reflection fallback — R13.1, R13.2).
         var mapper = services.GetRequiredService<WriteMapperResolver>().Resolve(view);
         mapper(model, entity);
+        EnforceDeclaredMaxLengths(RequireDbContext(view, nameof(UpdateAsync)), entity, facet, creating: false);
+
+        // The check is the database predicate, not an in-memory compare-then-save. The client's token
+        // becomes OriginalValue (WHERE token = @If-Match). An application token also gets a new
+        // CurrentValue so the next writer cannot reuse this one. A stale token matches zero rows and
+        // SaveChanges throws DbUpdateConcurrencyException → 412 (D159).
+        ArmConcurrencyPredicate<TEntity>(facet, entity, concurrencyToken, rotate: true);
 
         // Exactly one SaveChanges for the operation on the tracked entity (R2.4, R11.1). A provider
-        // persistence failure (constraint or concurrency violation) is translated to a typed, leak-free
-        // Vista write exception; the implicit transaction leaves the row unchanged (R6.5, R9.4, R11.3).
+        // persistence failure is translated to a typed, leak-free Vista write exception (concurrency,
+        // constraint, or any other store failure); the implicit transaction leaves the row unchanged
+        // (R6.5, R11.3, D158).
         await SaveWriteChangesAsync(RequireDbContext(view, nameof(UpdateAsync)), cancellationToken).ConfigureAwait(false);
 
-        // Publish the token the row carries AFTER the write (D146). A store-generated rowversion is refreshed
-        // by EF during SaveChanges, so this is the value the client must send on its next update; echoing the
-        // request's own If-Match instead guaranteed that next update a 409.
+        // Publish the token the row carries AFTER the write (D146, D159). This is the value the HTTP layer
+        // returns as ETag when the caller can still read the row. It is never the request's If-Match.
         PublishPostWriteToken<TEntity>(services, facet, entity);
+
+        // The body is the same scoped detail read GET uses (read plan, masks, this request's trusted
+        // scope, by key). A reflection copy of the entity is not the contract: a computed, renamed, or
+        // masked field would otherwise leak the raw entity value. The path was checked before save.
+        var row = await ReadUpdatedDetailAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+        var sink = services.GetService<IWriteTokenSink>();
+        if (row is null)
+        {
+            // The save moved the row out of the caller's read scope. 204, no body, no ETag.
+            sink?.SetPostWriteToken(null);
+            sink?.SetPostWriteNotVisible();
+        }
+        else
+        {
+            sink?.SetPostWriteRow(row);
+        }
+
         return true;
     }
 
@@ -1021,8 +1077,9 @@ public class EfViewExecutor : IViewExecutor
     /// <b>within the server-trusted scope</b> by the request key
     /// (<see cref="ResolveEntityForWriteAsync{TEntity}"/>); a <see langword="null"/> result — no in-scope
     /// row — returns <see langword="false"/> (HTTP 404, Requirements R3.3, R8.2). It then enforces the
-    /// optimistic-concurrency precondition <em>before</em> removal (Requirement R6.3): a token mismatch
-    /// throws <see cref="VistaConcurrencyConflictException"/> (HTTP 409) with the row untouched. A single
+    /// optimistic-concurrency predicate <em>before</em> removal (Requirement R6.3): the client's token is
+    /// the <c>DELETE ... WHERE</c> original value. A mismatch throws
+    /// <see cref="VistaConcurrencyConflictException"/> (HTTP 412) with the row untouched. A single
     /// <c>Remove</c> + <c>SaveChanges</c> deletes the tracked entity (Requirements R3.4, R11.1). No write
     /// mapper is involved — delete carries no body.
     /// </summary>
@@ -1053,14 +1110,15 @@ public class EfViewExecutor : IViewExecutor
             return false;
         }
 
-        // Enforce the optimistic-concurrency precondition BEFORE removal: a mismatch aborts with 409 and
-        // leaves the row untouched (R6.3). A tokenless view is a no-op here (R6.6).
+        // Bind If-Match as the DELETE predicate's original token. Do not rotate: the row is going away.
+        // A mismatch matches zero rows at save time (HTTP 412) and leaves the row untouched (R6.3).
         var facet = RequireWriteFacet(services, view);
-        EnforceConcurrencyToken<TEntity>(facet, entity, concurrencyToken);
+        ArmConcurrencyPredicate<TEntity>(facet, entity, concurrencyToken, rotate: false);
 
         // Remove the tracked entity and persist with exactly one SaveChanges (R3.4, R11.1). A provider
-        // persistence failure (constraint or concurrency violation) is translated to a typed, leak-free
-        // Vista write exception; the implicit transaction leaves the row unchanged (R3.8, R6.5, R11.3).
+        // persistence failure is translated to a typed, leak-free Vista write exception (concurrency,
+        // constraint, or any other store failure); the implicit transaction leaves the row unchanged
+        // (R3.8, R6.5, R11.3, D158).
         var deleteContext = RequireDbContext(view, nameof(DeleteAsync));
         deleteContext.Remove(entity);
         await SaveWriteChangesAsync(deleteContext, cancellationToken).ConfigureAwait(false);
@@ -1069,18 +1127,25 @@ public class EfViewExecutor : IViewExecutor
 
     /// <summary>
     /// Persists a single write operation through exactly one <c>SaveChanges</c> and translates a provider
-    /// persistence failure into a typed, leak-free Vista write exception (Decision Log D120):
+    /// persistence failure into a typed, leak-free Vista write exception (Decision Log D120, D158):
     /// a <see cref="DbUpdateConcurrencyException"/> — a genuine optimistic-concurrency violation detected
-    /// at save time — becomes a <see cref="VistaConcurrencyConflictException"/> (HTTP 409, rolled back,
-    /// Requirement R6.5); any other <see cref="DbUpdateException"/> — a database constraint violation such
-    /// as a unique-index, NOT NULL, or foreign-key breach — becomes a <see cref="VistaWriteConflictException"/>
-    /// (HTTP 409 write-conflict, Requirement R9.4).
+    /// at save time — becomes a <see cref="VistaConcurrencyConflictException"/> (HTTP 412
+    /// <c>write-concurrency-conflict</c>, rolled back, Requirement R6.5, Decision Log D159); a
+    /// <see cref="DbUpdateException"/> that is a database constraint violation (unique index, NOT NULL,
+    /// foreign key, CHECK) becomes a <see cref="VistaConstraintViolationException"/> (HTTP 422
+    /// <c>write-constraint-violation</c>, not a conflict); a store lock recognized by
+    /// <see cref="DbUpdateFailureClassification.IsTransientLock"/> becomes a
+    /// <see cref="VistaStoreBusyException"/> (HTTP 503 <c>write-busy</c>, Decision Log D160); every
+    /// other <see cref="DbException"/> — a missing table, a connection failure, a transient exception
+    /// the lock probe does not recognize, or any non-constraint provider error — becomes a
+    /// <see cref="VistaPersistenceException"/> (HTTP 500 <c>write-persistence-failed</c>). A missing
+    /// relation is not a constraint and is not a 412.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// EF Core wraps a single <c>SaveChanges</c> in an implicit transaction, so a failed save commits no
-    /// rows: the pre-operation persisted state is preserved and no partial row remains (Requirements R1.7,
-    /// R3.8, R11.3, R11.4). The caller therefore never sees a success result for a failed persistence.
+    /// A failed save does not report success. A single-statement save may not open a transaction
+    /// (<c>AutoTransactionBehavior.WhenNeeded</c>); the statement itself is what commits or leaves the
+    /// previous row in place (Requirements R1.7, R3.8, R11.3, R11.4).
     /// </para>
     /// <para>
     /// The original provider exception is attached only as the <see cref="Exception.InnerException"/> of
@@ -1091,13 +1156,17 @@ public class EfViewExecutor : IViewExecutor
     /// </para>
     /// <para>
     /// <see cref="DbUpdateConcurrencyException"/> derives from <see cref="DbUpdateException"/>, so it is
-    /// caught first to keep the concurrency (R6.5) and constraint (R9.4) branches distinct.
+    /// caught first. A probe-recognized lock is next (D160), then constraint detection (Decision Log
+    /// D158), then every other <see cref="DbUpdateException"/> and <see cref="DbException"/> as 500.
+    /// None of those treats the base <see cref="DbUpdateException"/> itself as a conflict.
     /// </para>
     /// </remarks>
     /// <param name="dbContext">The request-scoped context whose tracked changes are persisted.</param>
     /// <param name="cancellationToken">Token used to cancel the persistence round-trip.</param>
-    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5).</exception>
-    /// <exception cref="VistaWriteConflictException">A database constraint violation occurred (R9.4).</exception>
+    /// <exception cref="VistaConcurrencyConflictException">A concurrency violation was detected at save time (R6.5, D159).</exception>
+    /// <exception cref="VistaStoreBusyException">The store lock did not clear (D160).</exception>
+    /// <exception cref="VistaConstraintViolationException">A database constraint violation occurred (D158).</exception>
+    /// <exception cref="VistaPersistenceException">The save failed for some other provider reason (D158).</exception>
     private static async Task SaveWriteChangesAsync(DbContext dbContext, CancellationToken cancellationToken)
     {
         try
@@ -1111,12 +1180,37 @@ public class EfViewExecutor : IViewExecutor
             // as the inner exception only (server-side; never surfaced to clients — R9.6).
             throw new VistaConcurrencyConflictException(innerException: ex);
         }
+        catch (DbUpdateException ex) when (DbUpdateFailureClassification.IsTransientLock(ex))
+        {
+            throw new VistaStoreBusyException(innerException: ex);
+        }
+        catch (DbException ex) when (DbUpdateFailureClassification.IsTransientLock(ex))
+        {
+            // A lock taken while beginning the write transaction is not always wrapped in
+            // DbUpdateException. It is still a retryable busy failure, not a 500 (D160).
+            throw new VistaStoreBusyException(innerException: ex);
+        }
+        catch (DbUpdateException ex) when (DbUpdateFailureClassification.IsConstraintViolation(ex))
+        {
+            // Database constraint violation (unique index, NOT NULL, foreign key, CHECK). The implicit
+            // transaction rolled back, leaving no partial row (R1.7, R11.3). This is not a concurrency
+            // conflict: HTTP 422 write-constraint-violation, provider detail on the inner exception only
+            // (D158, R9.6).
+            throw new VistaConstraintViolationException(innerException: ex);
+        }
         catch (DbUpdateException ex)
         {
-            // Database constraint violation (unique index, NOT NULL, foreign key, CHECK, ...). The implicit
-            // transaction rolled back, leaving no partial row (R1.7, R11.3). Translate to a 409 write-conflict
-            // with a Vista-authored message; the provider detail stays on the inner exception only (R9.4, R9.6).
-            throw new VistaWriteConflictException(innerException: ex);
+            // Any other store failure (missing table, I/O, corruption, an unrecognized provider error).
+            // This is not a conflict with the current row and not a probe-recognized lock. Translate to a
+            // leak-free 500; the provider detail stays on the inner exception only (D158, spec 05 §9.2, R9.6).
+            throw new VistaPersistenceException(innerException: ex);
+        }
+        catch (DbException ex)
+        {
+            // A DbException the lock probe does not recognize, including one with IsTransient set.
+            // A connection lost during COMMIT has an unknown outcome, so this is 500 with no Retry-After,
+            // not 503 (D160).
+            throw new VistaPersistenceException(innerException: ex);
         }
     }
 
@@ -1126,7 +1220,7 @@ public class EfViewExecutor : IViewExecutor
     //   1. Entity resolution within the server-trusted scope (ResolveScopedEntitySet / ResolveEntityForWriteAsync).
     //   2. Composite-capable key normalization + coercion against the ordered KeyFields (NormalizeWriteKey),
     //      reusing FilterCompiler.CoerceValue exactly as DetailAsync does.
-    //   3. The optimistic-concurrency pre-check (EnforceConcurrencyToken) + token read-back for the ETag
+    //   3. The optimistic-concurrency predicate (ArmConcurrencyPredicate) + token read-back for the ETag
     //      round-trip (ReadConcurrencyToken).
     //
     // None of these persist anything: they build queryables/predicates, load a candidate row, and
@@ -1377,22 +1471,176 @@ public class EfViewExecutor : IViewExecutor
     }
 
     /// <summary>
-    /// Enforces the optimistic-concurrency precondition (Requirement R6.3): when the view declares a
-    /// concurrency token, the stored row's current token must exactly equal <paramref name="expectedToken"/>
-    /// (the client's <c>If-Match</c> value); a mismatch throws <see cref="VistaConcurrencyConflictException"/>
-    /// (HTTP 409) before any change is persisted. A tokenless view is a no-op and ignores
-    /// <paramref name="expectedToken"/> (Requirement R6.6).
+    /// Re-reads the saved row through the detail path <c>GET</c> uses: the generated invoker when one
+    /// is registered, otherwise <see cref="DetailAsync{TRow}"/> closed over <see cref="ViewMetadata.QueryType"/>.
+    /// Both routes apply the read plan, the masks, and <paramref name="scope"/>. There is no property-copy
+    /// fallback. A view with no execution plan fails with the same metadata-only error Detail already throws.
     /// </summary>
-    /// <typeparam name="TEntity">The EF entity type the view writes to.</typeparam>
-    /// <param name="facet">The captured write facet, whose <see cref="CrudFacetDefinition.ConcurrencyToken"/> selects the token.</param>
-    /// <param name="entity">The loaded, tracked entity whose current token is compared.</param>
-    /// <param name="expectedToken">The client-supplied expected token (the <c>If-Match</c> value), or <see langword="null"/>.</param>
-    /// <exception cref="VistaConcurrencyConflictException">The stored token does not match <paramref name="expectedToken"/>.</exception>
-    [RequiresUnreferencedCode("Reading the concurrency token compiles the captured selector at runtime; use the source generator path for AOT.")]
-    private static void EnforceConcurrencyToken<TEntity>(
+    private async Task<object?> ReadUpdatedDetailAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        if (ViewInvokerStore.TryGet(view.Name, out var invoker))
+        {
+            return await invoker.DetailAsync(this, view, key, scope, cancellationToken).ConfigureAwait(false);
+        }
+
+        return await DetailByQueryTypeAsync(view, key, scope, cancellationToken).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// Closes <see cref="DetailAsync{TRow}"/> over the view's query type. This is the same dispatch the
+    /// HTTP layer uses when no generated invoker is registered, and it still requires an execution plan.
+    /// </summary>
+    [RequiresUnreferencedCode("Invokes DetailAsync<TRow> closed over the view's runtime query type; use the source generator path for AOT.")]
+    private async Task<object?> DetailByQueryTypeAsync(
+        ViewMetadata view,
+        object key,
+        IViewScope scope,
+        CancellationToken cancellationToken)
+    {
+        var closed = DetailAsyncMethod.MakeGenericMethod(view.QueryType);
+        var task = (Task)closed.Invoke(this, [view, key, scope, cancellationToken])!;
+        await task.ConfigureAwait(false);
+        var result = task.GetType().GetProperty(nameof(Task<object>.Result))
+            ?? throw new InvalidOperationException("Expected DetailAsync to return Task<TRow>.");
+        return result.GetValue(task);
+    }
+
+    /// <summary>
+    /// Rejects a string that is longer than the EF property's <c>MaxLength</c>. The limit is read from
+    /// the model. The 422 detail names the writable view field, never an entity member, table, or column.
+    /// SQLite does not enforce <c>TEXT</c> length, so the check happens before <c>SaveChanges</c> and is
+    /// HTTP 422. On create, only mapped whitelist fields are checked. On update, only properties the write
+    /// mapper changed (<see cref="PropertyEntry.IsModified"/>) are checked, so a legacy over-long value in
+    /// a column the mapper does not set does not block the write.
+    /// </summary>
+    private static void EnforceDeclaredMaxLengths(
+        DbContext dbContext,
+        object entity,
+        CrudFacetDefinition facet,
+        bool creating)
+    {
+        if (!creating)
+        {
+            dbContext.ChangeTracker.DetectChanges();
+        }
+
+        HashSet<string>? whitelist = null;
+        if (creating)
+        {
+            whitelist = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var mapping in facet.WritableFields)
+            {
+                whitelist.Add(mapping.EntityMember);
+            }
+        }
+
+        foreach (var property in dbContext.Entry(entity).Properties)
+        {
+            if (creating)
+            {
+                if (!whitelist!.Contains(property.Metadata.Name))
+                {
+                    continue;
+                }
+            }
+            else if (!property.IsModified)
+            {
+                continue;
+            }
+
+            var max = property.Metadata.GetMaxLength();
+            if (max is null || property.CurrentValue is not string text || text.Length <= max.Value)
+            {
+                continue;
+            }
+
+            throw new VistaConstraintViolationException(MaxLengthDetail(facet, property.Metadata.Name));
+        }
+    }
+
+    /// <summary>
+    /// The 422 detail for a string over <c>MaxLength</c> (R9.6). The name is the writable view field
+    /// (<see cref="WritableFieldMapping.CrudMember"/>), never the entity member, table, or column.
+    /// A property with no mapping produces a generic message that names nothing.
+    /// </summary>
+    private static string MaxLengthDetail(CrudFacetDefinition facet, string entityMember)
+    {
+        foreach (var mapping in facet.WritableFields)
+        {
+            if (string.Equals(mapping.EntityMember, entityMember, StringComparison.Ordinal)
+                && mapping.CrudMember.Length > 0)
+            {
+                return $"Field '{mapping.CrudMember}' exceeds its maximum length and was not applied.";
+            }
+        }
+
+        return "A field exceeds its maximum length and was not applied.";
+    }
+
+    /// <summary>
+    /// Confirms the update can re-read the saved row before <c>SaveChanges</c>. The base
+    /// implementation requires a generated invoker or an execution plan, and otherwise throws the
+    /// same error <see cref="ResolveScopedQueryable{TRow}"/> throws for a metadata-only view.
+    /// A subclass that overrides <see cref="ResolveScopedQueryable{TRow}"/> must also override this
+    /// method. The re-read calls that override and does not consult the plan registry, so the base
+    /// check would reject the update before save.
+    /// </summary>
+    /// <param name="view">The writable view being updated.</param>
+    protected virtual void EnsureDetailReadPath(ViewMetadata view)
+    {
+        if (ViewInvokerStore.TryGet(view.Name, out _))
+        {
+            return;
+        }
+
+        if (_planRegistry is null || _dbContext is null || _services is null)
+        {
+            throw MissingPlanRegistry(view);
+        }
+
+        if (_planRegistry.Get(view.Name) is null)
+        {
+            throw MetadataOnly(view);
+        }
+    }
+
+    /// <summary>The error Detail throws when this executor has no execution-plan registry.</summary>
+    private static InvalidOperationException MissingPlanRegistry(ViewMetadata view) =>
+        new(
+            $"This {nameof(EfViewExecutor)} was constructed without an execution-plan registry, so it " +
+            $"cannot resolve a queryable for view '{view.Name}'. Use the constructor that takes a " +
+            $"{nameof(DbContext)}, {nameof(IServiceProvider)}, and {nameof(IViewExecutionPlanRegistry)} " +
+            "(the DI wiring path, Task 9.4), or override ResolveScopedQueryable<TRow> in a subclass.");
+
+    /// <summary>The error Detail throws when a view has no generated execution plan (R4.4 / DR5).</summary>
+    private static InvalidOperationException MetadataOnly(ViewMetadata view) =>
+        new(
+            $"View '{view.Name}' has no generated execution plan, so it is metadata-only (DR5) and " +
+            "cannot be executed. Reference the a2n.Vista source generator (a2n.Vista.SourceGenerators) " +
+            "so a compiled execution plan is generated for this typed Style B view, making it " +
+            "executable; until then List and Detail fail fast here before any query runs and no " +
+            "result is produced.");
+
+    /// <summary>
+    /// Binds <paramref name="ifMatch"/> as the original value of the concurrency property so EF emits
+    /// <c>UPDATE</c>/<c>DELETE ... WHERE token = @original</c>. When <paramref name="rotate"/> is set, an
+    /// application-managed token (not store-generated) is replaced with a new value before save. A single
+    /// strong tag is used as-is, without comparing it to the loaded row. A list uses the member equal to
+    /// the loaded token; if none equals it the write is rejected before save (no lost update).
+    /// <c>*</c>, a weak-only header, and a token that cannot be converted are HTTP 412.
+    /// </summary>
+    /// <exception cref="VistaPreconditionRequiredException">A token view was given no header.</exception>
+    /// <exception cref="VistaConcurrencyConflictException">The header cannot satisfy the predicate.</exception>
+    [RequiresUnreferencedCode("Resolving the token member from the captured selector inspects the expression at runtime; use the source generator path for AOT.")]
+    private void ArmConcurrencyPredicate<TEntity>(
         CrudFacetDefinition facet,
         TEntity entity,
-        string? expectedToken)
+        string? ifMatch,
+        bool rotate)
         where TEntity : class
     {
         ArgumentNullException.ThrowIfNull(facet);
@@ -1404,54 +1652,202 @@ public class EfViewExecutor : IViewExecutor
             return;
         }
 
-        var storedToken = ReadConcurrencyToken(facet, entity);
-        if (!string.Equals(storedToken, expectedToken, StringComparison.Ordinal))
+        if (string.IsNullOrWhiteSpace(ifMatch))
+        {
+            throw new VistaPreconditionRequiredException();
+        }
+
+        var parsed = IfMatchHeader.Parse(ifMatch);
+        if (parsed.IsWildcard || !parsed.HasStrongTag)
+        {
+            // `*`, a weak tag, or an unusable header cannot be the original value of the predicate.
+            throw new VistaConcurrencyConflictException();
+        }
+
+        if (_dbContext is null)
+        {
+            throw new InvalidOperationException(
+                "A concurrency token cannot be enforced because this executor has no DbContext.");
+        }
+
+        var memberName = Hosting.VistaConcurrencyTokenStartupValidator.TryGetMemberName(facet.ConcurrencyToken)
+            ?? throw new InvalidOperationException(
+                "The concurrency token selector is not a simple member access, so it cannot be bound " +
+                "into the database predicate.");
+
+        var entry = _dbContext.Entry(entity);
+        var metadata = entry.Metadata.FindProperty(memberName);
+        if (metadata is null || !metadata.IsConcurrencyToken)
+        {
+            throw new InvalidOperationException(
+                $"Property '{memberName}' is not an EF concurrency token, so the database would not " +
+                "include it in the write predicate. Configure it with IsConcurrencyToken() or IsRowVersion().");
+        }
+
+        var property = entry.Property(memberName);
+        var chosen = SelectConcurrencyCandidate(parsed, ConcurrencyTokenFormat.ToWire(property.CurrentValue));
+        if (chosen is null || !ConcurrencyTokenFormat.TryFromWire(chosen, metadata.ClrType, out var original))
         {
             throw new VistaConcurrencyConflictException();
+        }
+
+        // Current value first, original value last. EF's WHERE clause reads the original value; setting
+        // it after the new token keeps the predicate equal to the client's If-Match, not the new token.
+        if (rotate && !IsStoreGenerated(metadata))
+        {
+            property.CurrentValue = NextApplicationToken(property.CurrentValue, metadata.ClrType);
+        }
+
+        property.OriginalValue = original;
+        if (rotate && !IsStoreGenerated(metadata))
+        {
+            EnsureStrongEntityTag(property.CurrentValue);
         }
     }
 
     /// <summary>
-    /// Pins the tracked entry's <b>original</b> concurrency-token value so EF includes it in the generated
-    /// <c>UPDATE ... WHERE</c> predicate, turning the application-level pre-check into a database-level
-    /// atomic check (Decision Log D146). A no-op for a tokenless view, when no context is available, or when
-    /// the entity is not tracked by this context.
+    /// Assigns a fresh application concurrency token on insert. Store-generated tokens
+    /// (<see cref="ValueGenerated.OnAddOrUpdate"/> / <see cref="ValueGenerated.OnUpdate"/>) are left alone.
     /// </summary>
-    /// <typeparam name="TEntity">The EF entity type the view writes to.</typeparam>
-    /// <param name="view">The view being written, for diagnostics.</param>
-    /// <param name="facet">The captured write facet whose token selector names the member.</param>
-    /// <param name="entity">The tracked entity about to be saved.</param>
-    /// <remarks>
-    /// The original value is re-asserted rather than assumed: an entity already tracked earlier in the same
-    /// request can carry originals that no longer match what the precondition was validated against. Assigning
-    /// the current value keeps EF's predicate aligned with the token this request actually verified.
-    /// </remarks>
     [RequiresUnreferencedCode("Resolving the token member from the captured selector inspects the expression at runtime; use the source generator path for AOT.")]
-    private void PinOriginalConcurrencyToken<TEntity>(ViewMetadata view, CrudFacetDefinition facet, TEntity entity)
+    private static void MintApplicationConcurrencyToken<TEntity>(
+        DbContext dbContext,
+        IServiceProvider services,
+        ViewMetadata view,
+        TEntity entity)
         where TEntity : class
     {
-        if (facet.ConcurrencyToken is not { } selector || _dbContext is null)
+        var facet = RequireWriteFacet(services, view);
+        if (facet.ConcurrencyToken is null)
         {
             return;
         }
 
-        var memberName = Hosting.VistaConcurrencyTokenStartupValidator.TryGetMemberName(selector);
+        var memberName = Hosting.VistaConcurrencyTokenStartupValidator.TryGetMemberName(facet.ConcurrencyToken);
         if (memberName is null)
         {
             return;
         }
 
-        var entry = _dbContext.Entry(entity);
-        var property = entry.Metadata.FindProperty(memberName);
-        if (property is null || !property.IsConcurrencyToken)
+        var entry = dbContext.Entry(entity);
+        var metadata = entry.Metadata.FindProperty(memberName);
+        if (metadata is null || !metadata.IsConcurrencyToken || IsStoreGenerated(metadata))
         {
-            // Not a model concurrency token: the startup validator (D146) already fails such a view closed,
-            // so reaching here means a host bypassed startup validation (for example a test-constructed
-            // executor). Pinning would have no effect on the emitted SQL, so there is nothing to do.
             return;
         }
 
-        entry.Property(memberName).OriginalValue = entry.Property(memberName).CurrentValue;
+        var property = entry.Property(memberName);
+        property.CurrentValue = NextApplicationToken(property.CurrentValue, metadata.ClrType);
+        EnsureStrongEntityTag(property.CurrentValue);
+    }
+
+    /// <summary>
+    /// Confirms the token's wire form is a strong entity-tag before <c>SaveChanges</c>. A format that
+    /// cannot be quoted must fail the request while the write is still uncommitted.
+    /// </summary>
+    private static void EnsureStrongEntityTag(object? token)
+    {
+        var wire = ConcurrencyTokenFormat.ToWire(token);
+        if (string.IsNullOrEmpty(wire))
+        {
+            throw new InvalidOperationException(
+                "The concurrency token has no wire form, so the response ETag cannot be written.");
+        }
+
+        _ = IfMatchHeader.ToStrongEntityTag(wire);
+    }
+
+    /// <summary>
+    /// Picks the tag that becomes <c>@original</c>. One tag is used directly. A list contributes the tag
+    /// equal to the value loaded with the row; any other list is rejected so a non-current tag is never
+    /// written into the predicate (that would let a concurrent writer win by landing on that tag).
+    /// </summary>
+    private static string? SelectConcurrencyCandidate(IfMatchHeader.Result parsed, string? storedWire)
+    {
+        if (parsed.StrongTags.Count == 1)
+        {
+            return parsed.StrongTags[0];
+        }
+
+        for (var i = 0; i < parsed.StrongTags.Count; i++)
+        {
+            if (string.Equals(parsed.StrongTags[i], storedWire, StringComparison.Ordinal))
+            {
+                return parsed.StrongTags[i];
+            }
+        }
+
+        return null;
+    }
+
+    private static bool IsStoreGenerated(IProperty property) =>
+        property.ValueGenerated is ValueGenerated.OnUpdate or ValueGenerated.OnAddOrUpdate;
+
+    /// <summary>
+    /// The next application token. Store-generated rowversions do not come through here. A type Vista
+    /// cannot renew fails closed: leaving the old value in place would make the WHERE clause match again.
+    /// </summary>
+    private static object NextApplicationToken(object? current, Type clrType)
+    {
+        var type = Nullable.GetUnderlyingType(clrType) ?? clrType;
+        if (type == typeof(Guid))
+        {
+            return Guid.NewGuid();
+        }
+
+        if (type == typeof(string))
+        {
+            return Guid.NewGuid().ToString("D");
+        }
+
+        if (type == typeof(int))
+        {
+            return current is int i ? unchecked(i + 1) : 1;
+        }
+
+        if (type == typeof(long))
+        {
+            return current is long l ? unchecked(l + 1) : 1L;
+        }
+
+        if (type == typeof(short))
+        {
+            return current is short s ? unchecked((short)(s + 1)) : (short)1;
+        }
+
+        if (type == typeof(byte))
+        {
+            return current is byte b ? unchecked((byte)(b + 1)) : (byte)1;
+        }
+
+        if (type == typeof(uint))
+        {
+            return current is uint u ? unchecked(u + 1) : 1u;
+        }
+
+        if (type == typeof(ulong))
+        {
+            return current is ulong u ? unchecked(u + 1) : 1ul;
+        }
+
+        if (type == typeof(byte[]))
+        {
+            return Guid.NewGuid().ToByteArray();
+        }
+
+        if (type == typeof(DateTime))
+        {
+            return DateTime.UtcNow;
+        }
+
+        if (type == typeof(DateTimeOffset))
+        {
+            return DateTimeOffset.UtcNow;
+        }
+
+        throw new InvalidOperationException(
+            $"Concurrency token type '{type.Name}' is not store-generated and cannot be renewed. " +
+            "Configure a database rowversion, or use Guid, string, integer, or byte[].");
     }
 
     /// <summary>
@@ -1476,9 +1872,8 @@ public class EfViewExecutor : IViewExecutor
 
     /// <summary>
     /// Reads and formats the current concurrency-token value of <paramref name="entity"/> as a wire
-    /// string, or <see langword="null"/> when the view declares no token. Used both by the pre-check
-    /// (<see cref="EnforceConcurrencyToken{TEntity}"/>) and by the write bodies to round-trip the token
-    /// into the <c>ETag</c> response header on success (Requirement R6.4).
+    /// string, or <see langword="null"/> when the view declares no token. Used to publish the post-write
+    /// <c>ETag</c> (Requirement R6.4).
     /// </summary>
     /// <typeparam name="TEntity">The EF entity type the view writes to.</typeparam>
     /// <param name="facet">The captured write facet whose token selector is evaluated.</param>
@@ -1502,13 +1897,7 @@ public class EfViewExecutor : IViewExecutor
     /// header: a <c>byte[]</c> rowversion becomes Base64, any other value uses its invariant-culture
     /// representation. <see langword="null"/> maps to <see langword="null"/>.
     /// </summary>
-    internal static string? FormatToken(object? value) => value switch
-    {
-        null => null,
-        byte[] bytes => Convert.ToBase64String(bytes),
-        IFormattable formattable => formattable.ToString(null, CultureInfo.InvariantCulture),
-        _ => value.ToString(),
-    };
+    internal static string? FormatToken(object? value) => ConcurrencyTokenFormat.ToWire(value);
 
     private static bool ContainsOrdinal(IReadOnlyList<string> names, string candidate)
     {
@@ -1569,24 +1958,15 @@ public class EfViewExecutor : IViewExecutor
     {
         if (_planRegistry is null || _dbContext is null || _services is null)
         {
-            throw new InvalidOperationException(
-                $"This {nameof(EfViewExecutor)} was constructed without an execution-plan registry, so it " +
-                $"cannot resolve a queryable for view '{view.Name}'. Use the constructor that takes a " +
-                $"{nameof(DbContext)}, {nameof(IServiceProvider)}, and {nameof(IViewExecutionPlanRegistry)} " +
-                "(the DI wiring path, Task 9.4), or override ResolveScopedQueryable<TRow> in a subclass.");
+            throw MissingPlanRegistry(view);
         }
 
         // Metadata-only fail-fast (R4.4 / DR5): a typed Style B view stays metadata-only when no plan was
         // generated for it. Throw before any query work — no source query is built, no count or
         // materialization runs — so no partial result is ever produced. The message names the view, states
         // that no generated execution plan exists, and instructs referencing the source generator (D118).
-        var plan = _planRegistry.Get(view.Name)
-            ?? throw new InvalidOperationException(
-                $"View '{view.Name}' has no generated execution plan, so it is metadata-only (DR5) and " +
-                "cannot be executed. Reference the a2n.Vista source generator (a2n.Vista.SourceGenerators) " +
-                "so a compiled execution plan is generated for this typed Style B view, making it " +
-                "executable; until then List and Detail fail fast here before any query runs and no " +
-                "result is produced.");
+        // Update uses the same exception, before SaveChanges, when it cannot re-read the row.
+        var plan = _planRegistry.Get(view.Name) ?? throw MetadataOnly(view);
 
         var queryable = plan.CreateScopedQueryable(_dbContext, _services, scope);
         if (queryable is IQueryable<TRow> typed)
@@ -1943,8 +2323,8 @@ public class EfViewExecutor : IViewExecutor
     /// <summary>
     /// Resolves the captured <see cref="CrudFacetDefinition"/> for <paramref name="view"/> from the
     /// <see cref="IWriteFacetRegistry"/>, or throws a clear wiring error when none is registered. The
-    /// write bodies need the facet to enforce the concurrency precondition
-    /// (<see cref="EnforceConcurrencyToken{TEntity}"/>); a writable view that reached the executor must
+    /// write bodies need the facet to bind the concurrency predicate
+    /// (<see cref="ArmConcurrencyPredicate{TEntity}"/>); a writable view that reached the executor must
     /// have a registered facet, so a miss is an internal wiring fault, not a client error.
     /// </summary>
     private static CrudFacetDefinition RequireWriteFacet(IServiceProvider services, ViewMetadata view)

@@ -1,36 +1,43 @@
 using a2n.Vista.Examples.Northwind;
 using a2n.Vista.Examples.Northwind.Views;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 using Northwind.DataAccess;
 
+// SQLite constraints are a host concern. Core classifies only SQLSTATE class 23.
+a2n.Vista.Examples.SqliteConstraintProbe.Register();
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Real Microsoft Northwind sample database (SQLite). It is shipped zipped under ../DB and must be
-// extracted before first run; we never recreate or seed it, so it stays the single source of truth.
+// The build extracts src/Examples/DB/Northwind SQLite.zip to the gitignored northwind.db template
+// and checks src/Examples/DB/Northwind.sha256. A missing or mismatched template refuses to start.
+// That file is read-only. Copy it, then create VistaMemos on the copy only.
 const string DbRelativePath = "../DB/northwind.db";
-var dbFullPath = Path.GetFullPath(DbRelativePath);
-
-if (!File.Exists(dbFullPath))
+const string ChecksumRelativePath = "../DB/Northwind.sha256";
+var templatePath = Path.GetFullPath(DbRelativePath);
+string templateHash;
+try
 {
+    templateHash = NorthwindWorkingDatabase.RequirePinnedTemplate(
+        templatePath,
+        Path.GetFullPath(ChecksumRelativePath));
+}
+catch (Exception ex) when (ex is FileNotFoundException or InvalidOperationException)
+{
+    Console.Error.WriteLine(ex.Message);
     Console.Error.WriteLine(
-        $"""
-        Northwind database not found at: {dbFullPath}
+        """
+        Run from the project directory so the relative path resolves:
 
-        Extract the bundled "Northwind SQLite.zip" so the database file exists, for example:
-          1. Open the folder next to the project: src/Examples/DB
-          2. Extract "Northwind SQLite.zip" into that folder
-          3. Make sure the extracted file is named "northwind.db" (rename it if needed)
-
-        Then run this example again from the project directory:
           dotnet run --project src/Examples/Northwind
         """);
     Environment.ExitCode = 1;
     return;
 }
-
-// Read-only SQLite connection against the extracted database file.
+var working = NorthwindWorkingDatabase.CreateCopy(templatePath);
+a2n.Vista.Examples.NorthwindMemoTable.EnsureOnCopy(templatePath, working.DatabasePath);
 builder.Services.AddDbContext<NorthwindDbContext>(options =>
-    options.UseSqlite($"Data Source={DbRelativePath}"));
+    a2n.Vista.Examples.SqliteVistaConnection.Use(options, working.DatabasePath));
 
 // Vista core wiring (EF layer): register the Gaya A central template plus a class-per-view (Style B)
 // *writable* view. A view's route is composed at registration (default root /api/views, or via
@@ -76,8 +83,6 @@ builder.Services.AddVistaMetadataAdapter<a2n.Vista.Adapters.DataTablesNet.QueryB
 
 var app = builder.Build();
 
-// No seeding: the extracted Northwind database is the source of truth (read-only sample).
-
 // Serve the interactive demo UI from wwwroot (index.html): a jQuery DataTables grid plus a
 // jQuery-QueryBuilder panel wired to the adapter endpoints (POST {route}/datatable and
 // GET {route}/querybuilder). Static-file serving is independent of the API surface — MapVistaViews still
@@ -96,21 +101,50 @@ app.MapVistaViews();
 app.MapVistaOpenApi();
 
 // Guarded end-to-end self-tests (R12, R16.5): `dotnet run -- selftest`. The read self-test exercises
-// List paging, filter/sort/search, and Detail-by-key against the shipped read-only northwind.db through
-// the real executor. The write self-test exercises Create/Update/Delete on the writable vWritableMemo
-// view against an isolated in-memory database (the read-only sample has no VistaMemos table and is never
-// mutated). Both run, print their outcomes, and the process exits 0 only when BOTH pass.
+// List paging, filter/sort/search, and Detail-by-key against the working copy through the real executor.
+// The write self-test exercises Create/Update/Delete on vWritableMemo twice: once on an isolated
+// in-memory database, and once on the working copy (the inserted memo is deleted afterwards). The
+// template's SHA-256 must be unchanged. The process exits 0 only when every pass succeeds.
 if (args.Contains("selftest", StringComparer.OrdinalIgnoreCase))
 {
-    var readPassed = await SelfTest.RunAsync(app.Services);
-    var writePassed = await WriteSelfTest.RunAsync();
-    // The OpenAPI self-test stands up an in-process test host (with and without the emitter) over the same
-    // Vista wiring, issues a real GET /openapi/v1.json, asserts the served document is a valid OpenAPI 3.x
-    // document whose operation set equals the registered views' live View_Operation_Set (endpoint parity),
-    // and asserts a representative existing endpoint response is byte-for-byte unchanged by the emitter.
-    var openApiPassed = await OpenApiSelfTest.RunAsync(DbRelativePath);
-    Environment.ExitCode = readPassed && writePassed && openApiPassed ? 0 : 1;
+    try
+    {
+        var readPassed = await SelfTest.RunAsync(app.Services);
+        var writePassed = await WriteSelfTest.RunAsync();
+        var hostWritePassed = await WriteSelfTest.RunAgainstHostAsync(app.Services, templatePath, templateHash);
+        // The OpenAPI self-test stands up an in-process test host (with and without the emitter) over the
+        // same Vista wiring and the working copy, issues a real GET /openapi/v1.json, asserts the served
+        // document is a valid OpenAPI 3.x document whose operation set equals the registered views' live
+        // View_Operation_Set (endpoint parity), and asserts a representative existing endpoint response is
+        // byte-for-byte unchanged by the emitter.
+        var openApiPassed = await OpenApiSelfTest.RunAsync(working.DatabasePath);
+        var templateUntouched = string.Equals(
+            NorthwindWorkingDatabase.Sha256(templatePath),
+            templateHash,
+            StringComparison.Ordinal);
+        if (!templateUntouched)
+        {
+            Console.Error.WriteLine("FAIL: the read-only northwind.db template changed during the self-test.");
+        }
+
+        Environment.ExitCode = readPassed && writePassed && hostWritePassed && openApiPassed && templateUntouched
+            ? 0
+            : 1;
+    }
+    finally
+    {
+        await app.DisposeAsync();
+        ReleaseWorkingCopy(working);
+    }
+
     return;
 }
 
+app.Lifetime.ApplicationStopped.Register(() => ReleaseWorkingCopy(working));
 app.Run();
+
+static void ReleaseWorkingCopy(NorthwindWorkingDatabase.WorkingCopy copy)
+{
+    SqliteConnection.ClearAllPools();
+    NorthwindWorkingDatabase.Cleanup(copy);
+}

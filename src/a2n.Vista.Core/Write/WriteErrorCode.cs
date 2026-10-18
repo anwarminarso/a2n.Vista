@@ -36,13 +36,26 @@ public enum WriteErrorCode
     PreconditionRequired,
 
     /// <summary>
-    /// The supplied <c>If-Match</c> token did not match the stored row's current token, or
-    /// <c>SaveChanges</c> raised a concurrency violation (R6.3, R6.5).
+    /// The supplied <c>If-Match</c> token did not match the stored row, the header could not be
+    /// used as a concurrency predicate, or <c>SaveChanges</c> raised <c>DbUpdateConcurrencyException</c>
+    /// (R6.3, R6.5, D159). HTTP 412. The wire code stays <c>write-concurrency-conflict</c>. The old
+    /// <c>write-conflict</c> string is retired and is no longer emitted.
     /// </summary>
     ConcurrencyConflict,
 
-    /// <summary>A database constraint violation surfaced from persistence (R9.4).</summary>
-    WriteConflict,
+    /// <summary>
+    /// A database constraint violation (unique, foreign key, NOT NULL, or CHECK) surfaced from
+    /// persistence (D158). HTTP 422 <c>write-constraint-violation</c> — not a conflict, and not
+    /// used for a missing table or any other non-constraint <c>DbUpdateException</c>.
+    /// </summary>
+    ConstraintViolation,
+
+    /// <summary>
+    /// <c>SaveChanges</c> failed for a reason other than a concurrency conflict or a database
+    /// constraint violation (for example a missing table or a provider I/O failure). Mapped to
+    /// HTTP 500. The client message stays leak-free (Decision Log D158; spec 01 §14.1, spec 05 §9.2).
+    /// </summary>
+    PersistenceFailed,
 
     /// <summary>A bulk (array) body was posted while bulk execution is not enabled (R15.1).</summary>
     BulkNotEnabled,
@@ -52,6 +65,14 @@ public enum WriteErrorCode
     /// surfaced internally and rendered as an indistinguishable not-found response (R12.4).
     /// </summary>
     NoWritePlan,
+
+    /// <summary>
+    /// The store lock did not clear before the provider gave up. Only a lock recognized by a
+    /// registered transient-lock probe (<c>SQLITE_BUSY</c> / <c>SQLITE_LOCKED</c> for SQLite) maps
+    /// here. HTTP 503 <c>write-busy</c> with <c>Retry-After</c> (Decision Log D160). Not a lost update
+    /// and not a 500. <c>DbException.IsTransient</c> alone is not this code.
+    /// </summary>
+    StoreBusy,
 }
 
 /// <summary>
@@ -78,17 +99,28 @@ public static class WriteErrorCodes
     /// <summary>Wire code for <see cref="WriteErrorCode.PreconditionRequired"/>.</summary>
     public const string PreconditionRequired = "write-precondition-required";
 
-    /// <summary>Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>.</summary>
+    /// <summary>
+    /// Wire code for <see cref="WriteErrorCode.ConcurrencyConflict"/>. HTTP 412
+    /// <c>write-concurrency-conflict</c> (Decision Log D159).
+    /// </summary>
     public const string ConcurrencyConflict = "write-concurrency-conflict";
 
-    /// <summary>Wire code for <see cref="WriteErrorCode.WriteConflict"/>.</summary>
-    public const string WriteConflict = "write-conflict";
+    /// <summary>
+    /// Wire code for <see cref="WriteErrorCode.ConstraintViolation"/>. HTTP 422. Not a conflict.
+    /// </summary>
+    public const string ConstraintViolation = "write-constraint-violation";
+
+    /// <summary>Wire code for <see cref="WriteErrorCode.PersistenceFailed"/>.</summary>
+    public const string PersistenceFailed = "write-persistence-failed";
 
     /// <summary>Wire code for <see cref="WriteErrorCode.BulkNotEnabled"/>.</summary>
     public const string BulkNotEnabled = "write-bulk-not-enabled";
 
     /// <summary>Wire code for <see cref="WriteErrorCode.NoWritePlan"/>.</summary>
     public const string NoWritePlan = "write-no-plan";
+
+    /// <summary>Wire code for <see cref="WriteErrorCode.StoreBusy"/>. HTTP 503.</summary>
+    public const string StoreBusy = "write-busy";
 
     /// <summary>
     /// Maps a <see cref="WriteErrorCode"/> to its stable wire code.
@@ -104,9 +136,11 @@ public static class WriteErrorCodes
         WriteErrorCode.ValidationFailed => ValidationFailed,
         WriteErrorCode.PreconditionRequired => PreconditionRequired,
         WriteErrorCode.ConcurrencyConflict => ConcurrencyConflict,
-        WriteErrorCode.WriteConflict => WriteConflict,
+        WriteErrorCode.ConstraintViolation => ConstraintViolation,
+        WriteErrorCode.PersistenceFailed => PersistenceFailed,
         WriteErrorCode.BulkNotEnabled => BulkNotEnabled,
         WriteErrorCode.NoWritePlan => NoWritePlan,
+        WriteErrorCode.StoreBusy => StoreBusy,
         _ => throw new ArgumentOutOfRangeException(nameof(code), code, "Unknown write error code."),
     };
 }

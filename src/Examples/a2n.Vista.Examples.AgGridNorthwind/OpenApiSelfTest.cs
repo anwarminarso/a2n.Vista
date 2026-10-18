@@ -49,9 +49,9 @@ public static class OpenApiSelfTest
 
     /// <summary>
     /// Runs the OpenAPI self-test against two in-process test hosts (one with the emitter, one without),
-    /// both mirroring the real Northwind Vista wiring over the shipped read-only database.
+    /// both mirroring the real Northwind Vista wiring over the host's working copy of the template.
     /// </summary>
-    /// <param name="dbRelativePath">The relative path to the Northwind SQLite database (the host's source of truth).</param>
+    /// <param name="dbRelativePath">SQLite database path. The sample passes the per-run working copy, not the template.</param>
     /// <returns><see langword="true"/> when every check passed; otherwise <see langword="false"/>.</returns>
     [RequiresUnreferencedCode("Mirrors the reflection-based Vista wiring (RegisterTemplate/MapVistaViews) and the RUC OpenAPI emitter.")]
     public static async Task<bool> RunAsync(string dbRelativePath)

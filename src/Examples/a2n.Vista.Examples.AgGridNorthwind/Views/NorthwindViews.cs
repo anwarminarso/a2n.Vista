@@ -27,7 +27,10 @@ public class NorthwindViews : ViewTemplate<NorthwindDbContext>
                     p.ProductName,
                     p.UnitPrice,
                     p.UnitsInStock,
-                    p.Discontinued,
+                    // Products.Discontinued is stored as the text "0"/"1". A constant equality is a real
+                    // bool, so filter and sort compare bools. EF translates `== "1"` to SQL (SQLite
+                    // included); there is no Parse/Convert, so the projection stays server-side and AOT-safe.
+                    Discontinued = p.Discontinued == "1",
                     p.CategoryId,
                     // INNER JOINs via the (now optional) navigations: EF guarantees a matching row,
                     // so null-forgive to keep these projected columns non-null. CategoryId/SupplierId

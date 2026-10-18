@@ -37,9 +37,8 @@ view's route, e.g. for `vProductCategory` the routes are `GET /api/views/vProduc
 
 ## Preconditions (once per session)
 
-1. **Extract the database.** Ensure `src/Examples/DB/northwind.db` exists (extract
-   `src/Examples/DB/Northwind SQLite.zip` and rename to `northwind.db` if needed). The host prints the
-   same guidance and exits non-zero if it is missing.
+1. **Database.** Building the host extracts `src/Examples/DB/Northwind SQLite.zip` to the gitignored
+   `src/Examples/DB/northwind.db`. If that file is missing, the host prints guidance and exits non-zero.
 2. **Build the client.** From `src/Examples/Northwind/client`:
    ```sh
    npm install

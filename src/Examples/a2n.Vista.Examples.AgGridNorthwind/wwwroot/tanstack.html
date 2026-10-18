@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Vista · TanStack Table (Northwind showcase)</title>
+
+  <!--
+    Import map so the browser resolves the bare `@tanstack/table-core` specifier emitted by tsc.
+    The pinned build is the single-file ESM bundle (v8.21.3). Table state slices are the same shape
+    TanStack Table v9 still uses for pagination, sorting, filtering, and column visibility.
+  -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@tanstack/table-core": "https://cdn.jsdelivr.net/npm/@tanstack/table-core@8.21.3/+esm"
+      }
+    }
+  </script>
+
+  <style>
+    :root { font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; color-scheme: light; }
+    body { margin: 0; padding: 0 0 1.5rem; color: #1a1a1a; background: #f6f7f9; }
+
+    .showcase-nav { background: #0f172a; padding: 0 1.5rem; }
+    .showcase-nav .nav-list { list-style: none; display: flex; gap: 0.25rem; margin: 0; padding: 0; flex-wrap: wrap; }
+    .showcase-nav .nav-item { margin: 0; }
+    .showcase-nav .nav-link {
+      display: inline-block; padding: 0.85rem 1rem; color: #94a3b8; text-decoration: none;
+      font-weight: 600; font-size: 0.9rem; border-bottom: 3px solid transparent;
+    }
+    .showcase-nav .nav-link:hover { color: #e2e8f0; }
+    .showcase-nav .nav-link--active { color: #fff; border-bottom-color: #0f766e; }
+
+    main { padding: 1.5rem; }
+    h1 { font-size: 1.4rem; margin: 0 0 0.25rem; }
+    p.lead { margin: 0 0 1rem; color: #555; max-width: 60rem; }
+    .toolbar, .filters, .pager { display: flex; flex-wrap: wrap; align-items: center; gap: 0.75rem 1rem; margin-bottom: 0.75rem; }
+    .toolbar label, .filters label, .pager label { font-weight: 600; display: inline-flex; align-items: center; gap: 0.35rem; }
+    input, select, button {
+      padding: 0.4rem 0.6rem; font-size: 1rem; border: 1px solid #b0b0b0; border-radius: 4px; background: #fff;
+    }
+    input[type="search"], input[type="number"] { min-width: 8rem; }
+    #global-filter { min-width: 16rem; }
+    button { cursor: pointer; background: #0f766e; color: #fff; border-color: #0f766e; font-weight: 600; }
+    button:disabled { cursor: default; opacity: 0.45; }
+    .sort-button { background: transparent; color: inherit; border: 0; padding: 0.2rem 0; font-weight: 700; cursor: pointer; }
+    #status-line { color: #555; min-height: 1.25rem; margin: 0 0 0.5rem; font-size: 0.9rem; }
+    #status-error {
+      color: #8a1c1c; background: #fdecea; border: 1px solid #f5c6cb;
+      border-radius: 4px; padding: 0.5rem 0.75rem; margin: 0 0 0.75rem; font-size: 0.9rem;
+    }
+    .visibility { display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; margin: 0 0 0.75rem; }
+    .visibility-option { display: inline-flex; align-items: center; gap: 0.3rem; font-size: 0.9rem; }
+    .grid-wrap { background: #fff; border: 1px solid #d5d8de; border-radius: 6px; overflow: auto; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 0.55rem 0.75rem; border-bottom: 1px solid #e6e8ee; white-space: nowrap; }
+    th { background: #f0fdfa; position: sticky; top: 0; }
+    tbody tr:hover { background: #f8fafc; }
+  </style>
+</head>
+<body>
+  <div id="nav"></div>
+
+  <main>
+    <header>
+      <h1>TanStack Table</h1>
+      <p class="lead">
+        A headless TanStack Table (<code>@tanstack/table-core</code>) over the read-only Northwind
+        <code>vProductCategory</code> view. Pagination, sorting, column filters, and the global filter
+        are manual: each change POSTs the table state to
+        <code>/api/views/vProductCategory/tanstack</code>. Column ids are the view's field names.
+        Hiding a column updates <code>columnVisibility</code> in that same request.
+        The field is still in the response; hiding a column is not access control.
+      </p>
+    </header>
+
+    <div class="toolbar">
+      <label for="global-filter">Global filter
+        <input id="global-filter" type="search" placeholder="Search text columns…" autocomplete="off" />
+      </label>
+      <label for="page-size">Page size
+        <select id="page-size">
+          <option value="10" selected>10</option>
+          <option value="20">20</option>
+          <option value="50">50</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="filters">
+      <label for="product-filter">Product contains
+        <input id="product-filter" type="search" autocomplete="off" />
+      </label>
+      <label for="price-min">Price min
+        <input id="price-min" type="number" min="0" step="0.01" inputmode="decimal" />
+      </label>
+      <label for="price-max">Price max
+        <input id="price-max" type="number" min="0" step="0.01" inputmode="decimal" />
+      </label>
+      <label for="discontinued-filter">Discontinued
+        <select id="discontinued-filter">
+          <option value="">Any</option>
+          <option value="true">Yes</option>
+          <option value="false">No</option>
+        </select>
+      </label>
+    </div>
+
+    <div id="column-visibility" class="visibility" role="group" aria-label="Column visibility"></div>
+
+    <p id="status-line" role="status" aria-live="polite">Loading…</p>
+    <div id="status-error" role="alert" aria-live="assertive" hidden></div>
+
+    <div class="grid-wrap">
+      <table id="grid">
+        <caption class="visually-hidden" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);">Products</caption>
+        <thead id="grid-head"></thead>
+        <tbody id="grid-body"></tbody>
+      </table>
+    </div>
+
+    <div class="pager">
+      <button type="button" id="page-prev">Previous</button>
+      <button type="button" id="page-next">Next</button>
+    </div>
+  </main>
+
+  <script type="module" src="js/tanStackTable.js"></script>
+</body>
+</html>

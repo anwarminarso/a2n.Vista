@@ -1,0 +1,13 @@
+<Project>
+  <!--
+    Nearest Directory.Build.props wins, so import the repo one before the smoke-only paths.
+    The Playwright project in this folder keeps the default bin/ and obj/.
+  -->
+  <Import Project="$([MSBuild]::GetPathOfFileAbove('Directory.Build.props', '$(MSBuildThisFileDirectory)..'))" />
+
+  <PropertyGroup Condition="'$(MSBuildProjectName)' == 'a2n.Vista.E2E.StartupBurst'">
+    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)obj/startup-burst/</BaseIntermediateOutputPath>
+    <MSBuildProjectExtensionsPath>$(BaseIntermediateOutputPath)</MSBuildProjectExtensionsPath>
+    <BaseOutputPath>$(MSBuildThisFileDirectory)bin/startup-burst/</BaseOutputPath>
+  </PropertyGroup>
+</Project>

@@ -15,6 +15,8 @@
 
     <!-- Testing: TUnit on Microsoft.Testing.Platform, not VSTest (Decision Log D7) -->
     <PackageVersion Include="TUnit" Version="1.56.0" />
+    <!-- Browser e2e (tests/e2e only). Not referenced by the library or the unit suites. -->
+    <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
     <!-- Property-based testing (CsCheck): imperative Sample API pairs cleanly with TUnit [Test] methods -->
     <PackageVersion Include="CsCheck" Version="4.6.2" />
   </ItemGroup>
@@ -45,8 +47,9 @@
     <PackageVersion Include="Npgsql.EntityFrameworkCore.PostgreSQL" Version="10.0.0" />
     <PackageVersion Include="Microsoft.Extensions.Hosting.Abstractions" Version="10.0.0" />
     <PackageVersion Include="Microsoft.AspNetCore.TestHost" Version="10.0.0" />
-    <!-- Built-in ASP.NET Core OpenAPI pipeline (net10); pulls Microsoft.OpenApi 2.x transitively. -->
-    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.0" />
+    <!-- Built-in ASP.NET Core OpenAPI pipeline (net10). 10.0.13 depends on Microsoft.OpenApi
+         [2.12.2, 3.0.0), which is outside GHSA-v5pm-xwqc-g5wc (<= 2.7.4). 10.0.0 through 10.0.10 pin 2.0.0. -->
+    <PackageVersion Include="Microsoft.AspNetCore.OpenApi" Version="10.0.13" />
   </ItemGroup>
 
 </Project>

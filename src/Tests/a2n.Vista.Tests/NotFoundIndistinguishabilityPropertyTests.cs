@@ -153,7 +153,10 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
             iter: Iterations);
     }
 
-    /// <summary>Asserts a response is a <c>404</c> with an empty body (the shared not-found shape).</summary>
+    /// <summary>
+    /// Asserts a response is a <c>404</c> problem whose body is the shared not-found shape. The body
+    /// names no view and no key.
+    /// </summary>
     private static void RequireNotFound((HttpStatusCode Status, string Body) response, string what)
     {
         if (response.Status != HttpStatusCode.NotFound)
@@ -161,9 +164,10 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
             throw new Exception($"Expected 404 for {what}, but got {(int)response.Status} {response.Status}.");
         }
 
-        if (response.Body.Length != 0)
+        if (!response.Body.Contains("\"not-found\"", StringComparison.Ordinal)
+            || response.Body.Contains("view", StringComparison.OrdinalIgnoreCase))
         {
-            throw new Exception($"Expected an empty body for {what}, but got '{response.Body}'.");
+            throw new Exception($"Expected a generic not-found problem for {what}, but got '{response.Body}'.");
         }
     }
 
@@ -204,7 +208,7 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
     private static StringContent JsonContent(string json) => new(json, Encoding.UTF8, "application/json");
 
     /// <summary>The EF source entity the views project from; tenant-scoped, single-source, Id-keyed.</summary>
-    private sealed class ScopedSource
+    internal sealed class ScopedSource
     {
         public int Id { get; set; }
 
@@ -236,7 +240,7 @@ public sealed class NotFoundIndistinguishabilityPropertyTests
     }
 
     /// <summary>Minimal EF context backing both views.</summary>
-    private sealed class ScopedContext : DbContext
+    internal sealed class ScopedContext : DbContext
     {
         public ScopedContext(DbContextOptions<ScopedContext> options)
             : base(options)

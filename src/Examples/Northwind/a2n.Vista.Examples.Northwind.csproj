@@ -8,6 +8,13 @@
     -->
     <TargetFramework>net8.0</TargetFramework>
     <TargetFrameworks></TargetFrameworks>
+    <!--
+      Opt-in for the informational startup-burst smoke only (tests/e2e/run-startup-burst.sh).
+      Default solution and CI builds leave VistaHostFramework unset, so this sample stays net8.0.
+      -p:VistaHostFramework=net9.0 or net10.0 retargets this host alone. A global
+      -p:TargetFrameworks= would also retarget the netstandard2.0 source-generator reference.
+    -->
+    <TargetFramework Condition="'$(VistaHostFramework)' != ''">$(VistaHostFramework)</TargetFramework>
 
     <RootNamespace>a2n.Vista.Examples.Northwind</RootNamespace>
     <AssemblyName>a2n.Vista.Examples.Northwind</AssemblyName>
@@ -15,6 +22,8 @@
     <!-- Example app, never packaged. -->
     <IsPackable>false</IsPackable>
     <GeneratePackageOnBuild>false</GeneratePackageOnBuild>
+    <!-- Extract src/Examples/DB/Northwind SQLite.zip during build. See Directory.Build.targets. -->
+    <ExtractNorthwindDatabase>true</ExtractNorthwindDatabase>
   </PropertyGroup>
 
   <ItemGroup>
@@ -27,6 +36,13 @@
          endpoint response with vs. without the emitter registered (Requirements 10.1, 11.1). Version is
          pinned per-TFM in Directory.Packages.props (net8.0 -> 8.0.11). -->
     <PackageReference Include="Microsoft.AspNetCore.TestHost" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- SQLite constraint probe. The EF library does not reference Microsoft.Data.Sqlite. -->
+    <Compile Include="..\SqliteConstraintProbe.cs" Link="SqliteConstraintProbe.cs" />
+    <Compile Include="..\SqliteVistaConnection.cs" Link="SqliteVistaConnection.cs" />
+    <Compile Include="..\NorthwindMemoTable.cs" Link="NorthwindMemoTable.cs" />
   </ItemGroup>
 
   <ItemGroup>

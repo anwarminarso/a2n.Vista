@@ -16,7 +16,10 @@
 //        - application/problem+json (case-insensitive,
 //          ignoring ;charset) + parseable object      -> problem, or the status-specialized
 //                                                        not-found(404)/precondition-required(428)/
-//                                                        precondition-failed(409) (8.2, 4.5, 5.6)
+//                                                        precondition-failed(412). A 422 whose code is
+//                                                        write-constraint-violation is constraint-violation;
+//                                                        a 500 whose code is write-persistence-failed is
+//                                                        persistence-failed. Any other 422/500 stays problem.
 //        - problem+json + unparseable/non-object body -> unexpected(status, rawBody) (8.6)
 //        - non-2xx, non-problem+json                  -> unexpected(status, rawBody) (8.3)
 //
@@ -30,7 +33,8 @@ import { classifyResponse } from "../harness/generated.js";
 import type { ClassifiableResponse, ClientResult } from "../harness/generated.js";
 
 // Every discriminant the ClientResult union can carry. `classifyResponse` only ever produces the
-// subset {success, problem, not-found, precondition-required, precondition-failed, unexpected}; the
+// subset {success, problem, not-found, precondition-required, precondition-failed,
+// constraint-violation, persistence-failed, unexpected}; the
 // remaining two (unauthorized, transport-error) are produced by the client, not the classifier.
 const ALL_CLIENT_RESULT_KINDS = new Set<string>([
   "success",
@@ -39,6 +43,8 @@ const ALL_CLIENT_RESULT_KINDS = new Set<string>([
   "not-found",
   "precondition-required",
   "precondition-failed",
+  "constraint-violation",
+  "persistence-failed",
   "transport-error",
   "unexpected",
 ]);
@@ -49,6 +55,8 @@ const CLASSIFIER_KINDS = new Set<string>([
   "not-found",
   "precondition-required",
   "precondition-failed",
+  "constraint-violation",
+  "persistence-failed",
   "unexpected",
 ]);
 
@@ -74,8 +82,18 @@ type ExpectedOutcome =
   | { readonly kind: "problem"; readonly status: number }
   | { readonly kind: "not-found"; readonly status: 404 }
   | { readonly kind: "precondition-required"; readonly status: 428 }
-  | { readonly kind: "precondition-failed"; readonly status: 409 }
+  | { readonly kind: "precondition-failed"; readonly status: 412 }
+  | { readonly kind: "constraint-violation"; readonly status: 422 }
+  | { readonly kind: "persistence-failed"; readonly status: 500 }
   | { readonly kind: "unexpected"; readonly status: number; readonly rawBody: string };
+
+const WRITE_CONSTRAINT_VIOLATION = "write-constraint-violation";
+const WRITE_PERSISTENCE_FAILED = "write-persistence-failed";
+
+function problemCode(parsed: object): string | undefined {
+  const code = (parsed as { code?: unknown }).code;
+  return typeof code === "string" ? code : undefined;
+}
 
 /**
  * The independent classification oracle. It reproduces the specified ordering — 2xx first, then
@@ -108,8 +126,18 @@ function expectedOutcome(response: ClassifiableResponse): ExpectedOutcome {
         return { kind: "not-found", status: 404 };
       case 428:
         return { kind: "precondition-required", status: 428 };
-      case 409:
-        return { kind: "precondition-failed", status: 409 };
+      case 412:
+        return { kind: "precondition-failed", status: 412 };
+      case 422:
+        if (problemCode(parsed) === WRITE_CONSTRAINT_VIOLATION) {
+          return { kind: "constraint-violation", status: 422 };
+        }
+        return { kind: "problem", status };
+      case 500:
+        if (problemCode(parsed) === WRITE_PERSISTENCE_FAILED) {
+          return { kind: "persistence-failed", status: 500 };
+        }
+        return { kind: "problem", status };
       default:
         return { kind: "problem", status };
     }
@@ -120,10 +148,10 @@ function expectedOutcome(response: ClassifiableResponse): ExpectedOutcome {
 
 // --- Generators ---------------------------------------------------------------------------------
 
-// Full HTTP status range, biased to include the classifier-significant codes (2xx, 404, 409, 428).
+// Full HTTP status range, biased to include the classifier-significant codes (2xx, 404, 412, 428).
 const statusArb: fc.Arbitrary<number> = fc.oneof(
   fc.integer({ min: 100, max: 599 }),
-  fc.constantFrom(200, 201, 204, 299, 400, 401, 404, 409, 428, 500),
+  fc.constantFrom(200, 201, 204, 299, 400, 401, 404, 412, 428, 500),
 );
 
 // Content types: problem+json in various casings/with parameters, near-misses, other types, null.
@@ -221,10 +249,22 @@ describe("Property 7 — response classification is total and correct (never thr
             break;
 
           case "precondition-failed":
-            // 5.6: 409 problem -> distinct precondition-failed carrying the literal 409 status.
-            expect(result.status).toBe(409);
-            expect(response.status).toBe(409);
+            // 5.6: 412 problem -> distinct precondition-failed carrying the literal 412 status.
+            expect(result.status).toBe(412);
+            expect(response.status).toBe(412);
             expect(typeof result.problem).toBe("object");
+            break;
+
+          case "constraint-violation":
+            expect(result.status).toBe(422);
+            expect(response.status).toBe(422);
+            expect(result.problem.code).toBe("write-constraint-violation");
+            break;
+
+          case "persistence-failed":
+            expect(result.status).toBe(500);
+            expect(response.status).toBe(500);
+            expect(result.problem.code).toBe("write-persistence-failed");
             break;
 
           case "unexpected":
@@ -240,5 +280,57 @@ describe("Property 7 — response classification is total and correct (never thr
       }),
       { numRuns: 100 },
     );
+  });
+
+  it("classifies the save-failure wire codes and leaves a generic 422 or 500 as problem", () => {
+    const constraint = classifyResponse(
+      {
+        status: 422,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ status: 422, code: "write-constraint-violation" }),
+      },
+      parseSuccess,
+    );
+    expect(constraint.kind).toBe("constraint-violation");
+
+    const generic422 = classifyResponse(
+      {
+        status: 422,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ status: 422, title: "Unprocessable" }),
+      },
+      parseSuccess,
+    );
+    expect(generic422.kind).toBe("problem");
+
+    const persistence = classifyResponse(
+      {
+        status: 500,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ status: 500, code: "write-persistence-failed" }),
+      },
+      parseSuccess,
+    );
+    expect(persistence.kind).toBe("persistence-failed");
+
+    const generic500 = classifyResponse(
+      {
+        status: 500,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ status: 500 }),
+      },
+      parseSuccess,
+    );
+    expect(generic500.kind).toBe("problem");
+
+    const concurrency = classifyResponse(
+      {
+        status: 412,
+        contentType: "application/problem+json",
+        body: JSON.stringify({ status: 412, code: "write-concurrency-conflict" }),
+      },
+      parseSuccess,
+    );
+    expect(concurrency.kind).toBe("precondition-failed");
   });
 });

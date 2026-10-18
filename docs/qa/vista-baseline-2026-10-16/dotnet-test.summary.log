@@ -1,0 +1,53 @@
+command: dotnet test src/a2n.Vista.slnx -c Debug --verbosity normal
+trimmed to the Microsoft.Testing.Platform run lines and the aggregate summary.
+Per-assembly pass/fail/skip counts were taken from the TUnit HTML reports
+(gzip+base64 JSON embedded in TestResults/*-report.html), not from this footer.
+The footer reports only the grand total.
+
+Running tests from /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net10.0/a2n.Vista.SourceGenerators.Tests.dll (net10.0|x64)
+Running tests from /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net9.0/a2n.Vista.SourceGenerators.Tests.dll (net9.0|x64)
+Running tests from /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net8.0/a2n.Vista.Tests.dll (net8.0|x64)
+Running tests from /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net8.0/a2n.Vista.SourceGenerators.Tests.dll (net8.0|x64)
+/workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net8.0/a2n.Vista.SourceGenerators.Tests.dll (net8.0|x64) passed (14s 222ms)
+/workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net9.0/a2n.Vista.SourceGenerators.Tests.dll (net9.0|x64) passed (14s 646ms)
+/workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net10.0/a2n.Vista.SourceGenerators.Tests.dll (net10.0|x64) passed (14s 690ms)
+Running tests from /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net9.0/a2n.Vista.Tests.dll (net9.0|x64)
+Running tests from /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net10.0/a2n.Vista.Tests.dll (net10.0|x64)
+Running tests from /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net8.0/a2n.Vista.Client.TypeScript.Tests.dll (net8.0|x64)
+/workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net8.0/a2n.Vista.Client.TypeScript.Tests.dll (net8.0|x64) passed (7s 370ms)
+Running tests from /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net9.0/a2n.Vista.Client.TypeScript.Tests.dll (net9.0|x64)
+/workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net8.0/a2n.Vista.Tests.dll (net8.0|x64) passed (24s 132ms)
+Running tests from /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net10.0/a2n.Vista.Client.TypeScript.Tests.dll (net10.0|x64)
+/workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net9.0/a2n.Vista.Client.TypeScript.Tests.dll (net9.0|x64) passed (6s 451ms)
+/workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net10.0/a2n.Vista.Client.TypeScript.Tests.dll (net10.0|x64) passed (5s 848ms)
+/workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net10.0/a2n.Vista.Tests.dll (net10.0|x64) passed (27s 218ms)
+/workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net9.0/a2n.Vista.Tests.dll (net9.0|x64) passed (28s 787ms)
+
+  In process file artifacts produced:
+    - /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net8.0/TestResults/a2n.Vista.SourceGenerators.Tests-linux-net8.0-report.html
+    - /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net10.0/TestResults/a2n.Vista.SourceGenerators.Tests-linux-net10.0-report.html
+    - /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net9.0/TestResults/a2n.Vista.SourceGenerators.Tests-linux-net9.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net8.0/TestResults/a2n.Vista.Client.TypeScript.Tests-linux-net8.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net8.0/TestResults/a2n.Vista.Tests-linux-net8.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net9.0/TestResults/a2n.Vista.Client.TypeScript.Tests-linux-net9.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net10.0/TestResults/a2n.Vista.Client.TypeScript.Tests-linux-net10.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net10.0/TestResults/a2n.Vista.Tests-linux-net10.0-report.html
+    - /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net9.0/TestResults/a2n.Vista.Tests-linux-net9.0-report.html
+
+Test run summary: Passed!
+  /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net10.0/a2n.Vista.Client.TypeScript.Tests.dll (net10.0|x64) passed (5s 848ms)
+  /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net9.0/a2n.Vista.Tests.dll (net9.0|x64) passed (28s 787ms)
+  /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net9.0/a2n.Vista.Client.TypeScript.Tests.dll (net9.0|x64) passed (6s 451ms)
+  /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net10.0/a2n.Vista.SourceGenerators.Tests.dll (net10.0|x64) passed (14s 690ms)
+  /workspace/src/Tests/a2n.Vista.Client.TypeScript.Tests/bin/Debug/net8.0/a2n.Vista.Client.TypeScript.Tests.dll (net8.0|x64) passed (7s 370ms)
+  /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net9.0/a2n.Vista.SourceGenerators.Tests.dll (net9.0|x64) passed (14s 646ms)
+  /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net8.0/a2n.Vista.Tests.dll (net8.0|x64) passed (24s 132ms)
+  /workspace/src/Tests/a2n.Vista.SourceGenerators.Tests/bin/Debug/net8.0/a2n.Vista.SourceGenerators.Tests.dll (net8.0|x64) passed (14s 222ms)
+  /workspace/src/Tests/a2n.Vista.Tests/bin/Debug/net10.0/a2n.Vista.Tests.dll (net10.0|x64) passed (27s 218ms)
+
+  total: 2441
+  failed: 0
+  succeeded: 2441
+  skipped: 0
+  duration: 43s 656ms
+EXIT:0
