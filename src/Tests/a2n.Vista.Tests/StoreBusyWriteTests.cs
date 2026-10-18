@@ -282,7 +282,14 @@ public sealed class StoreBusyWriteTests
                                     sp.GetRequiredService<ExclusiveLock>(),
                                     sp.GetRequiredService<ThrowTransientFailure>()));
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<BusyContext>());
-                        services.AddVista(v => v.Register<BusyView>());
+                        services.AddVista(v => v.Register<BusyView>(ViewExecutionPlan.Split<BusyMemo, BusyRow>(
+                            "busy-memo",
+                            memo => new BusyRow
+                            {
+                                Id = memo.Id,
+                                Subject = memo.Subject,
+                                RowVersion = memo.RowVersion,
+                            })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>

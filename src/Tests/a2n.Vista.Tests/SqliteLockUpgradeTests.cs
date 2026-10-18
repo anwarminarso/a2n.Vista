@@ -8,6 +8,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using a2n.Vista.Authoring;
+using a2n.Vista.EntityFrameworkCore.Execution;
 using a2n.Vista.Examples;
 using a2n.Vista.Write;
 using Microsoft.AspNetCore.Builder;
@@ -320,7 +321,14 @@ public sealed class SqliteLockUpgradeTests
                             SqliteVistaConnection.Use(options, databasePath);
                         });
                         services.AddScoped<DbContext>(sp => sp.GetRequiredService<LockContext>());
-                        services.AddVista(v => v.Register<LockView>());
+                        services.AddVista(v => v.Register<LockView>(ViewExecutionPlan.Split<LockMemo, LockRow>(
+                            "lock-memo",
+                            memo => new LockRow
+                            {
+                                Id = memo.Id,
+                                Subject = memo.Subject,
+                                RowVersion = memo.RowVersion,
+                            })));
                         services.AddVistaEndpoints(e => e.AllowAnonymousAccess());
                     })
                     .Configure(app =>
