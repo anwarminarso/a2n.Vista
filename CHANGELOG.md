@@ -252,6 +252,9 @@ While the version is `0.x`, anything may change between releases.
   moves `Bucket` from `in` to `out`, saves `bucket = out`, returns 204 with an empty body and no
   `ETag`, and the following detail and update are 404 while the saved name stays `after`.
 
+### Security
+- **net10 `a2n.Vista.OpenApi` no longer restores `Microsoft.OpenApi` 2.0.0** (GHSA-v5pm-xwqc-g5wc, high). The advisory covers `Microsoft.OpenApi` `>= 2.0.0-preview.11` and `<= 2.7.4`, and is fixed in 2.7.5. `Microsoft.AspNetCore.OpenApi` 10.0.0 through 10.0.10 depend on `Microsoft.OpenApi` 2.0.0. The net10 pin is now **10.0.13**, whose nuspec depends on `Microsoft.OpenApi` `[2.12.2, 3.0.0)`. net8 has no OpenAPI pipeline package. net9 stays on `Microsoft.AspNetCore.OpenApi` 9.0.6, which pulls `Microsoft.OpenApi` 1.6.x, outside the affected range. The solution-wide `NuGetAuditSuppress` for this advisory is removed.
+
 ## [0.0.4] - 2026-08-11
 
 > **This is the release that carries the issue [#4](https://github.com/anwarminarso/a2n.Vista/issues/4)

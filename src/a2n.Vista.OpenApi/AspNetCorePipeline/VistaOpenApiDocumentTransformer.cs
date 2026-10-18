@@ -13,7 +13,7 @@
 //   - net9.0  -> Microsoft.AspNetCore.OpenApi 9.0.x  -> Microsoft.OpenApi 1.6.x  (types in
 //     Microsoft.OpenApi.Models; OpenApiSchema.Type is a string; enum values are IOpenApiAny; references
 //     are an OpenApiReference on the concrete type; nullability is a bool).
-//   - net10.0 -> Microsoft.AspNetCore.OpenApi 10.0.x -> Microsoft.OpenApi 2.0.x  (types in
+//   - net10.0 -> Microsoft.AspNetCore.OpenApi 10.0.13 -> Microsoft.OpenApi 2.12.x (types in
 //     Microsoft.OpenApi; OpenApiSchema.Type is a JsonSchemaType flags enum; enum values are JsonNode;
 //     references are dedicated OpenApiSchemaReference/OpenApiSecuritySchemeReference holders; nullability
 //     is the JsonSchemaType.Null flag; schema collections are typed against IOpenApiSchema).

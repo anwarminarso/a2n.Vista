@@ -18,7 +18,7 @@
     exist for net8.0), so the reference is TFM-guarded: net8.0 keeps only the Vista-owned serve endpoint
     (task 7.1), while net9.0/net10.0 additionally gain the VistaOpenApiDocumentTransformer that merges the
     Vista paths/components into an app's built-in pipeline document. The package version is pinned per-TFM
-    in Directory.Packages.props (9.0.x pulls Microsoft.OpenApi 1.6.x; 10.0.x pulls Microsoft.OpenApi 2.x).
+    in Directory.Packages.props (9.0.x pulls Microsoft.OpenApi 1.6.x; 10.0.13 pulls Microsoft.OpenApi [2.12.2, 3.0.0)).
   -->
   <ItemGroup Condition="'$(TargetFramework)' == 'net9.0' OR '$(TargetFramework)' == 'net10.0'">
     <PackageReference Include="Microsoft.AspNetCore.OpenApi" />
