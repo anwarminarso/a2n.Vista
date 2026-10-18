@@ -17,7 +17,7 @@ Core-only (no EF/ASP.NET reference); exposed through the standard Vista host glu
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.Adapters.DataTablesNet
+dotnet add package a2n.Vista.Adapters.DataTablesNet --version 0.0.5
 ```
 
 Depends on [`a2n.Vista.Core`](https://www.nuget.org/packages/a2n.Vista.Core).

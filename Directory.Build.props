@@ -27,7 +27,7 @@
       it in the release commit, and still glance at `git log -1 <tag>` before publishing — the guard
       proves the tree agrees with the tag, not that it is the commit you meant.
     -->
-    <Version>0.0.4</Version>
+    <Version>0.0.5</Version>
     <!--
       License metadata. The project is LGPL-3.0-or-later (see LICENSE, COPYING, NOTICES.md, and
       the README). Until this was set, `dotnet pack` emitted packages with NO <license> element at

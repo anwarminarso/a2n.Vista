@@ -49,7 +49,7 @@ hard-coding them.
 ## Install
 
 ```sh
-dotnet add package a2n.Vista.Adapters.AgGrid
+dotnet add package a2n.Vista.Adapters.AgGrid --version 0.0.5
 ```
 
 Depends on [`a2n.Vista.Core`](https://www.nuget.org/packages/a2n.Vista.Core).

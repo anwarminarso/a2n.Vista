@@ -18,7 +18,7 @@ Reads an OpenAPI 3.x document (from a file or an HTTPS URL) and emits:
 Ships as a .NET tool:
 
 ```sh
-dotnet tool install --global a2n.Vista.Client.TypeScript
+dotnet tool install --global a2n.Vista.Client.TypeScript --version 0.0.5
 ```
 
 Then generate from a document emitted by [`a2n.Vista.OpenApi`](https://www.nuget.org/packages/a2n.Vista.OpenApi):
@@ -27,7 +27,7 @@ Then generate from a document emitted by [`a2n.Vista.OpenApi`](https://www.nuget
 vista-ts --source ./openapi.json --out ./src/api
 ```
 
-Add `--emit-write-facets` to include create/update/delete (off by default), and `--base-url <url>` to bake in a default base URL.
+Add `--emit-write-facets` to include create/update/delete (off by default). The generated client takes `baseUrl` when it is constructed. `--base-url` is accepted by the CLI and is not written into the emitted client.
 
 ## Documentation
 
