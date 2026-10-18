@@ -64,6 +64,8 @@
          of a README.md next to the csproj. Images in this file must use absolute URLs
          (nuget.org does not render repository-relative image paths). -->
     <PackageReadmeFile Condition="Exists('$(MSBuildProjectDirectory)/README.md')">README.md</PackageReadmeFile>
+    <!-- Fail the build on any unsuppressed NuGet advisory. GHSA-2m69-gcr7-jv3q stays suppressed below. -->
+    <WarningsAsErrors>$(WarningsAsErrors);NU1901;NU1902;NU1903;NU1904</WarningsAsErrors>
   </PropertyGroup>
 
   <ItemGroup>
